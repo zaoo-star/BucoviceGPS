@@ -1,0 +1,3303 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bučovice bez majitelů</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --accent:#4ade80;
+    --accent2:#38bdf8; --danger:#f87171; --text:#e5e7eb; --muted:#8b93a1;
+    --border:#2a2f3a; --gold:#fbbf24; --purple:#c084fc; --orange:#fb923c;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);}
+  #app{position:relative;height:100vh;height:100dvh;overflow:hidden;}
+  #map{position:absolute;inset:0;z-index:1;}
+
+  #topBar{
+    position:absolute;top:0;left:0;right:0;z-index:400;
+    padding:10px 10px 0 10px;display:flex;flex-direction:column;gap:6px;
+    pointer-events:none;
+  }
+  .statsRow{display:flex;gap:6px;flex-wrap:wrap;pointer-events:none;}
+  .statPill{
+    background:rgba(23,26,33,0.92);border:1px solid var(--border);border-radius:10px;
+    padding:5px 10px;font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px;
+    white-space:nowrap;pointer-events:auto;backdrop-filter:blur(4px);
+  }
+  #balance{color:var(--gold);}
+  #dayPill{color:var(--accent2);}
+  #walkPill{color:var(--accent);}
+  #userInfo{
+    font-size:11px;color:var(--muted);pointer-events:auto;align-self:flex-start;
+    background:rgba(23,26,33,0.85);padding:3px 10px;border-radius:8px;
+  }
+  #gpsWarning{
+    background:#3f2d0acc;border:1px solid #7c5a10;color:#fbbf24;backdrop-filter:blur(4px);
+    padding:8px 12px;font-size:11px;display:none;border-radius:10px;pointer-events:auto;
+  }
+
+  #sideRail{
+    position:absolute;right:10px;top:50%;transform:translateY(-50%);z-index:400;
+    display:flex;flex-direction:column;gap:10px;
+    max-height:calc(100vh - 90px);overflow-y:auto;overflow-x:hidden;
+    -webkit-overflow-scrolling:touch;scrollbar-width:none;
+    padding:2px;border-radius:16px;
+  }
+  #sideRail::-webkit-scrollbar{display:none;}
+  .railBtn{
+    width:54px;height:54px;border-radius:15px;background:rgba(23,26,33,0.92);
+    border:1px solid var(--border);color:var(--text);font-size:24px;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
+    backdrop-filter:blur(4px);flex-shrink:0;
+  }
+  .railBtn.active{background:var(--accent);color:#08130a;border-color:var(--accent);}
+
+  #bottomSheet{
+    position:absolute;inset:0;z-index:600;
+    background:var(--panel);
+    transform:translateY(105%);transition:transform 0.28s cubic-bezier(.4,0,.2,1);
+    box-shadow:0 -6px 24px rgba(0,0,0,0.5);display:flex;flex-direction:column;
+  }
+  #bottomSheet.open{transform:translateY(0);}
+  #sheetHeader{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0;
+  }
+  #sheetHeader span{font-weight:700;font-size:16px;}
+  #sheetCloseBtn{padding:6px 14px;font-size:16px;}
+  #sheetBody{padding:12px 16px;overflow-y:auto;flex:1;font-size:calc(13px * var(--fs-scale, 1));}
+
+  .tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap;}
+  .tab{
+    background:var(--panel2);border:1px solid var(--border);color:var(--muted);
+    padding:6px 12px;border-radius:8px;font-size:0.92em;cursor:pointer;
+  }
+  .tab.active{background:var(--accent);color:#08130a;border-color:var(--accent);font-weight:600;}
+  .panelContent{display:none;}
+  .panelContent.active{display:block;}
+  .card{
+    background:var(--panel2);border:1px solid var(--border);border-radius:12px;
+    padding:12px;margin-bottom:10px;
+  }
+  .card h3{margin:0 0 6px 0;font-size:1.08em;}
+  .card p{margin:3px 0;font-size:1em;color:var(--muted);}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
+  button{
+    background:var(--accent2);color:#04202e;border:none;border-radius:8px;
+    padding:10px 16px;font-size:1em;font-weight:600;cursor:pointer;min-height:44px;
+  }
+  button.secondary{background:var(--panel2);color:var(--text);border:1px solid var(--border);}
+  button.danger{background:var(--danger);color:#2b0808;}
+  button.gold{background:var(--gold);color:#2b1c02;}
+  button:disabled{opacity:0.4;cursor:not-allowed;}
+  input, select, textarea{
+    background:var(--bg);border:1px solid var(--border);color:var(--text);
+    border-radius:8px;padding:10px;font-size:1em;width:100%;margin-top:4px;
+  }
+  label{font-size:0.92em;color:var(--muted);display:block;margin-top:8px;}
+  .parcelMarker{
+    width:26px;height:26px;border-radius:6px;display:flex;align-items:center;
+    justify-content:center;font-size:14px;border:2px solid #0008;
+    opacity:0.55;transition:opacity 0.2s;
+  }
+  .otherPlayerMarker{
+    width:28px;height:28px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;font-size:16px;background:rgba(192,132,252,0.9);
+    border:2px solid #fff8;box-shadow:0 0 8px 2px rgba(192,132,252,0.5);cursor:pointer;
+  }
+  .p-empty{background:#4b5563;}
+  .p-residence{background:#4ade80;}
+  .p-rental{background:#38bdf8;}
+  .p-rental-bad{background:#f87171;}
+  .p-mine{box-shadow:0 0 0 3px var(--gold);}
+  .p-cityhall{background:#fbbf24;opacity:0.85;}
+  .p-inreach{opacity:1 !important;box-shadow:0 0 0 3px #4ade80, 0 0 10px 3px #4ade8099; animation:pulse 1.6s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.8;}}
+  .p-business{background:#f472b6;opacity:0.8;}
+  .condBar{background:var(--bg);border-radius:6px;height:8px;overflow:hidden;margin-top:4px;}
+  .condBarFill{height:100%;background:var(--accent);}
+  .distNote{font-size:12px;margin-top:6px;}
+  .distNote.ok{color:var(--accent);}
+  .distNote.bad{color:var(--danger);}
+  #loginOverlay{
+    position:fixed;inset:0;background:rgba(10,12,16,0.96);z-index:2000;
+    display:block;overflow-y:auto;-webkit-overflow-scrolling:touch;
+    padding:24px 16px;
+  }
+  #loginOverlay .box{
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:24px;width:min(380px,92vw);text-align:center;margin:0 auto;
+  }
+  #loginOverlay h2{margin-top:0;font-size:18px;}
+  #loginOverlay input{margin-bottom:8px;}
+  .muted-small{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5;}
+  .empty-state{text-align:center;color:var(--muted);padding:20px 10px;font-size:13px;}
+  .badge{
+    display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;
+  }
+  .badge-res{background:#153b25;color:var(--accent);}
+  .badge-rent{background:#0c2f42;color:var(--accent2);}
+  .badge-empty{background:#2a2f3a;color:var(--muted);}
+  ::-webkit-scrollbar{width:6px;}
+  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+  .leaflet-control-zoom{margin-left:10px !important;margin-bottom:16px !important;border:none !important;}
+  .leaflet-control-zoom a{
+    background:rgba(23,26,33,0.92) !important;color:var(--text) !important;
+    border:1px solid var(--border) !important;width:38px !important;height:38px !important;
+    line-height:38px !important;font-size:18px !important;backdrop-filter:blur(4px);
+  }
+  .leaflet-control-zoom a:hover{background:var(--panel2) !important;}
+  .leaflet-control-zoom-in{border-top-left-radius:10px !important;border-top-right-radius:10px !important;}
+  .leaflet-control-zoom-out{border-bottom-left-radius:10px !important;border-bottom-right-radius:10px !important;}
+  #customModal{
+    position:fixed;inset:0;background:rgba(10,12,16,0.75);z-index:3000;
+    display:none;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px;
+  }
+  #customModal.open{display:block;}
+  #tutorialOverlay{
+    position:fixed;inset:0;background:rgba(10,12,16,0.9);z-index:3500;
+    overflow-y:auto;-webkit-overflow-scrolling:touch;padding:20px;
+  }
+  #tutorialOverlay .tutBox{
+    background:var(--panel);border:1px solid var(--accent);border-radius:16px;
+    padding:24px;width:min(340px,92vw);margin:15vh auto 20px;text-align:center;
+    font-size:calc(14px * var(--fs-scale, 1));
+  }
+  #tutorialOverlay h3{font-size:1.2em;}
+  .tutDot{width:8px;height:8px;border-radius:50%;background:var(--border);}
+  .tutDot.on{background:var(--accent);}
+  #customModal .modalBox{
+    background:var(--panel);border:1px solid var(--border);border-radius:14px;
+    padding:20px;width:min(340px,92vw);margin:20px auto;max-height:calc(100vh - 40px);overflow-y:auto;
+  }
+  #customModal p{margin:0 0 12px 0;font-size:14px;line-height:1.4;}
+  #customModal input{margin-bottom:14px;}
+  #customModal .modalBtnRow{display:flex;gap:8px;justify-content:flex-end;}
+  #customToast{
+    position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(20px);
+    background:var(--panel2);border:1px solid var(--border);border-radius:10px;
+    padding:12px 18px;font-size:13px;max-width:88vw;text-align:center;
+    z-index:3100;opacity:0;transition:opacity 0.25s, transform 0.25s;pointer-events:none;
+    box-shadow:0 6px 20px rgba(0,0,0,0.5);
+  }
+  #customToast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+  #achievementToast{
+    position:fixed;left:50%;top:80px;transform:translateX(-50%) translateY(-20px);
+    background:linear-gradient(135deg, #1a2332, #24303f);border:2px solid var(--gold);border-radius:12px;
+    padding:12px 20px;font-size:14px;font-weight:600;color:var(--gold);max-width:88vw;text-align:center;
+    z-index:3600;opacity:0;transition:opacity 0.3s, transform 0.3s;pointer-events:none;
+    box-shadow:0 6px 24px rgba(251,191,36,0.3);
+  }
+  #achievementToast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+</style>
+</head>
+<body>
+
+<div id="customModal">
+  <div class="modalBox">
+    <p id="modalMessage"></p>
+    <input id="modalInput" type="text" inputmode="decimal" />
+    <div class="modalBtnRow">
+      <button id="modalCancelBtn" class="secondary">Zrušit</button>
+      <button id="modalOkBtn">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="tutorialOverlay" style="display:none;">
+  <div class="tutBox">
+    <div id="tutIcon" style="font-size:44px;margin-bottom:6px;"></div>
+    <h3 id="tutTitle" style="margin:0 0 8px 0;"></h3>
+    <p id="tutText" style="color:var(--muted);line-height:1.5;margin:0 0 16px 0;"></p>
+    <div id="tutDots" style="display:flex;gap:6px;justify-content:center;margin-bottom:14px;"></div>
+    <div style="display:flex;gap:8px;">
+      <button class="secondary" id="tutSkipBtn" style="flex:1;">Přeskočit</button>
+      <button id="tutNextBtn" style="flex:2;">Další ▸</button>
+    </div>
+  </div>
+</div>
+
+<div id="loginOverlay">
+  <div class="box">
+    <h2>🏚️ Bučovice bez majitelů</h2>
+    <p style="color:var(--text);font-size:1em;line-height:1.5;">Celé město najednou zůstalo <b>bez majitelů</b>. Přijíždíš s pár korunami a tvůj cíl je jasný: <b style="color:var(--gold)">zbohatnout a nashromáždit co nejvíc nemovitostí</b>, než to udělá někdo jiný.</p>
+
+    <div style="text-align:left;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:10px;font-size:0.96em;line-height:1.6;">
+      <b style="color:var(--accent2);">📍 Hraje se v reálném čase a na mapě</b><br>
+      <span style="color:var(--muted);">Domy jsou skutečné budovy Bučovic. Musíš být fyzicky poblíž domu, abys s ním mohl něco dělat. Za chůzi po městě dostáváš peníze.</span>
+      <br><br>
+      <b style="color:var(--accent);">🏠 Jak vydělávat</b><br>
+      <span style="color:var(--muted);">
+      • <b>Práce</b> pro město (popelář, úředník…) — jistý denní příjem<br>
+      • <b>Pronájem</b> — kup dům, přestav na byty, vybírej nájem<br>
+      • <b>Investice</b> do reálných podniků (Lidl, zámek…) — pasivní příjem<br>
+      • <b>Chůze</b> — za nachozené metry padají drobné
+      </span>
+      <br><br>
+      <b style="color:var(--purple);">🤝 Domy se kupují na podíly</b><br>
+      <span style="color:var(--muted);">Nemusíš koupit celý dům — stačí pár %. Kdo má největší podíl, dům spravuje; kdo má víc než 50 %, může ho přestavět. Nájem se dělí všem podle podílů.</span>
+      <br><br>
+      <b style="color:var(--gold);">⚠️ Pozor</b><br>
+      <span style="color:var(--muted);">Každý den platíš za bydlení. Máš tři možnosti: <b>vlastní bydlení</b> (podíl v domě = nejlevnější), <b>nájem</b> bytu od jiného hráče (dražší, ale pořád se vyplatí), nebo <b>bez bydlení</b> (nejdražší). Z každé nemovitosti platíš daň, takže se vyplatí ji využívat, ne držet ladem. Půjčky se musí splácet, jinak přijdeš o majetek.</span>
+      <br><br>
+      <b style="color:var(--accent2);">📖 Nerozumíš nějakému pojmu?</b><br>
+      <span style="color:var(--muted);">V appce dole najdeš záložku "Jak to funguje" — vysvětluje jednoduše úroky, nájem, daně, podíly i všechno ostatní s penězi.</span>
+    </div>
+
+    <input id="nameInput" placeholder="Tvoje přezdívka" style="margin-top:12px;" />
+    <button id="guestLoginBtn" style="width:100%;margin-top:6px;">Vstoupit do města</button>
+    <div class="muted-small">Appka se zeptá na přístup k poloze — bez toho nepůjde chodit "naživo", ale dá se hrát i bez GPS (klepni na mapu, kde zrovna „jsi").</div>
+  </div>
+</div>
+
+<div id="app" style="display:none;">
+  <div id="map"></div>
+
+  <div id="topBar">
+    <div id="gpsWarning">📍 GPS není dostupná — klepni na mapu, tím nastavíš "kde jsi" (testovací režim), jinak hraješ bez omezení vzdálenosti a bez odměny za chůzi.
+      <button id="retryGpsBtn" class="secondary" style="margin-left:8px;padding:4px 10px;font-size:0.85em;">Zkusit povolit GPS znovu</button>
+    </div>
+    <div class="statsRow">
+      <div class="statPill" id="dayPill">📅 Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
+      <div class="statPill" id="balance">💰 <span id="balanceVal">0</span> Kč</div>
+      <div class="statPill" id="walkPill">🚶 <span id="walkVal">0</span> m dnes</div>
+      <div class="statPill" id="housingPill">🏠 <span id="housingVal">bez bydlení</span></div>
+      <div class="statPill" id="marketCyclePill">📊 <span id="marketCycleVal">Stabilní trh</span></div>
+    </div>
+    <div id="userInfo"></div>
+  </div>
+
+  <div id="sideRail">
+    <button class="railBtn" data-tab="mine" title="Nemovitosti">🏠</button>
+    <button class="railBtn" data-tab="jobs" title="Zaměstnání">💼</button>
+    <button class="railBtn" data-tab="businesses" title="Investice">📈</button>
+    <button class="railBtn" data-tab="market" title="Tržiště nemovitostí">🏷️</button>
+    <button class="railBtn" data-tab="bank" title="Banka">🏦</button>
+    <button class="railBtn" data-tab="leaderboard" title="Žebříček">🏆</button>
+    <button class="railBtn" data-tab="news" title="Noviny">📰</button>
+    <button class="railBtn" data-tab="finance" title="Finanční přehled">💡</button>
+    <button class="railBtn" data-tab="guide" title="Jak to funguje">📖</button>
+  </div>
+
+  <div id="bottomSheet">
+    <div id="sheetHeader">
+      <span id="sheetTitle">Vybraný dům</span>
+      <button id="sheetCloseBtn" class="secondary">✕</button>
+    </div>
+    <div id="sheetBody">
+      <div class="panelContent active" id="tab-selected">
+        <div id="selectedContent" class="empty-state">Klikni na dům na mapě.</div>
+      </div>
+      <div class="panelContent" id="tab-mine">
+        <div id="mineContent" class="empty-state">Zatím nic nevlastníš.</div>
+      </div>
+      <div class="panelContent" id="tab-jobs">
+        <div id="jobsContent" class="empty-state">Načítám nabídky práce...</div>
+      </div>
+      <div class="panelContent" id="tab-businesses">
+        <div id="businessesContent" class="empty-state">Načítám podniky...</div>
+      </div>
+      <div class="panelContent" id="tab-market">
+        <div id="marketContent" class="empty-state">Načítám tržiště...</div>
+      </div>
+      <div class="panelContent" id="tab-bank">
+        <div id="bankContent" class="empty-state">Načítám banku...</div>
+      </div>
+      <div class="panelContent" id="tab-leaderboard">
+        <div id="leaderboardContent" class="empty-state">Načítám žebříček...</div>
+      </div>
+      <div class="panelContent" id="tab-profile">
+        <div id="profileContent" class="empty-state">Načítám profil...</div>
+      </div>
+      <div class="panelContent" id="tab-news">
+        <div id="newsContent" class="empty-state">Načítám noviny...</div>
+      </div>
+      <div class="panelContent" id="tab-finance">
+        <div id="financeContent" class="empty-state">Načítám finanční přehled...</div>
+      </div>
+      <div class="panelContent" id="tab-guide">
+        <div id="guideContent" class="empty-state">Načítám nápovědu...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="customToast"></div>
+<div id="achievementToast"></div>
+
+<script>
+/* ============================================================
+   Bučovice bez majitelů — reálný čas + GPS
+   Data v localStorage, klíč "bucovice_landlord_v2"
+================================================================ */
+
+// ===== VLASTNÍ MODAL (náhrada za alert/confirm/prompt — ty jsou v embedded prohlížečích/webview často tiše blokované) =====
+let modalResolve = null;
+
+function showPrompt(message, defaultValue){
+  return new Promise(resolve => {
+    modalResolve = resolve;
+    document.getElementById('modalMessage').textContent = message;
+    const input = document.getElementById('modalInput');
+    input.style.display = 'block';
+    input.value = (defaultValue === undefined || defaultValue === null) ? '' : defaultValue;
+    document.getElementById('customModal').classList.add('open');
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  });
+}
+
+function showConfirm(message){
+  return new Promise(resolve => {
+    modalResolve = resolve;
+    document.getElementById('modalMessage').textContent = message;
+    document.getElementById('modalInput').style.display = 'none';
+    document.getElementById('customModal').classList.add('open');
+  });
+}
+
+function showAlert(message){
+  const toast = document.getElementById('customToast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(showAlert._t);
+  showAlert._t = setTimeout(() => toast.classList.remove('show'), 3200);
+  return Promise.resolve();
+}
+
+// Samostatný toast pro achievementy (nahoře, zlatý) — nekoliduje s běžnými hláškami
+function showToast(message){
+  const toast = document.getElementById('achievementToast');
+  toast.textContent = message;
+  toast.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
+function closeModal(){
+  document.getElementById('customModal').classList.remove('open');
+}
+
+function modalConfirmOk(){
+  const input = document.getElementById('modalInput');
+  const isPromptMode = input.style.display !== 'none';
+  const result = isPromptMode ? input.value : true;
+  closeModal();
+  if(modalResolve) modalResolve(result);
+  modalResolve = null;
+}
+
+function modalConfirmCancel(){
+  const input = document.getElementById('modalInput');
+  const isPromptMode = input.style.display !== 'none';
+  closeModal();
+  if(modalResolve) modalResolve(isPromptMode ? null : false);
+  modalResolve = null;
+}
+
+const STORAGE_KEY = 'bucovice_landlord_v9';
+let world = null;
+let currentUser = null;
+let map, markers = {}, selectedParcelId = null;
+let playerPos = null;       // {lat, lng} — poslední známá GPS poloha (nebo ručně nastavená v testovacím režimu)
+let hasCenteredOnPlayer = false; // ať appka zoomne na hráče jen při prvním zjištění polohy, ne při každém pohybu
+let reachCircle = null;
+let playerMarker = null, accuracyCircle = null;
+let lastGeoPos = null;      // pro výpočet ušlé vzdálenosti mezi updaty
+let geoAvailable = false;
+
+const CITY_CENTER = [49.1503, 17.0035]; // náměstí Svobody, Bučovice — reálný střed města
+const START_BALANCE = 4000;
+
+const GAME_DAY_MS = 24 * 60 * 60 * 1000; // 1 herní den = skutečných 24 hodin
+const LIVING_COST = 90;               // Kč/herní den — plné náklady bezdomovce (nejdražší)
+const RESIDENCE_LIVING_DISCOUNT = 0.5; // vlastník bydlení platí 45 Kč/den (nejlevnější)
+const TENANT_LIVING_COST = 15;        // nájemník platí sníženou životní složku (+ nájem majiteli navrch)
+// Rozpad životních nákladů na kategorie (jen pro zobrazení — součet dá dohromady LIVING_COST).
+// Podíly: bydlení/ubytování je největší, pak jídlo, energie, doprava.
+const LIVING_BREAKDOWN = [
+  {key:'jidlo',   label:'🍞 Jídlo',    ratio:0.35},
+  {key:'energie', label:'💡 Energie',  ratio:0.25},
+  {key:'doprava', label:'🚌 Doprava',  ratio:0.20},
+  {key:'ostatni', label:'🧾 Ostatní',  ratio:0.20},
+];
+const LIVING_COST_VARIATION = 0.12;   // ±12 % denní kolísání nákladů (ceny se mění den ode dne)
+const SAVINGS_ANNUAL_RATE = 0.03;     // spořicí účet vynáší 3 % ročně (bezpečné, ale pomalé — vs půjčka 18 %)
+const INFLATION_ANNUAL = 0.025;       // inflace 2,5 % ročně — ceny i mzdy pomalu rostou, hotovost ztrácí hodnotu
+const EVENT_CHANCE_PER_DAY = 0.15;    // 15% šance na náhodnou životní událost každý herní den
+const RENT_DECAY = 1;                 // úbytek stavu bytu/herní den (100→0 za 100 dní), jen u obsazeného bytu
+const REPAIR_COST_PER_POINT = 15;
+const RENTAL_SETUP_RATIO = 0.15;  // zařízení bytu k pronájmu = 15 % ceny domu
+// Férové (tržní) nájemné bytu ~0,26 % hodnoty domu. Vyladěno tak, aby pronájem dával rozumný výnos
+// (~30-50 % ročně, rychlá hra) a zároveň nájemník ušetřil vs bezdomovec. Vlastník 45 < nájemník < bezdomovec 90.
+const FAIR_RENT_RATIO = 0.0026;   // ~0,26 % hodnoty domu/den za byt (min. 30 Kč)
+const EMPTY_DECAY_FACTOR = 0.3;   // prázdný byt chátrá jen na 30 % rychlosti obsazeného
+const PROPERTY_TAX_RATE = 0.04;   // daň z nemovitosti 4 % hodnoty podílu ročně (odčerpává peníze z oběhu)
+
+const INTERACTION_RADIUS = 60;        // metrů — jak blízko musíš být k domu
+const HOUSE_VISIBLE_RADIUS = 130;     // metrů — domy dál od hráče se vůbec nevykreslují
+const JOB_RADIUS = 90;                // metrů — okolo radnice
+const WALK_REWARD_PER_METER = 0.05;   // Kč/m (5 Kč/100m)
+const WALK_DAILY_CAP = 400;           // Kč max z chůze za herní den
+const GPS_JUMP_IGNORE = 150;          // m — ignoruj skoky větší než tohle (GPS chyba/teleport)
+const GPS_NOISE_IGNORE = 2;           // m — ignoruj drobné chvění
+
+// Reálné podniky v Bučovicích (Google Places) — cena a výnos odhadnuty z hodnocení a počtu recenzí (popularita)
+const BUSINESS_DEFS = [
+  {id:'b1',  name:'Castle Bučovice',        lat:49.1496409, lng:17.0014607, category:'Památka',     emoji:'🏰', totalValue:700000, hourlyYield:30.4, rating:4.4, ratingCount:1425},
+  {id:'b2',  name:'Lidl',                   lat:49.14798,   lng:17.0024100, category:'Supermarket',  emoji:'🏬', totalValue:440000, hourlyYield:19.1, rating:4.3, ratingCount:823},
+  {id:'b3',  name:'Penny Market',           lat:49.1474805, lng:17.0024289, category:'Supermarket',  emoji:'🏬', totalValue:360000, hourlyYield:15.6, rating:3.4, ratingCount:681},
+  {id:'b4',  name:'VENA-TRADE (benzinka)',  lat:49.1464777, lng:17.0068654, category:'Benzinka',     emoji:'⛽', totalValue:320000, hourlyYield:13.9, rating:4.1, ratingCount:197},
+  {id:'b5',  name:'Hotel Arkáda',           lat:49.1505661, lng:17.0025120, category:'Hotel',        emoji:'🏨', totalValue:300000, hourlyYield:13.0, rating:4.1, ratingCount:657},
+  {id:'b6',  name:'Penzion Rustico',        lat:49.1520241, lng:17.0011680, category:'Hotel',        emoji:'🏨', totalValue:260000, hourlyYield:11.3, rating:4.9, ratingCount:54},
+  {id:'b7',  name:'Vinárna U Šembery',      lat:49.1524681, lng:17.0035346, category:'Restaurace',   emoji:'🍽️', totalValue:140000,  hourlyYield:6.1,  rating:4.5, ratingCount:512},
+  {id:'b8',  name:'Restaurace Litovel',     lat:49.1516310, lng:17.0104640, category:'Restaurace',   emoji:'🍽️', totalValue:130000,  hourlyYield:5.6,  rating:4.5, ratingCount:537},
+  {id:'b9',  name:'Penzion Sole',           lat:49.1496072, lng:17.0041136, category:'Hotel',        emoji:'🏨', totalValue:180000,  hourlyYield:7.8,  rating:4.4, ratingCount:339},
+  {id:'b10', name:'Restaurace Sole',        lat:49.1496900, lng:17.0042500, category:'Restaurace',   emoji:'🍽️', totalValue:110000,  hourlyYield:4.8,  rating:4.7, ratingCount:125},
+  {id:'b11', name:'Restaurace Kaťák',       lat:49.1513915, lng:17.0028319, category:'Restaurace',   emoji:'🍽️', totalValue:96000,  hourlyYield:4.2,  rating:3.8, ratingCount:368},
+  {id:'b12', name:'COOP družstvo HB',       lat:49.1495963, lng:17.0071369, category:'Obchod',       emoji:'🛒', totalValue:100000,  hourlyYield:4.3,  rating:3.9, ratingCount:264},
+  {id:'b13', name:'Black Bakery',           lat:49.1550872, lng:16.9954613, category:'Kavárna',      emoji:'☕', totalValue:90000,  hourlyYield:3.9,  rating:4.9, ratingCount:197},
+  {id:'b14', name:'Restaurace Arkáda',      lat:49.1504887, lng:17.0023996, category:'Restaurace',   emoji:'🍽️', totalValue:80000,  hourlyYield:3.5,  rating:3.8, ratingCount:92},
+  {id:'b15', name:'Restaurace Kometa',      lat:49.1491051, lng:17.0036159, category:'Restaurace',   emoji:'🍽️', totalValue:84000,  hourlyYield:3.6,  rating:3.9, ratingCount:136},
+  {id:'b16', name:'Kavárna na zámku',       lat:49.1491978, lng:17.0015366, category:'Kavárna',      emoji:'☕', totalValue:100000,  hourlyYield:4.3,  rating:4.7, ratingCount:94},
+  {id:'b17', name:'Cukrárna',               lat:49.1515524, lng:17.0022450, category:'Kavárna',      emoji:'☕', totalValue:76000,  hourlyYield:3.3,  rating:4.3, ratingCount:81},
+  {id:'b18', name:'Kavárna na radnici',     lat:49.1502862, lng:17.0029903, category:'Kavárna',      emoji:'☕', totalValue:70000,  hourlyYield:3.0,  rating:4.8, ratingCount:10},
+  {id:'b19', name:'Enapo (potraviny)',      lat:49.1513107, lng:17.0039031, category:'Obchod',       emoji:'🛒', totalValue:70000,  hourlyYield:3.0,  rating:4.2, ratingCount:72},
+  {id:'b20', name:'MAKOVEC (řeznictví)',    lat:49.1475022, lng:17.0024643, category:'Obchod',       emoji:'🛒', totalValue:60000,  hourlyYield:2.6,  rating:4.5, ratingCount:8},
+];
+const BUSINESS_SELL_RATIO = 0.7; // kolik % ceny dostaneš zpět při prodeji podílu
+
+const MORTGAGE_DOWNPAYMENT_RATIO = 0.2;  // 20 % vlastních peněz, zbytek na hypotéku
+const MORTGAGE_ANNUAL_RATE = 0.06;       // 6 % p.a. — jištěno domem
+const LOAN_ANNUAL_RATE = 0.18;           // 18 % p.a. — nezajištěná půjčka
+const DAYS_PER_YEAR = 365;
+const LOAN_LIMIT_RATIO = 0.5;            // max půjčka = 50 % odhadovaného jmění
+const MORTGAGE_REPO_MULTIPLIER = 1.5;    // banka zabaví dům, když dluh přesáhne 150 % ceny domu
+
+const LOAN_MIN_PAYMENT_RATIO = 0.03;     // nezajištěná půjčka: banka si sama strhne 3 % jistiny/den, pokud máš na účtu dost
+const LOAN_SEIZURE_MISSED_DAYS = 5;      // 5 dní po sobě nezaplaceno → banka zabaví majetek na pokrytí dluhu
+
+// tier = úroveň pozice (0 = základní). reqShifts = kolik směn celkem musíš mít odpracováno.
+// slots = kolik lidí může pozici zastávat naráz (nižší pozice = víc míst, vyšší = málo).
+const JOB_DEFS = [
+  {id:'uklid',      name:'Úklidové služby',         salary:240, tier:0, reqShifts:0,  slots:6, desc:'Úklid veřejných prostranství. Nástupní pozice bez požadavků.'},
+  {id:'popelar',    name:'Popelář',                  salary:250, tier:0, reqShifts:0,  slots:5, desc:'Svoz odpadu po celém městě. Nástupní pozice.'},
+  {id:'zahradnik',  name:'Zahradník',                salary:260, tier:1, reqShifts:5,  slots:4, desc:'Údržba zeleně a parků.'},
+  {id:'technicke',  name:'Dělník technických služeb',salary:270, tier:1, reqShifts:5,  slots:4, desc:'Opravy silnic a veřejného osvětlení — manuální práce.'},
+  {id:'ridic',      name:'Řidič svozového vozu',     salary:300, tier:2, reqShifts:12, slots:3, desc:'Řízení techniky, vyžaduje řidičák sk. C.'},
+  {id:'strazník',   name:'Strážník městské policie', salary:320, tier:2, reqShifts:12, slots:3, desc:'Dohled nad veřejným pořádkem.'},
+  {id:'urednik',    name:'Referent MěÚ',             salary:340, tier:3, reqShifts:22, slots:2, desc:'Administrativa na městském úřadě, práce s lidmi.'},
+  {id:'uctarna',    name:'Účetní úřadu',             salary:380, tier:3, reqShifts:22, slots:2, desc:'Vedení účetnictví města.'},
+  {id:'vedouci_ts', name:'Vedoucí technických služeb', salary:420, tier:4, reqShifts:35, slots:1, desc:'Řízení čety technických služeb.'},
+  {id:'tajemnik',   name:'Tajemník MěÚ',             salary:480, tier:5, reqShifts:50, slots:1, desc:'Nejvyšší úřednická pozice, řízení celého úřadu.'},
+];
+const JOB_BAN_DAYS = 7; // po vyčerpání omluvenek a vynechání směny zákaz práce na 7 dní
+const JOB_SICK_DAYS_ALLOWED = 2; // kolik vynechaných směn za sebou appka toleruje, než přijde vyhazov
+const SENIORITY_BONUS_PER_SHIFT = 0.4; // Kč navíc k platu za každou odslouženou směnu na AKTUÁLNÍ pozici
+const SENIORITY_BONUS_CAP = 60;        // max příplatek za stáž (Kč/směna)
+const TIP_CHANCE = 0.35;               // 35% šance na bonus/spropitné při směně
+const TIP_MIN_RATIO = 0.05, TIP_MAX_RATIO = 0.25; // bonus 5-25 % platu navíc
+
+function haversine(a, b){
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+  const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+const REAL_HOUSES = [
+  {id:'h_0', lat:49.145079, lng:17.001783, basePrice:2730, levels:1},
+  {id:'h_1', lat:49.145199, lng:17.001805, basePrice:4050, levels:2},
+  {id:'h_2', lat:49.145238, lng:17.00115, basePrice:2760, levels:1},
+  {id:'h_3', lat:49.145253, lng:17.001618, basePrice:2820, levels:1},
+  {id:'h_4', lat:49.145314, lng:17.001141, basePrice:2810, levels:1},
+  {id:'h_5', lat:49.145394, lng:17.001111, basePrice:2850, levels:1},
+  {id:'h_6', lat:49.14554, lng:17.001067, basePrice:2930, levels:1},
+  {id:'h_7', lat:49.145615, lng:17.00157, basePrice:3030, levels:1},
+  {id:'h_8', lat:49.145668, lng:17.000968, basePrice:2990, levels:1},
+  {id:'h_9', lat:49.145788, lng:17.007735, basePrice:2760, levels:1},
+  {id:'h_10', lat:49.145823, lng:17.000537, basePrice:3010, levels:1},
+  {id:'h_11', lat:49.145824, lng:17.001717, basePrice:3160, levels:1},
+  {id:'h_12', lat:49.145853, lng:17.000814, basePrice:3070, levels:1},
+  {id:'h_13', lat:49.145883, lng:17.001343, basePrice:3160, levels:1},
+  {id:'h_14', lat:49.145884, lng:17.007724, basePrice:2810, levels:1},
+  {id:'h_15', lat:49.145937, lng:17.000614, basePrice:3080, levels:1},
+  {id:'h_16', lat:49.145963, lng:17.001306, basePrice:3200, levels:1},
+  {id:'h_17', lat:49.145968, lng:17.007653, basePrice:2870, levels:1},
+  {id:'h_18', lat:49.146041, lng:17.000692, basePrice:5960, levels:3},
+  {id:'h_19', lat:49.146056, lng:17.007624, basePrice:2920, levels:1},
+  {id:'h_20', lat:49.146105, lng:17.008533, basePrice:3960, levels:2},
+  {id:'h_21', lat:49.146115, lng:17.001239, basePrice:7640, levels:4},
+  {id:'h_22', lat:49.146139, lng:17.007485, basePrice:2990, levels:1},
+  {id:'h_23', lat:49.146161, lng:17.000784, basePrice:3240, levels:1},
+  {id:'h_24', lat:49.146223, lng:17.001208, basePrice:3330, levels:1},
+  {id:'h_25', lat:49.14624, lng:17.007443, basePrice:3050, levels:1},
+  {id:'h_26', lat:49.146307, lng:17.00743, basePrice:3090, levels:1},
+  {id:'h_27', lat:49.146343, lng:17.008447, basePrice:4150, levels:2},
+  {id:'h_28', lat:49.146372, lng:17.001138, basePrice:3400, levels:1},
+  {id:'h_29', lat:49.146408, lng:17.007357, basePrice:3160, levels:1},
+  {id:'h_30', lat:49.146443, lng:17.008366, basePrice:4240, levels:2},
+  {id:'h_31', lat:49.14645, lng:17.009058, basePrice:5210, levels:3},
+  {id:'h_32', lat:49.146461, lng:17.007278, basePrice:3200, levels:1},
+  {id:'h_33', lat:49.146513, lng:17.001137, basePrice:5030, levels:2},
+  {id:'h_34', lat:49.146546, lng:17.008321, basePrice:3000, levels:1},
+  {id:'h_35', lat:49.14656, lng:17.007178, basePrice:3270, levels:1},
+  {id:'h_36', lat:49.146649, lng:17.00827, basePrice:3060, levels:1},
+  {id:'h_37', lat:49.146664, lng:17.001223, basePrice:3580, levels:1},
+  {id:'h_38', lat:49.146704, lng:17.007089, basePrice:3360, levels:1},
+  {id:'h_39', lat:49.146752, lng:17.008222, basePrice:5880, levels:3},
+  {id:'h_40', lat:49.146781, lng:17.001325, basePrice:3660, levels:1},
+  {id:'h_41', lat:49.146802, lng:17.00704, basePrice:3420, levels:1},
+  {id:'h_42', lat:49.146817, lng:17.00958, basePrice:2770, levels:1},
+  {id:'h_43', lat:49.146824, lng:17.009127, basePrice:4190, levels:2},
+  {id:'h_44', lat:49.146857, lng:17.007016, basePrice:3450, levels:1},
+  {id:'h_45', lat:49.146888, lng:17.007676, basePrice:4790, levels:2},
+  {id:'h_46', lat:49.146892, lng:17.008201, basePrice:4600, levels:2},
+  {id:'h_47', lat:49.146903, lng:17.001004, basePrice:3680, levels:1},
+  {id:'h_48', lat:49.146925, lng:17.001447, basePrice:3760, levels:1},
+  {id:'h_49', lat:49.14693, lng:17.007206, basePrice:3450, levels:1},
+  {id:'h_50', lat:49.146974, lng:17.001052, basePrice:3720, levels:1},
+  {id:'h_51', lat:49.147009, lng:17.006891, basePrice:3560, levels:1},
+  {id:'h_52', lat:49.147072, lng:17.001096, basePrice:5470, levels:2},
+  {id:'h_53', lat:49.147349, lng:17.007325, basePrice:6830, levels:3},
+  {id:'h_54', lat:49.147388, lng:17.006889, basePrice:7070, levels:3},
+  {id:'h_55', lat:49.147484, lng:17.007352, basePrice:6930, levels:3},
+  {id:'h_56', lat:49.147695, lng:17.005903, basePrice:4110, levels:1},
+  {id:'h_57', lat:49.147912, lng:17.006165, basePrice:4160, levels:1},
+  {id:'h_58', lat:49.147945, lng:17.005381, basePrice:4340, levels:1},
+  {id:'h_59', lat:49.147979, lng:17.006049, basePrice:4220, levels:1},
+  {id:'h_60', lat:49.14807, lng:17.005951, basePrice:4290, levels:1},
+  {id:'h_61', lat:49.148164, lng:17.005824, basePrice:4370, levels:1},
+  {id:'h_62', lat:49.148215, lng:17.005058, basePrice:4550, levels:1},
+  {id:'h_63', lat:49.148238, lng:17.005658, basePrice:6410, levels:2},
+  {id:'h_64', lat:49.148345, lng:17.004571, basePrice:4690, levels:1},
+  {id:'h_65', lat:49.148363, lng:17.004904, basePrice:4650, levels:1},
+  {id:'h_66', lat:49.148384, lng:17.006258, basePrice:6300, levels:2},
+  {id:'h_67', lat:49.148405, lng:17.005431, basePrice:4570, levels:1},
+  {id:'h_68', lat:49.148413, lng:17.00279, basePrice:4770, levels:1},
+  {id:'h_69', lat:49.148425, lng:17.002925, basePrice:4790, levels:1},
+  {id:'h_70', lat:49.14847, lng:17.002961, basePrice:4820, levels:1},
+  {id:'h_71', lat:49.148509, lng:17.006274, basePrice:4410, levels:1},
+  {id:'h_72', lat:49.148536, lng:17.003009, basePrice:4860, levels:1},
+  {id:'h_73', lat:49.148536, lng:17.005403, basePrice:4640, levels:1},
+  {id:'h_74', lat:49.148549, lng:17.004625, basePrice:4800, levels:1},
+  {id:'h_75', lat:49.148589, lng:17.010787, basePrice:4190, levels:2},
+  {id:'h_76', lat:49.148593, lng:17.004493, basePrice:4840, levels:1},
+  {id:'h_77', lat:49.1486, lng:17.005108, basePrice:4740, levels:1},
+  {id:'h_78', lat:49.148608, lng:17.001679, basePrice:6780, levels:2},
+  {id:'h_79', lat:49.148646, lng:17.006781, basePrice:4310, levels:1},
+  {id:'h_80', lat:49.148669, lng:17.003042, basePrice:7140, levels:2},
+  {id:'h_81', lat:49.14867, lng:17.006266, basePrice:4480, levels:1},
+  {id:'h_82', lat:49.148731, lng:17.001511, basePrice:6810, levels:2},
+  {id:'h_83', lat:49.148744, lng:17.004178, basePrice:7180, levels:2},
+  {id:'h_84', lat:49.148752, lng:17.001925, basePrice:6970, levels:2},
+  {id:'h_85', lat:49.148778, lng:17.003161, basePrice:5020, levels:1},
+  {id:'h_86', lat:49.148818, lng:17.00488, basePrice:7080, levels:2},
+  {id:'h_87', lat:49.148855, lng:17.00713, basePrice:4270, levels:1},
+  {id:'h_88', lat:49.148907, lng:17.003945, basePrice:5090, levels:1},
+  {id:'h_89', lat:49.148936, lng:17.003547, basePrice:7400, levels:2},
+  {id:'h_90', lat:49.148963, lng:17.003819, basePrice:5130, levels:1},
+  {id:'h_91', lat:49.148995, lng:17.00617, basePrice:10800, levels:4},
+  {id:'h_92', lat:49.14909, lng:17.010349, basePrice:5960, levels:3},
+  {id:'h_93', lat:49.149107, lng:17.004292, basePrice:5160, levels:1},
+  {id:'h_94', lat:49.149185, lng:17.004178, basePrice:5220, levels:1},
+  {id:'h_95', lat:49.149227, lng:17.006196, basePrice:10970, levels:4},
+  {id:'h_96', lat:49.149281, lng:17.004028, basePrice:5290, levels:1},
+  {id:'h_97', lat:49.149324, lng:17.003864, basePrice:7710, levels:2},
+  {id:'h_98', lat:49.149338, lng:17.01069, basePrice:3060, levels:1},
+  {id:'h_99', lat:49.149343, lng:17.0089, basePrice:3740, levels:1},
+  {id:'h_100', lat:49.14935, lng:17.00604, basePrice:11180, levels:4},
+  {id:'h_101', lat:49.149358, lng:17.009995, basePrice:3330, levels:1},
+  {id:'h_102', lat:49.14936, lng:17.010097, basePrice:4750, levels:2},
+  {id:'h_103', lat:49.149363, lng:17.010208, basePrice:3250, levels:1},
+  {id:'h_104', lat:49.149365, lng:17.009019, basePrice:3700, levels:1},
+  {id:'h_105', lat:49.149365, lng:17.009887, basePrice:3370, levels:1},
+  {id:'h_106', lat:49.149376, lng:17.009177, basePrice:3640, levels:1},
+  {id:'h_107', lat:49.149379, lng:17.007825, basePrice:4150, levels:1},
+  {id:'h_108', lat:49.149384, lng:17.010558, basePrice:3110, levels:1},
+  {id:'h_109', lat:49.149389, lng:17.00959, basePrice:6580, levels:3},
+  {id:'h_110', lat:49.149428, lng:17.010743, basePrice:3050, levels:1},
+  {id:'h_111', lat:49.149435, lng:17.009361, basePrice:3580, levels:1},
+  {id:'h_112', lat:49.149464, lng:17.010843, basePrice:3010, levels:1},
+  {id:'h_113', lat:49.149468, lng:17.00903, basePrice:5360, levels:2},
+  {id:'h_114', lat:49.149471, lng:17.005886, basePrice:11380, levels:4},
+  {id:'h_115', lat:49.149477, lng:17.010975, basePrice:2960, levels:1},
+  {id:'h_116', lat:49.149482, lng:17.008347, basePrice:3970, levels:1},
+  {id:'h_117', lat:49.149485, lng:17.003992, basePrice:5410, levels:1},
+  {id:'h_118', lat:49.149496, lng:17.008664, basePrice:3860, levels:1},
+  {id:'h_119', lat:49.1495, lng:17.008219, basePrice:4030, levels:1},
+  {id:'h_120', lat:49.149504, lng:17.008476, basePrice:5670, levels:2},
+  {id:'h_121', lat:49.149524, lng:17.011288, basePrice:2850, levels:1},
+  {id:'h_122', lat:49.149535, lng:17.01106, basePrice:2940, levels:1},
+  {id:'h_123', lat:49.149538, lng:17.00805, basePrice:4100, levels:1},
+  {id:'h_124', lat:49.149538, lng:17.011199, basePrice:2880, levels:1},
+  {id:'h_125', lat:49.149577, lng:17.011372, basePrice:2820, levels:1},
+  {id:'h_126', lat:49.149592, lng:17.004162, basePrice:5440, levels:1},
+  {id:'h_127', lat:49.149592, lng:17.005729, basePrice:13800, levels:5},
+  {id:'h_128', lat:49.149616, lng:17.004915, basePrice:5250, levels:1},
+  {id:'h_129', lat:49.149628, lng:17.009464, basePrice:3560, levels:1},
+  {id:'h_130', lat:49.149633, lng:17.009601, basePrice:3510, levels:1},
+  {id:'h_131', lat:49.149634, lng:17.009813, basePrice:3430, levels:1},
+  {id:'h_132', lat:49.149646, lng:17.00928, basePrice:3640, levels:1},
+  {id:'h_133', lat:49.149655, lng:17.00859, basePrice:3900, levels:1},
+  {id:'h_134', lat:49.149658, lng:17.01152, basePrice:2770, levels:1},
+  {id:'h_135', lat:49.149664, lng:17.009383, basePrice:3600, levels:1},
+  {id:'h_136', lat:49.149671, lng:17.008363, basePrice:3990, levels:1},
+  {id:'h_137', lat:49.149674, lng:17.004933, basePrice:5260, levels:1},
+  {id:'h_138', lat:49.149685, lng:17.008813, basePrice:3820, levels:1},
+  {id:'h_139', lat:49.149687, lng:17.00893, basePrice:3780, levels:1},
+  {id:'h_140', lat:49.149693, lng:17.011663, basePrice:2710, levels:1},
+  {id:'h_141', lat:49.149714, lng:17.005583, basePrice:11780, levels:4},
+  {id:'h_142', lat:49.149791, lng:17.004389, basePrice:12780, levels:4},
+  {id:'h_143', lat:49.149807, lng:17.00936, basePrice:3620, levels:1},
+  {id:'h_144', lat:49.149816, lng:17.00874, basePrice:5580, levels:2},
+  {id:'h_145', lat:49.149819, lng:17.00884, basePrice:3820, levels:1},
+  {id:'h_146', lat:49.149833, lng:17.008986, basePrice:3770, levels:1},
+  {id:'h_147', lat:49.149852, lng:17.008898, basePrice:3800, levels:1},
+  {id:'h_148', lat:49.149861, lng:17.008381, basePrice:4000, levels:1},
+  {id:'h_149', lat:49.149861, lng:17.009818, basePrice:3440, levels:1},
+  {id:'h_150', lat:49.149876, lng:17.009413, basePrice:3600, levels:1},
+  {id:'h_151', lat:49.149888, lng:17.008429, basePrice:3990, levels:1},
+  {id:'h_152', lat:49.149894, lng:17.008526, basePrice:3950, levels:1},
+  {id:'h_153', lat:49.149899, lng:17.002585, basePrice:7960, levels:2},
+  {id:'h_154', lat:49.149904, lng:17.00811, basePrice:4110, levels:1},
+  {id:'h_155', lat:49.149942, lng:17.008582, basePrice:3930, levels:1},
+  {id:'h_156', lat:49.149986, lng:17.008802, basePrice:5560, levels:2},
+  {id:'h_157', lat:49.149987, lng:17.008904, basePrice:3810, levels:1},
+  {id:'h_158', lat:49.149988, lng:17.00972, basePrice:3490, levels:1},
+  {id:'h_159', lat:49.15001, lng:17.009012, basePrice:3770, levels:1},
+  {id:'h_160', lat:49.150017, lng:17.006084, basePrice:4910, levels:1},
+  {id:'h_161', lat:49.150018, lng:17.002872, basePrice:8150, levels:2},
+  {id:'h_162', lat:49.15002, lng:17.008271, basePrice:4060, levels:1},
+  {id:'h_163', lat:49.150022, lng:17.004704, basePrice:10270, levels:3},
+  {id:'h_164', lat:49.150062, lng:17.009576, basePrice:3550, levels:1},
+  {id:'h_165', lat:49.150064, lng:17.008369, basePrice:4020, levels:1},
+  {id:'h_166', lat:49.150091, lng:17.005099, basePrice:10010, levels:3},
+  {id:'h_167', lat:49.150107, lng:17.008485, basePrice:3980, levels:1},
+  {id:'h_168', lat:49.150142, lng:17.007982, basePrice:4180, levels:1},
+  {id:'h_169', lat:49.150163, lng:17.007517, basePrice:4360, levels:1},
+  {id:'h_170', lat:49.150188, lng:17.006021, basePrice:4950, levels:1},
+  {id:'h_171', lat:49.150197, lng:17.004274, basePrice:13140, levels:4},
+  {id:'h_172', lat:49.150203, lng:16.999952, basePrice:4540, levels:1},
+  {id:'h_173', lat:49.150209, lng:17.00389, basePrice:8340, levels:2},
+  {id:'h_174', lat:49.15021, lng:17.008751, basePrice:3880, levels:1},
+  {id:'h_175', lat:49.150222, lng:17.000065, basePrice:4590, levels:1},
+  {id:'h_176', lat:49.150233, lng:17.003807, basePrice:8400, levels:2},
+  {id:'h_177', lat:49.150243, lng:17.007831, basePrice:6120, levels:2},
+  {id:'h_178', lat:49.15027, lng:17.007428, basePrice:6350, levels:2},
+  {id:'h_179', lat:49.150292, lng:17.003596, basePrice:8520, levels:2},
+  {id:'h_180', lat:49.150332, lng:17.005975, basePrice:7180, levels:2},
+  {id:'h_181', lat:49.150373, lng:17.005601, basePrice:5110, levels:1},
+  {id:'h_182', lat:49.150378, lng:17.007824, basePrice:4240, levels:1},
+  {id:'h_183', lat:49.150459, lng:17.003341, basePrice:8420, levels:2},
+  {id:'h_184', lat:49.150479, lng:17.007314, basePrice:4440, levels:1},
+  {id:'h_185', lat:49.150495, lng:17.007806, basePrice:4240, levels:1},
+  {id:'h_186', lat:49.150499, lng:17.005368, basePrice:9820, levels:3},
+  {id:'h_187', lat:49.150511, lng:17.007198, basePrice:4480, levels:1},
+  {id:'h_188', lat:49.150522, lng:17.00435, basePrice:13020, levels:4},
+  {id:'h_189', lat:49.15054, lng:17.00039, basePrice:4710, levels:1},
+  {id:'h_190', lat:49.150564, lng:17.01026, basePrice:3280, levels:1},
+  {id:'h_191', lat:49.15057, lng:17.003671, basePrice:8330, levels:2},
+  {id:'h_192', lat:49.150576, lng:17.010097, basePrice:3340, levels:1},
+  {id:'h_193', lat:49.150579, lng:17.007142, basePrice:4500, levels:1},
+  {id:'h_194', lat:49.150585, lng:17.010665, basePrice:3120, levels:1},
+  {id:'h_195', lat:49.150592, lng:17.010523, basePrice:3180, levels:1},
+  {id:'h_196', lat:49.150599, lng:17.000383, basePrice:4700, levels:1},
+  {id:'h_197', lat:49.150603, lng:17.00415, basePrice:13130, levels:4},
+  {id:'h_198', lat:49.150622, lng:17.000216, basePrice:4640, levels:1},
+  {id:'h_199', lat:49.150635, lng:17.000066, basePrice:4580, levels:1},
+  {id:'h_200', lat:49.150635, lng:17.009695, basePrice:3500, levels:1},
+  {id:'h_201', lat:49.150637, lng:17.00708, basePrice:4520, levels:1},
+  {id:'h_202', lat:49.150674, lng:17.0111, basePrice:2950, levels:1},
+  {id:'h_203', lat:49.15068, lng:17.003957, basePrice:10670, levels:3},
+  {id:'h_204', lat:49.150681, lng:17.01095, basePrice:3000, levels:1},
+  {id:'h_205', lat:49.150696, lng:16.999937, basePrice:4520, levels:1},
+  {id:'h_206', lat:49.150714, lng:17.007757, basePrice:4250, levels:1},
+  {id:'h_207', lat:49.150726, lng:17.007525, basePrice:4340, levels:1},
+  {id:'h_208', lat:49.150744, lng:17.00935, basePrice:3630, levels:1},
+  {id:'h_209', lat:49.150755, lng:17.000969, basePrice:4910, levels:1},
+  {id:'h_210', lat:49.150773, lng:17.005644, basePrice:9540, levels:3},
+  {id:'h_211', lat:49.150777, lng:17.008023, basePrice:4140, levels:1},
+  {id:'h_212', lat:49.150783, lng:17.011514, basePrice:2780, levels:1},
+  {id:'h_213', lat:49.150787, lng:17.011392, basePrice:2830, levels:1},
+  {id:'h_214', lat:49.150789, lng:17.004939, basePrice:5300, levels:1},
+  {id:'h_215', lat:49.150809, lng:17.002426, basePrice:7830, levels:2},
+  {id:'h_216', lat:49.150811, lng:17.007518, basePrice:4330, levels:1},
+  {id:'h_217', lat:49.150828, lng:17.003777, basePrice:8100, levels:2},
+  {id:'h_218', lat:49.15086, lng:17.009098, basePrice:3720, levels:1},
+  {id:'h_219', lat:49.150873, lng:17.009982, basePrice:3370, levels:1},
+  {id:'h_220', lat:49.150877, lng:17.000733, basePrice:4800, levels:1},
+  {id:'h_221', lat:49.15088, lng:17.00537, basePrice:5130, levels:1},
+  {id:'h_222', lat:49.150888, lng:17.010358, basePrice:3220, levels:1},
+  {id:'h_223', lat:49.150918, lng:17.007466, basePrice:4340, levels:1},
+  {id:'h_224', lat:49.150923, lng:17.000545, basePrice:4720, levels:1},
+  {id:'h_225', lat:49.150946, lng:17.006637, basePrice:4650, levels:1},
+  {id:'h_226', lat:49.15095, lng:17.002569, basePrice:7810, levels:2},
+  {id:'h_227', lat:49.150982, lng:17.007348, basePrice:4370, levels:1},
+  {id:'h_228', lat:49.150984, lng:17.00897, basePrice:3750, levels:1},
+  {id:'h_229', lat:49.150985, lng:17.000432, basePrice:4670, levels:1},
+  {id:'h_230', lat:49.150991, lng:17.004526, basePrice:7740, levels:2},
+  {id:'h_231', lat:49.151004, lng:17.005909, basePrice:9260, levels:3},
+  {id:'h_232', lat:49.151009, lng:17.000222, basePrice:4580, levels:1},
+  {id:'h_233', lat:49.151017, lng:17.004088, basePrice:7870, levels:2},
+  {id:'h_234', lat:49.151056, lng:17.002676, basePrice:7780, levels:2},
+  {id:'h_235', lat:49.151087, lng:17.007382, basePrice:4340, levels:1},
+  {id:'h_236', lat:49.151108, lng:17.008836, basePrice:3790, levels:1},
+  {id:'h_237', lat:49.151133, lng:16.999954, basePrice:4460, levels:1},
+  {id:'h_238', lat:49.151143, lng:17.004357, basePrice:5330, levels:1},
+  {id:'h_239', lat:49.151158, lng:17.007268, basePrice:4370, levels:1},
+  {id:'h_240', lat:49.151161, lng:17.009968, basePrice:3350, levels:1},
+  {id:'h_241', lat:49.151165, lng:17.006343, basePrice:6800, levels:2},
+  {id:'h_242', lat:49.151167, lng:17.009301, basePrice:5200, levels:2},
+  {id:'h_243', lat:49.151167, lng:17.009539, basePrice:3510, levels:1},
+  {id:'h_244', lat:49.151174, lng:17.010324, basePrice:3210, levels:1},
+  {id:'h_245', lat:49.151189, lng:17.009703, basePrice:3450, levels:1},
+  {id:'h_246', lat:49.151245, lng:17.002208, basePrice:7480, levels:2},
+  {id:'h_247', lat:49.151258, lng:17.008696, basePrice:3820, levels:1},
+  {id:'h_248', lat:49.151387, lng:17.007525, basePrice:4230, levels:1},
+  {id:'h_249', lat:49.151391, lng:17.008591, basePrice:3840, levels:1},
+  {id:'h_250', lat:49.151408, lng:17.002901, basePrice:7560, levels:2},
+  {id:'h_251', lat:49.151424, lng:17.001856, basePrice:7230, levels:2},
+  {id:'h_252', lat:49.151453, lng:17.009201, basePrice:3600, levels:1},
+  {id:'h_253', lat:49.151477, lng:17.00569, basePrice:4830, levels:1},
+  {id:'h_254', lat:49.151481, lng:17.006418, basePrice:4590, levels:1},
+  {id:'h_255', lat:49.151485, lng:17.006986, basePrice:4400, levels:1},
+  {id:'h_256', lat:49.151492, lng:17.006724, basePrice:4480, levels:1},
+  {id:'h_257', lat:49.151494, lng:17.006821, basePrice:4450, levels:1},
+  {id:'h_258', lat:49.151501, lng:17.002642, basePrice:5140, levels:1},
+  {id:'h_259', lat:49.151506, lng:17.001211, basePrice:11170, levels:4},
+  {id:'h_260', lat:49.151516, lng:17.009416, basePrice:5060, levels:2},
+  {id:'h_261', lat:49.151521, lng:17.00662, basePrice:4510, levels:1},
+  {id:'h_262', lat:49.151522, lng:17.000082, basePrice:10290, levels:4},
+  {id:'h_263', lat:49.151534, lng:17.005575, basePrice:4840, levels:1},
+  {id:'h_264', lat:49.151536, lng:17.00044, basePrice:10560, levels:4},
+  {id:'h_265', lat:49.151536, lng:17.001006, basePrice:10990, levels:4},
+  {id:'h_266', lat:49.151538, lng:17.009558, basePrice:4980, levels:2},
+  {id:'h_267', lat:49.151541, lng:17.000619, basePrice:10700, levels:4},
+  {id:'h_268', lat:49.151548, lng:17.000808, basePrice:10840, levels:4},
+  {id:'h_269', lat:49.151548, lng:17.008481, basePrice:3840, levels:1},
+  {id:'h_270', lat:49.151559, lng:17.00969, basePrice:4900, levels:2},
+  {id:'h_271', lat:49.151578, lng:17.009833, basePrice:4820, levels:2},
+  {id:'h_272', lat:49.151581, lng:17.008913, basePrice:3680, levels:1},
+  {id:'h_273', lat:49.151604, lng:17.005481, basePrice:4840, levels:1},
+  {id:'h_274', lat:49.151622, lng:17.005352, basePrice:4860, levels:1},
+  {id:'h_275', lat:49.151663, lng:17.010087, basePrice:3230, levels:1},
+  {id:'h_276', lat:49.151673, lng:17.00708, basePrice:4310, levels:1},
+  {id:'h_277', lat:49.151674, lng:17.008845, basePrice:3680, levels:1},
+  {id:'h_278', lat:49.151692, lng:17.005275, basePrice:4850, levels:1},
+  {id:'h_279', lat:49.151692, lng:17.006939, basePrice:4350, levels:1},
+  {id:'h_280', lat:49.151695, lng:17.002245, basePrice:7180, levels:2},
+  {id:'h_281', lat:49.151707, lng:17.007061, basePrice:4310, levels:1},
+  {id:'h_282', lat:49.151714, lng:17.011052, basePrice:5390, levels:3},
+  {id:'h_283', lat:49.151731, lng:17.001977, basePrice:4890, levels:1},
+  {id:'h_284', lat:49.151744, lng:17.008163, basePrice:7390, levels:3},
+  {id:'h_285', lat:49.151744, lng:17.011275, basePrice:6450, levels:4},
+  {id:'h_286', lat:49.151771, lng:17.0051, basePrice:7010, levels:2},
+  {id:'h_287', lat:49.151825, lng:17.001805, basePrice:4810, levels:1},
+  {id:'h_288', lat:49.151845, lng:17.007451, basePrice:4130, levels:1},
+  {id:'h_289', lat:49.151849, lng:17.00493, basePrice:4850, levels:1},
+  {id:'h_290', lat:49.151881, lng:17.001614, basePrice:4740, levels:1},
+  {id:'h_291', lat:49.151909, lng:17.008693, basePrice:6960, levels:3},
+  {id:'h_292', lat:49.15191, lng:17.004837, basePrice:4840, levels:1},
+  {id:'h_293', lat:49.151948, lng:17.004751, basePrice:4840, levels:1},
+  {id:'h_294', lat:49.151955, lng:17.010304, basePrice:3090, levels:1},
+  {id:'h_295', lat:49.151968, lng:17.008889, basePrice:6800, levels:3},
+  {id:'h_296', lat:49.151981, lng:16.999951, basePrice:4220, levels:1},
+  {id:'h_297', lat:49.151987, lng:17.000194, basePrice:4290, levels:1},
+  {id:'h_298', lat:49.152006, lng:17.002626, basePrice:7020, levels:2},
+  {id:'h_299', lat:49.152007, lng:17.004666, basePrice:4820, levels:1},
+  {id:'h_300', lat:49.152017, lng:17.00063, basePrice:4410, levels:1},
+  {id:'h_301', lat:49.152024, lng:17.000415, basePrice:4350, levels:1},
+  {id:'h_302', lat:49.152039, lng:17.002399, basePrice:6950, levels:2},
+  {id:'h_303', lat:49.152039, lng:17.004585, basePrice:4810, levels:1},
+  {id:'h_304', lat:49.152046, lng:17.009189, basePrice:3470, levels:1},
+  {id:'h_305', lat:49.152062, lng:17.00748, basePrice:4050, levels:1},
+  {id:'h_306', lat:49.152121, lng:17.001342, basePrice:6580, levels:2},
+  {id:'h_307', lat:49.152124, lng:17.00943, basePrice:3370, levels:1},
+  {id:'h_308', lat:49.152126, lng:17.008048, basePrice:3840, levels:1},
+  {id:'h_309', lat:49.152144, lng:17.000715, basePrice:4380, levels:1},
+  {id:'h_310', lat:49.152155, lng:17.004807, basePrice:4710, levels:1},
+  {id:'h_311', lat:49.152175, lng:17.004681, basePrice:4720, levels:1},
+  {id:'h_312', lat:49.15218, lng:17.007571, basePrice:3980, levels:1},
+  {id:'h_313', lat:49.152186, lng:17.008424, basePrice:3700, levels:1},
+  {id:'h_314', lat:49.152216, lng:17.009682, basePrice:3250, levels:1},
+  {id:'h_315', lat:49.152229, lng:17.004566, basePrice:4710, levels:1},
+  {id:'h_316', lat:49.152233, lng:17.005066, basePrice:4630, levels:1},
+  {id:'h_317', lat:49.1523, lng:17.004879, basePrice:4620, levels:1},
+  {id:'h_318', lat:49.152307, lng:17.005098, basePrice:4580, levels:1},
+  {id:'h_319', lat:49.152338, lng:17.004354, basePrice:4670, levels:1},
+  {id:'h_320', lat:49.152356, lng:17.007649, basePrice:3900, levels:1},
+  {id:'h_321', lat:49.152377, lng:17.00516, basePrice:6550, levels:2},
+  {id:'h_322', lat:49.152438, lng:17.004033, basePrice:4640, levels:1},
+  {id:'h_323', lat:49.152444, lng:17.011022, basePrice:5130, levels:3},
+  {id:'h_324', lat:49.152473, lng:17.007705, basePrice:3840, levels:1},
+  {id:'h_325', lat:49.152532, lng:17.010336, basePrice:5550, levels:3},
+  {id:'h_326', lat:49.152544, lng:17.003558, basePrice:4590, levels:1},
+  {id:'h_327', lat:49.152555, lng:17.004957, basePrice:4470, levels:1},
+  {id:'h_328', lat:49.152563, lng:17.010833, basePrice:5200, levels:3},
+  {id:'h_329', lat:49.152566, lng:17.007772, basePrice:3780, levels:1},
+  {id:'h_330', lat:49.152599, lng:17.005293, basePrice:4390, levels:1},
+  {id:'h_331', lat:49.152621, lng:17.002544, basePrice:4500, levels:1},
+  {id:'h_332', lat:49.152621, lng:17.009434, basePrice:3220, levels:1},
+  {id:'h_333', lat:49.152634, lng:17.004057, basePrice:4520, levels:1},
+  {id:'h_334', lat:49.152646, lng:17.008681, basePrice:3460, levels:1},
+  {id:'h_335', lat:49.152647, lng:17.009069, basePrice:3340, levels:1},
+  {id:'h_336', lat:49.152649, lng:17.009181, basePrice:3300, levels:1},
+  {id:'h_337', lat:49.152651, lng:17.009278, basePrice:3270, levels:1},
+  {id:'h_338', lat:49.152654, lng:17.004373, basePrice:4490, levels:1},
+  {id:'h_339', lat:49.152664, lng:17.003071, basePrice:4510, levels:1},
+  {id:'h_340', lat:49.152684, lng:17.003418, basePrice:4510, levels:1},
+  {id:'h_341', lat:49.152695, lng:17.003874, basePrice:4490, levels:1},
+  {id:'h_342', lat:49.152696, lng:17.005327, basePrice:4330, levels:1},
+  {id:'h_343', lat:49.152698, lng:17.001278, basePrice:4260, levels:1},
+  {id:'h_344', lat:49.152706, lng:17.003708, basePrice:4490, levels:1},
+  {id:'h_345', lat:49.152722, lng:17.000988, basePrice:4180, levels:1},
+  {id:'h_346', lat:49.152728, lng:17.004013, basePrice:4470, levels:1},
+  {id:'h_347', lat:49.15273, lng:17.00163, basePrice:4310, levels:1},
+  {id:'h_348', lat:49.152763, lng:17.0023, basePrice:4390, levels:1},
+  {id:'h_349', lat:49.152767, lng:17.000612, basePrice:4070, levels:1},
+  {id:'h_350', lat:49.152785, lng:17.001245, basePrice:4200, levels:1},
+  {id:'h_351', lat:49.152797, lng:17.000725, basePrice:4090, levels:1},
+  {id:'h_352', lat:49.152802, lng:17.000366, basePrice:5780, levels:2},
+  {id:'h_353', lat:49.152804, lng:17.000217, basePrice:3960, levels:1},
+  {id:'h_354', lat:49.152807, lng:17.00048, basePrice:4020, levels:1},
+  {id:'h_355', lat:49.152809, lng:17.000122, basePrice:5680, levels:2},
+  {id:'h_356', lat:49.152818, lng:17.000285, basePrice:3970, levels:1},
+  {id:'h_357', lat:49.152855, lng:17.004409, basePrice:4360, levels:1},
+  {id:'h_358', lat:49.152877, lng:17.004567, basePrice:4340, levels:1},
+  {id:'h_359', lat:49.15288, lng:17.002846, basePrice:4370, levels:1},
+  {id:'h_360', lat:49.152887, lng:17.002354, basePrice:4320, levels:1},
+  {id:'h_361', lat:49.152888, lng:17.00271, basePrice:4360, levels:1},
+  {id:'h_362', lat:49.152891, lng:17.003643, basePrice:6330, levels:2},
+  {id:'h_363', lat:49.152892, lng:17.002476, basePrice:4330, levels:1},
+  {id:'h_364', lat:49.152905, lng:17.001059, basePrice:7760, levels:3},
+  {id:'h_365', lat:49.152905, lng:17.002595, basePrice:4340, levels:1},
+  {id:'h_366', lat:49.152955, lng:17.004692, basePrice:6180, levels:2},
+  {id:'h_367', lat:49.152965, lng:17.001989, basePrice:4230, levels:1},
+  {id:'h_368', lat:49.152983, lng:17.009899, basePrice:2960, levels:1},
+  {id:'h_369', lat:49.152988, lng:17.003362, basePrice:4320, levels:1},
+  {id:'h_370', lat:49.152994, lng:17.00106, basePrice:5860, levels:2},
+  {id:'h_371', lat:49.153004, lng:17.002098, basePrice:4230, levels:1},
+  {id:'h_372', lat:49.153005, lng:17.001538, basePrice:4140, levels:1},
+  {id:'h_373', lat:49.153013, lng:17.001667, basePrice:6010, levels:2},
+  {id:'h_374', lat:49.153014, lng:17.004747, basePrice:4240, levels:1},
+  {id:'h_375', lat:49.153015, lng:17.009297, basePrice:5930, levels:3},
+  {id:'h_376', lat:49.153018, lng:17.003496, basePrice:4310, levels:1},
+  {id:'h_377', lat:49.153019, lng:17.001922, basePrice:4190, levels:1},
+  {id:'h_378', lat:49.153019, lng:17.010478, basePrice:2750, levels:1},
+  {id:'h_379', lat:49.153025, lng:17.001796, basePrice:4170, levels:1},
+  {id:'h_380', lat:49.15303, lng:17.002221, basePrice:4220, levels:1},
+  {id:'h_381', lat:49.153035, lng:17.010322, basePrice:2800, levels:1},
+  {id:'h_382', lat:49.153048, lng:17.003093, basePrice:4280, levels:1},
+  {id:'h_383', lat:49.153049, lng:17.002952, basePrice:4280, levels:1},
+  {id:'h_384', lat:49.153051, lng:17.003587, basePrice:4290, levels:1},
+  {id:'h_385', lat:49.153052, lng:17.001314, basePrice:4080, levels:1},
+  {id:'h_386', lat:49.153064, lng:17.001429, basePrice:4090, levels:1},
+  {id:'h_387', lat:49.153071, lng:17.001068, basePrice:4020, levels:1},
+  {id:'h_388', lat:49.153081, lng:17.00367, basePrice:4270, levels:1},
+  {id:'h_389', lat:49.153088, lng:17.008536, basePrice:3350, levels:1},
+  {id:'h_390', lat:49.153093, lng:17.004758, basePrice:4190, levels:1},
+  {id:'h_391', lat:49.153095, lng:17.008701, basePrice:3300, levels:1},
+  {id:'h_392', lat:49.153101, lng:17.00891, basePrice:3230, levels:1},
+  {id:'h_393', lat:49.153118, lng:17.003778, basePrice:4240, levels:1},
+  {id:'h_394', lat:49.153141, lng:17.005037, basePrice:4130, levels:1},
+  {id:'h_395', lat:49.15315, lng:17.002618, basePrice:4190, levels:1},
+  {id:'h_396', lat:49.153152, lng:17.003899, basePrice:4220, levels:1},
+  {id:'h_397', lat:49.153178, lng:17.002832, basePrice:4190, levels:1},
+  {id:'h_398', lat:49.153188, lng:17.005245, basePrice:4080, levels:1},
+  {id:'h_399', lat:49.153189, lng:17.004963, basePrice:4110, levels:1},
+  {id:'h_400', lat:49.153206, lng:17.004872, basePrice:4110, levels:1},
+  {id:'h_401', lat:49.153306, lng:17.008015, basePrice:3410, levels:1},
+  {id:'h_402', lat:49.153348, lng:17.004629, basePrice:4060, levels:1},
+  {id:'h_403', lat:49.153474, lng:17.008609, basePrice:3170, levels:1},
+  {id:'h_404', lat:49.153686, lng:17.00835, basePrice:3150, levels:1},
+  {id:'h_405', lat:49.153804, lng:17.009757, basePrice:2700, levels:1},
+  {id:'h_406', lat:49.15383, lng:17.009606, basePrice:2740, levels:1},
+  {id:'h_407', lat:49.153874, lng:17.009352, basePrice:4040, levels:2},
+  {id:'h_408', lat:49.153896, lng:17.009208, basePrice:2830, levels:1},
+  {id:'h_409', lat:49.153919, lng:17.008957, basePrice:2890, levels:1},
+  {id:'h_410', lat:49.15393, lng:17.008765, basePrice:4240, levels:2},
+  {id:'h_411', lat:49.153938, lng:17.008387, basePrice:3030, levels:1},
+  {id:'h_412', lat:49.153959, lng:17.007709, basePrice:3190, levels:1},
+  {id:'h_413', lat:49.154096, lng:17.008407, basePrice:2960, levels:1},
+  {id:'h_414', lat:49.154141, lng:17.007761, basePrice:4460, levels:2},
+  {id:'h_415', lat:49.154265, lng:17.008427, basePrice:2870, levels:1},
+  {id:'h_416', lat:49.154314, lng:17.007732, basePrice:3010, levels:1},
+  {id:'h_417', lat:49.154641, lng:17.008185, basePrice:2750, levels:1},
+  {id:'h_418', lat:49.154649, lng:17.007882, basePrice:2810, levels:1},
+  {id:'h_419', lat:49.154666, lng:17.007639, basePrice:2860, levels:1},
+];
+
+// Skutečné domy Bučovic (OSM/RÚIAN data přes Overpass export) — cena podle počtu pater a vzdálenosti od náměstí
+const HOUSE_PRICE_MULTIPLIER = 5;
+function generateHouses(){
+  const grid = {};
+  REAL_HOUSES.forEach(h => {
+    grid[h.id] = {
+      id: h.id, lat: h.lat, lng: h.lng, basePrice: h.basePrice * HOUSE_PRICE_MULTIPLIER, levels: h.levels,
+      owners: {},        // { jménoHráče: procenta } — spoluvlastnictví
+      useType: null,     // null | 'residence' | 'rental' — nastavuje rozhodující podílník
+      units: null,        // pole bytů (jen u pronájmu)
+      gentrifyMult: 1     // dočasný cenový bonus z nákupů v okolí, postupně odeznívá
+    };
+  });
+  return grid;
+}
+
+// ===== SPOLUVLASTNICTVÍ DOMŮ =====
+const HOUSE_SELL_RATIO = 0.6; // kolik % ceny dostaneš zpět při prodeji podílu MĚSTU (rychlý, nevýhodný prodej)
+const MARKET_FEE = 0.03;      // provize 3 % z prodejní ceny při prodeji přes tržiště (jde městu)
+const AUCTION_DURATION_DAYS = 2; // aukce běží 2 herní dny
+
+// ===== TRŽNÍ CYKLUS =====
+// Celoměstský multiplikátor cen, který se pomalu a náhodně vlní kolem 1.0 (mean-reverting random walk).
+// Simuluje recese a konjunktury — na rozdíl od gentrifikace (trvalý růst z poptávky) může i klesat.
+const MARKET_CYCLE_MIN = 0.75, MARKET_CYCLE_MAX = 1.3;
+
+function marketMultiplier(){ return world.marketCycle ? world.marketCycle.mult : 1; }
+function inflationMult(){ return world.inflation || 1; }
+function marketCycleLabel(){
+  const m = marketMultiplier();
+  if(m < 0.85) return {label:'📉 Recese', color:'var(--danger)'};
+  if(m < 0.97) return {label:'📊 Zpomalení', color:'var(--orange)'};
+  if(m <= 1.08) return {label:'📈 Stabilní trh', color:'var(--muted)'};
+  if(m <= 1.18) return {label:'🚀 Konjunktura', color:'var(--accent)'};
+  return {label:'🔥 Realitní boom', color:'var(--gold)'};
+}
+function tickMarketCycle(daysElapsed){
+  if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
+  if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
+  // model se setrvačností: rychlost změny (vel) se hýbe náhodnými šoky a pomalu tlumí (tření),
+  // takže vznikají skutečné delší trendy (recese/boom trvající týdny), ne jen šum kolem 1.0
+  for(let i=0; i<Math.max(1, Math.round(daysElapsed)); i++){
+    let shock = (Math.random()-0.5) * 0.012;
+    if(Math.random() < 0.02) shock += (Math.random()-0.5) * 0.15; // vzácný velký šok = začátek recese/boomu
+    world.marketCycle.vel = world.marketCycle.vel * 0.97 + shock;
+    world.marketCycle.mult += world.marketCycle.vel;
+    world.marketCycle.mult += (1 - world.marketCycle.mult) * 0.004; // velmi slabé dlouhodobé táhnutí k 1.0
+    world.marketCycle.mult = Math.max(MARKET_CYCLE_MIN, Math.min(MARKET_CYCLE_MAX, world.marketCycle.mult));
+  }
+}
+const GENTRIFY_DECAY_PER_DAY = 0.90; // gentrifikační bonus odeznívá — bez dalších nákupů v okolí se cena vrací zpět
+// Aktuální tržní hodnota domu (základ × odeznívající gentrifikace z okolních nákupů × aktuální cyklus)
+function effectiveHousePrice(p){ return p.basePrice * (p.gentrifyMult || 1) * marketMultiplier() * inflationMult(); }
+
+function houseSoldPct(p){ return Object.values(p.owners||{}).reduce((s,v)=>s+v, 0); }
+function houseFreePct(p){ return Math.max(0, 100 - houseSoldPct(p)); }
+function houseHasOwner(p){ return houseSoldPct(p) > 0.001; }
+function myHousePct(p){ return currentUser ? (p.owners?.[currentUser.name] || 0) : 0; }
+function housePricePerPercent(p){ return effectiveHousePrice(p) / 100; }
+// Aktuální tržní hodnota domu za 1 % — zohledňuje stav bytů u pronájmu (zchátralý dům má nižší cenu)
+function houseMarketPricePerPercent(p){
+  let factor = 1;
+  if(p.useType === 'rental' && p.units && p.units.length){
+    const avgCond = p.units.reduce((s,u)=>s+u.condition,0) / p.units.length / 100;
+    factor = 0.6 + 0.4 * avgCond; // stav 100 % → plná cena, stav 0 % → 60 % ceny
+  }
+  return housePricePerPercent(p) * factor;
+}
+
+// Rozhodující podílník = ten s největším podílem (při shodě ten první podle jména)
+function houseDecider(p){
+  let best = null, bestPct = 0;
+  Object.entries(p.owners||{}).forEach(([name, pct]) => {
+    if(pct > bestPct){ bestPct = pct; best = name; }
+  });
+  return best;
+}
+function iAmDecider(p){ return currentUser && houseDecider(p) === currentUser.name; }
+// Zásadní změny (změna využití domu) vyžadují nadpoloviční podíl
+function iHaveMajority(p){ return myHousePct(p) > 50; }
+
+// Férové (tržní) nájemné bytu podle hodnoty domu a počtu bytů — reaguje i na tržní cyklus
+function fairRentForHouse(p){
+  const numUnits = (p.units && p.units.length) || p.levels || 1;
+  // podlaha 35 Kč zajišťuje, že nájemník (35 + TENANT_LIVING_COST) vždy platí víc než vlastník bydlení,
+  // i u vícepatrových domů, kde by se jinak nájem na byt propadl moc nízko
+  return Math.max(35, Math.round(effectiveHousePrice(p) * FAIR_RENT_RATIO / Math.max(1, numUnits/1)) );
+}
+// Odhadované rozpětí nájmu pro hráče — realita: přesnou "správnou cenu" nikdo nezná, jen odhaduješ.
+// Vrací text typu "40–55 Kč" (±18 % kolem férové ceny).
+function rentEstimateRange(p){
+  const fair = fairRentForHouse(p);
+  const lo = Math.round(fair * 0.82);
+  const hi = Math.round(fair * 1.18);
+  return `${lo}–${hi} Kč`;
+}
+// Obsazenost bytu 0–1 podle poměru nastaveného a férového nájmu.
+// nájem ≤ férový → plno (1.0), férový×1 → ~0.9, férový×2 → ~0.2, výš → k nule.
+function unitOccupancy(p, unit){
+  const fair = fairRentForHouse(p);
+  if(unit.rentPrice <= fair) return 1;
+  const ratio = unit.rentPrice / fair; // >1
+  const occ = Math.max(0, 1.2 - 0.7 * ratio); // lineární pokles
+  return Math.max(0, Math.min(1, occ));
+}
+
+// Stav bydlení hráče: 'owner' (vlastní bydlení), 'tenant' (nájemník), 'homeless'
+function housingStatus(name){
+  // vlastník bydlení: má podíl v domě, který je určený jako bydlení
+  const ownsHome = Object.values(world.parcels).some(p => p.useType === 'residence' && (p.owners?.[name] || 0) > 0);
+  if(ownsHome) return 'owner';
+  // nájemník: je zapsaný jako tenant v nějakém bytě
+  const rents = Object.values(world.parcels).some(p => p.units && p.units.some(u => u.tenant === name));
+  if(rents) return 'tenant';
+  return 'homeless';
+}
+// Kolik hráč platí za bydlení celkem/den (životní složka + případný nájem)
+function dailyHousingCost(name){
+  const status = housingStatus(name);
+  if(status === 'owner') return LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT);
+  if(status === 'tenant'){
+    let rent = 0;
+    Object.values(world.parcels).forEach(p => {
+      (p.units||[]).forEach(u => { if(u.tenant === name) rent += u.rentPrice; });
+    });
+    return TENANT_LIVING_COST + rent;
+  }
+  return LIVING_COST;
+}
+
+function generateBusinesses(){
+  const b = {};
+  BUSINESS_DEFS.forEach(def => { b[def.id] = {...def, owners:{}}; });
+  return b;
+}
+
+function loadWorld(){
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if(raw){
+    try{
+      world = JSON.parse(raw);
+      const fresh = generateHouses();
+      Object.keys(fresh).forEach(id => { if(!world.parcels[id]) world.parcels[id] = fresh[id]; });
+      if(!world.jobs) world.jobs = {};
+      JOB_DEFS.forEach(j => {
+        if(!world.jobs[j.id]){ world.jobs[j.id] = {...j, holders:[]}; }
+        else {
+          const wj = world.jobs[j.id];
+          wj.name=j.name; wj.salary=j.salary; wj.desc=j.desc; wj.tier=j.tier; wj.reqShifts=j.reqShifts; wj.slots=j.slots;
+          if(!wj.holders){ wj.holders = wj.holder ? [wj.holder] : []; delete wj.holder; } // migrace jednoho holdera na pole
+        }
+      });
+      Object.values(world.users).forEach(u => {
+        if(u.totalShifts === undefined) u.totalShifts = 0;
+        if(u.jobBanUntil === undefined) u.jobBanUntil = 0;
+        if(u.joinedRealDate === undefined) u.joinedRealDate = Date.now();
+        if(u.joinedGameDay === undefined) u.joinedGameDay = world.day;
+        if(u.peakWorth === undefined) u.peakWorth = Math.max(0, u.balance);
+        if(u.avatar === undefined) u.avatar = '🧑';
+        if(u.currentJobShifts === undefined) u.currentJobShifts = 0;
+        if(u.savings === undefined) u.savings = 0;
+        if(u.achievements === undefined) u.achievements = [];
+        if(u.missedInRow === undefined) u.missedInRow = 0;
+      });
+      Object.values(world.parcels).forEach(p => {
+        if(p.useType === 'shop') p.useType = 'residence';
+        delete p.shopName; delete p.shopDesc; delete p.goods;
+        delete p.hiring; delete p.employeeName; delete p.employeeSalary;
+        // migrace na spoluvlastnictví: starý jediný majitel → 100% podíl
+        if(!p.owners){
+          p.owners = {};
+          if(p.ownerName) p.owners[p.ownerName] = 100;
+          delete p.ownerName;
+        }
+        delete p.condition; delete p.rentPrice; // přesunuto do units
+      });
+      if(!world.businesses) world.businesses = generateBusinesses();
+      if(!world.listings) world.listings = {};
+      if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
+      if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
+      if(world.inflation === undefined) world.inflation = 1;
+      BUSINESS_DEFS.forEach(def => {
+        if(!world.businesses[def.id]) world.businesses[def.id] = {...def, owners:{}};
+        else { // aktualizovat ceny/výnos z definice (mohly se změnit kvůli ladění), vlastníky zachovat
+          const owners = world.businesses[def.id].owners || {};
+          world.businesses[def.id] = {...def, owners};
+        }
+      });
+      Object.values(world.users).forEach(u => { if(!u.loans) u.loans = []; });
+      if(typeof world.day !== 'number') world.day = 1;
+      if(typeof world.dayProgress !== 'number') world.dayProgress = 0;
+      if(typeof world.lastTick !== 'number') world.lastTick = Date.now();
+      return;
+    }catch(e){ console.warn('Poškozená data, generuji nové město.'); }
+  }
+  const jobs = {};
+  JOB_DEFS.forEach(j => jobs[j.id] = {...j, holders:[]});
+  world = {day:1, dayProgress:0, lastTick: Date.now(), users:{}, parcels: generateHouses(), businesses: generateBusinesses(), jobs, listings:{}, marketCycle:{mult:1}, inflation:1};
+  saveWorld();
+}
+
+function saveWorld(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(world)); }
+
+// ===== NOVINY / KRONIKA UDÁLOSTÍ =====
+// Zaznamená událost do herních novin. type určuje ikonu/barvu, text je hláška.
+// Ukládá se do world.news (posledních 60). S Firebase se automaticky sdílí mezi hráči.
+const NEWS_MAX = 60;
+function addNews(type, text){
+  if(!world.news) world.news = [];
+  world.news.unshift({ type, text, day: world.day, ts: Date.now() });
+  if(world.news.length > NEWS_MAX) world.news.length = NEWS_MAX;
+  // nevoláme saveWorld zde — volající už obvykle ukládá; ať se to nezdvojuje
+}
+
+// ===== ZVUKY (generované přes Web Audio API — žádné externí soubory) =====
+let audioCtx = null;
+let soundEnabled = true;
+function loadSoundPref(){
+  try { soundEnabled = localStorage.getItem('bucovice_sound') !== 'off'; } catch(e){}
+}
+function toggleSound(){
+  soundEnabled = !soundEnabled;
+  try { localStorage.setItem('bucovice_sound', soundEnabled ? 'on' : 'off'); } catch(e){}
+  if(soundEnabled) playSound('coin');
+}
+// zahraje sekvenci tónů; každý tón = [frekvence Hz, délka s, typ]
+function playTones(notes){
+  if(!soundEnabled) return;
+  try {
+    if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    let t = audioCtx.currentTime;
+    notes.forEach(([freq, dur, type]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type || 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.18, t + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(t); osc.stop(t + dur);
+      t += dur;
+    });
+  } catch(e){ /* zvuk je jen bonus, chyby ignorujeme */ }
+}
+const SOUNDS = {
+  coin:    [[880,0.08,'square'],[1320,0.10,'square']],       // výdělek / peníze
+  buy:     [[523,0.09],[659,0.09],[784,0.14]],               // koupě (vzestupné akordy)
+  sell:    [[784,0.09],[659,0.11]],                          // prodej
+  success: [[659,0.10],[880,0.10],[1175,0.18]],              // úspěch / achievement
+  error:   [[220,0.14,'sawtooth']],                          // chyba / nemáš peníze
+  click:   [[660,0.05,'triangle']],                          // klik / potvrzení
+  work:    [[440,0.08],[554,0.08],[659,0.12]],               // odpracovaná směna
+  levelup: [[523,0.09],[659,0.09],[784,0.09],[1047,0.20]],   // achievement / postup
+};
+function playSound(name){ if(SOUNDS[name]) playTones(SOUNDS[name]); }
+
+// Escapuje text před vložením do HTML (obrana proti XSS z přezdívek/avatarů)
+function escapeHtml(s){
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ===== REAL-TIME TICK =====
+
+function tick(){
+  const now = Date.now();
+  let elapsed = now - world.lastTick;
+  if(elapsed <= 0){ world.lastTick = now; return; }
+  elapsed = Math.min(elapsed, GAME_DAY_MS * 3); // ochrana proti obřímu skoku po dlouhé odmlce
+  world.lastTick = now;
+
+  const dayFraction = elapsed / GAME_DAY_MS;
+  const hoursElapsed = elapsed / 3600000; // podniky vydělávají podle SKUTEČNÝCH hodin, ne herních dnů
+
+  Object.values(world.users).forEach(u => {
+    // životní náklady podle stavu bydlení (vlastník / nájemník / bezdomovec);
+    // u nájemníka jen životní složka — samotný nájem se převádí níž mezi majitele
+    const status = housingStatus(u.name);
+    let cost;
+    if(status === 'owner') cost = LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT);
+    else if(status === 'tenant') cost = TENANT_LIVING_COST;
+    else cost = LIVING_COST;
+    // denní kolísání cen (jídlo/energie zdraží nebo zlevní) — malá náhodná odchylka kolem základu
+    cost *= (1 + (Math.random() - 0.5) * 2 * LIVING_COST_VARIATION);
+    cost *= inflationMult(); // ceny rostou s inflací (stejně jako mzdy níže)
+    u.balance -= cost * dayFraction;
+
+    // daň z nemovitosti: 4 % hodnoty tvého podílu ročně (ze všech domů, včetně bydlení)
+    let taxableValue = 0;
+    Object.values(world.parcels).forEach(p => {
+      const pct = p.owners?.[u.name] || 0;
+      if(pct > 0) taxableValue += effectiveHousePrice(p) * (pct/100);
+    });
+    if(taxableValue > 0){
+      u.balance -= taxableValue * PROPERTY_TAX_RATE / DAYS_PER_YEAR * dayFraction;
+    }
+
+    // úrok ze spořicího účtu (peníze uložené v bance rostou — bezpečně, ale pomalu)
+    if(u.savings && u.savings > 0){
+      u.savings += u.savings * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR * dayFraction;
+    }
+  });
+  Object.values(world.parcels).forEach(p => {
+    if(p.useType === 'rental' && p.units){
+      p.units.forEach(u => {
+        let collected = 0;
+        if(u.condition > 0){
+          if(u.tenant && world.users[u.tenant]){
+            // byt obývá hráč-nájemník: platí plný nájem, strhává se mu z účtu
+            collected = u.rentPrice;
+            world.users[u.tenant].balance -= collected * dayFraction;
+          } else {
+            // jinak NPC poptávka podle obsazenosti (nižší při přemrštěném nájmu)
+            collected = u.rentPrice * unitOccupancy(p, u);
+          }
+        }
+        if(collected > 0){
+          Object.entries(p.owners||{}).forEach(([owner, pct]) => {
+            if(world.users[owner]) world.users[owner].balance += collected * (pct/100) * dayFraction;
+          });
+        }
+        // obsazený byt (hráč nebo NPC) se opotřebovává; prázdný chátrá pomaleji
+        const occNow = u.tenant ? 1 : (u.condition>0 ? unitOccupancy(p,u) : 0);
+        const decayRate = RENT_DECAY * (occNow > 0 ? occNow : EMPTY_DECAY_FACTOR);
+        u.condition = Math.max(0, u.condition - decayRate * dayFraction);
+      });
+    }
+  });
+
+  // Gentrifikace odeznívá — bez dalších nákupů v okolí se zvýšená cena postupně vrací k základu
+  Object.values(world.parcels).forEach(p => {
+    if(p.gentrifyMult && p.gentrifyMult > 1){
+      p.gentrifyMult = 1 + (p.gentrifyMult - 1) * Math.pow(GENTRIFY_DECAY_PER_DAY, dayFraction);
+      if(p.gentrifyMult < 1.001) p.gentrifyMult = 1;
+    }
+  });
+
+  Object.values(world.businesses).forEach(biz => {
+    Object.entries(biz.owners).forEach(([owner, pct]) => {
+      if(pct > 0 && world.users[owner]){
+        world.users[owner].balance += biz.hourlyYield * inflationMult() * (pct/100) * hoursElapsed;
+      }
+    });
+  });
+
+  Object.values(world.users).forEach(u => {
+    if(!u.loans) u.loans = [];
+    u.loans.forEach(loan => {
+      loan.balance += loan.balance * loan.dailyRate * dayFraction;
+      if(loan.type === 'loan'){
+        const minPay = Math.min(loan.principal * LOAN_MIN_PAYMENT_RATIO * dayFraction, loan.balance);
+        if(u.balance >= minPay){
+          u.balance -= minPay;
+          loan.balance -= minPay;
+          loan.missedDays = Math.max(0, (loan.missedDays || 0) - dayFraction * 2); // řádné placení dřívější výpadky "smaže" rychleji
+        } else {
+          loan.missedDays = (loan.missedDays || 0) + dayFraction;
+        }
+      }
+    });
+  });
+
+  // exekuce majetku za dlouhodobě neplacenou nezajištěnou půjčku
+  Object.values(world.users).forEach(u => {
+    (u.loans || []).filter(l => l.type === 'loan' && (l.missedDays || 0) >= LOAN_SEIZURE_MISSED_DAYS)
+      .forEach(loan => seizeAssetForDebt(u, loan));
+  });
+
+  world.dayProgress += dayFraction;
+  // Kolik dní se teď posune? Pokud víc než jeden (dohánění po odmlce), docházka se u dopočítaných
+  // dnů nepostihuje — hráč nemohl přijít do práce se zavřenou appkou. Jen poslední den je "živý".
+  let daysToAdvance = 0;
+  { let dp = world.dayProgress; while(dp >= 1){ dp -= 1; daysToAdvance++; } }
+  let advanced = 0;
+  while(world.dayProgress >= 1){
+    world.dayProgress -= 1;
+    world.day += 1;
+    advanced++;
+    const isCatchUp = daysToAdvance > 1 && advanced < daysToAdvance; // jen úplně poslední den řeší docházku
+    onNewDay(isCatchUp);
+  }
+
+  saveWorld();
+  refreshAll();
+}
+
+// Náhodná životní událost pro aktuálního hráče — učí, že se dějí nečekané věci a je dobré mít rezervu.
+function maybeRandomEvent(){
+  if(!currentUser) return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  if(Math.random() > EVENT_CHANCE_PER_DAY) return;
+
+  const cash = u.balance;
+  const events = [];
+  // NEGATIVNÍ (nečekané výdaje) — částka podle stavu, ať to není likvidační
+  events.push({txt:'🔧 Rozbila se pračka, oprava tě stála', amount: -Math.round(40 + Math.random()*60), good:false});
+  events.push({txt:'🦷 Nečekaná návštěva zubaře', amount: -Math.round(30 + Math.random()*50), good:false});
+  events.push({txt:'📱 Rozbil se ti telefon', amount: -Math.round(50 + Math.random()*80), good:false});
+  if(Object.values(world.parcels).some(p=>p.useType==='rental'&&(p.owners?.[u.name]||0)>0))
+    events.push({txt:'🚰 Prasklá trubka v tvém pronájmu', amount: -Math.round(60 + Math.random()*90), good:false});
+  // POZITIVNÍ
+  events.push({txt:'🎁 Našel jsi peníze na ulici', amount: Math.round(20 + Math.random()*40), good:true});
+  events.push({txt:'💌 Malé dědictví od tety', amount: Math.round(80 + Math.random()*120), good:true});
+  events.push({txt:'🏆 Vyhrál jsi drobnou soutěž', amount: Math.round(40 + Math.random()*60), good:true});
+
+  const ev = events[Math.floor(Math.random()*events.length)];
+  u.balance += ev.amount;
+  // uložit poslední událost, ať ji hráč vidí po návratu
+  u.lastEvent = { txt: ev.txt, amount: ev.amount, day: world.day };
+  addNews('event', `${ev.txt} (${currentUser.name}, ${ev.amount>=0?'+':''}${ev.amount} Kč)`);
+  setTimeout(() => {
+    playSound(ev.good ? 'coin' : 'error');
+    showToast(`${ev.txt} ${ev.amount>=0?'+':''}${ev.amount} Kč`);
+  }, 600);
+}
+
+function onNewDay(catchUp){
+  tickMarketCycle(1);
+  world.inflation = (world.inflation || 1) * (1 + INFLATION_ANNUAL / DAYS_PER_YEAR);
+  resolveAuctions();
+  // Docházka se NEřeší při dopočítání dnů po odmlce (catchUp) — hráč objektivně nemohl přijít
+  // do práce, když měl appku zavřenou. Vyhazov hrozí jen za dny, kdy appka běžela a on nepřišel.
+  if(!catchUp){
+    // Docházka: kdo měl práci a v PŘEDCHOZÍ den (world.day-1) neodpracoval směnu → počítá se to jako
+    // vynechaná směna (missedInRow). Appka toleruje JOB_SICK_DAYS_ALLOWED vynechaných směn v řadě,
+    // teprve další vynechání = vyhazov + zákaz práce. Odpracovaná směna počítadlo vynuluje.
+    const prevDay = world.day - 1;
+    Object.values(world.jobs).forEach(job => {
+      if(!job.holders || !job.holders.length) return;
+      job.holders = job.holders.filter(holderName => {
+        const u = world.users[holderName];
+        if(!u) return false;
+        const startedBefore = (u.jobStartDay ?? prevDay) < prevDay;
+        const workedPrev = u.lastWorkedDay === prevDay;
+        if(!startedBefore) return true; // grace den nástupu
+        if(workedPrev){
+          u.missedInRow = 0;
+          return true;
+        }
+        u.missedInRow = (u.missedInRow || 0) + 1;
+        if(u.missedInRow > JOB_SICK_DAYS_ALLOWED){
+          u.jobBanUntil = world.day + JOB_BAN_DAYS;
+          u.missedInRow = 0;
+          delete u.jobStartDay;
+          return false; // vyhazov — odebrat z holders
+        }
+        return true; // ještě v toleranci (omluvenka)
+      });
+    });
+  }
+  Object.values(world.users).forEach(u => {
+    u.walkEarnedToday = 0;
+    const w = netWorthEstimate(u.name);
+    if(w > (u.peakWorth || 0)) u.peakWorth = w;
+  });
+  if(!catchUp) maybeRandomEvent();
+}
+
+
+// ===== GPS =====
+
+function startGeoTracking(){
+  if(!window.isSecureContext){
+    document.getElementById('gpsWarning').innerHTML = '📍 GPS nejde povolit — appka je otevřená lokálně (soubor / content://), prohlížeč polohu na nezabezpečeném spojení blokuje. Nahraj appku na hosting (HTTPS, např. GitHub Pages), nebo klepni na mapu pro testovací pozici.';
+    document.getElementById('gpsWarning').style.display = 'block';
+    return;
+  }
+  if(!navigator.geolocation){
+    document.getElementById('gpsWarning').textContent = '📍 Tento prohlížeč nepodporuje GPS — klepni na mapu pro testovací pozici.';
+    document.getElementById('gpsWarning').style.display = 'block';
+    return;
+  }
+  // getCurrentPosition vyvolá systémový dialog o povolení okamžitě; watchPosition pak sleduje pohyb
+  navigator.geolocation.getCurrentPosition(onPosition, onGeoError, {enableHighAccuracy:true, timeout:15000});
+  navigator.geolocation.watchPosition(onPosition, onGeoError, {
+    enableHighAccuracy:true, maximumAge:5000, timeout:15000
+  });
+}
+
+function onPosition(pos){
+  geoAvailable = true;
+  document.getElementById('gpsWarning').style.display = 'none';
+  const newPos = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+  const accuracy = pos.coords.accuracy || 30;
+
+  if(lastGeoPos){
+    const dist = haversine(lastGeoPos, newPos);
+    if(dist > GPS_NOISE_IGNORE && dist < GPS_JUMP_IGNORE){
+      creditWalking(dist);
+    }
+  }
+  lastGeoPos = newPos;
+  playerPos = newPos;
+  // uložit pozici ke hráči (pro zobrazení ostatních; s Firebase se to synchronizuje mezi zařízeními)
+  if(currentUser && world.users[currentUser.name]){
+    world.users[currentUser.name].lastPos = {lat:newPos.lat, lng:newPos.lng, at: Date.now()};
+  }
+  updatePlayerMarker(newPos, accuracy);
+  if(!hasCenteredOnPlayer){
+    hasCenteredOnPlayer = true;
+    map.setView([newPos.lat, newPos.lng], 18);
+  }
+  renderOtherPlayers();
+  if(selectedParcelId) renderSelected(selectedParcelId);
+  renderJobs();
+}
+
+function onGeoError(err){
+  console.warn('GPS chyba:', err.message);
+  if(geoAvailable) return; // pozici už máme, dočasný výpadek neřešíme
+  const el = document.getElementById('gpsWarning');
+  if(err.code === 1){ // PERMISSION_DENIED
+    el.innerHTML = '📍 Poloha zamítnuta — v nastavení prohlížeče/appky povol přístup k poloze pro tuto stránku, nebo klepni na mapu pro testovací pozici.';
+  } else if(err.code === 2){
+    el.textContent = '📍 Polohu se nepodařilo zjistit (slabý signál) — zkusím to dál na pozadí, nebo klepni na mapu.';
+  } else {
+    el.textContent = '📍 Zjišťování polohy vypršelo — zkusím to dál na pozadí, nebo klepni na mapu.';
+  }
+  el.style.display = 'block';
+}
+
+function updatePlayerMarker(pos, accuracy){
+  if(!playerMarker){
+    playerMarker = L.circleMarker([pos.lat, pos.lng], {
+      radius:9, color:'#0ea5e9', fillColor:'#38bdf8', fillOpacity:1, weight:2
+    }).addTo(map).bindTooltip('Ty jsi tady');
+    accuracyCircle = L.circle([pos.lat, pos.lng], {radius: accuracy, color:'#38bdf8', weight:1, fillOpacity:0.08}).addTo(map);
+    reachCircle = L.circle([pos.lat, pos.lng], {radius: INTERACTION_RADIUS, color:'#4ade80', weight:2, dashArray:'5,5', fillOpacity:0.04}).addTo(map);
+  } else {
+    playerMarker.setLatLng([pos.lat, pos.lng]);
+    accuracyCircle.setLatLng([pos.lat, pos.lng]);
+    accuracyCircle.setRadius(accuracy);
+    reachCircle.setLatLng([pos.lat, pos.lng]);
+  }
+  updateReachHighlight();
+}
+
+// Markery ostatních hráčů. Čte pozice z world.users[*].lastPos.
+// Teď (localStorage) ukazuje ostatní přezdívky na tomto zařízení; s Firebase se world.users
+// synchronizuje mezi zařízeními a tahle funkce začne bez úpravy zobrazovat živé pozice ostatních.
+const OTHER_PLAYER_STALE_MS = 10 * 60 * 1000; // starší pozice než 10 min se nezobrazí (s Firebase = offline hráči)
+let otherPlayerMarkers = {};
+function renderOtherPlayers(){
+  if(!map || !currentUser) return;
+  const seen = {};
+  Object.values(world.users).forEach(u => {
+    if(u.name === currentUser.name) return;
+    if(!u.lastPos) return;
+    if(Date.now() - (u.lastPos.at || 0) > OTHER_PLAYER_STALE_MS) return;
+    seen[u.name] = true;
+    const latlng = [u.lastPos.lat, u.lastPos.lng];
+    if(otherPlayerMarkers[u.name]){
+      otherPlayerMarkers[u.name].setLatLng(latlng);
+    } else {
+      otherPlayerMarkers[u.name] = L.marker(latlng, {
+        icon: L.divIcon({html:`<div class="otherPlayerMarker">🧍</div>`, className:'', iconSize:[28,28]}),
+        zIndexOffset: -100
+      }).addTo(map).bindTooltip(u.name)
+        .on('click', (e) => { L.DomEvent.stopPropagation(e); viewProfile(u.name); });
+    }
+  });
+  // odstranit markery hráčů, co už nejsou vidět (odešli, zastarali)
+  Object.keys(otherPlayerMarkers).forEach(name => {
+    if(!seen[name]){ map.removeLayer(otherPlayerMarkers[name]); delete otherPlayerMarkers[name]; }
+  });
+}
+
+
+let lastReachHighlightAt = 0;
+function updateReachHighlight(force){
+  const now = Date.now();
+  if(!force && now - lastReachHighlightAt < 1000) return; // max 1x/s, ať to nesekundá při rychlých GPS updatech
+  lastReachHighlightAt = now;
+  Object.values(world.parcels).forEach(p => {
+    const m = markers[p.id];
+    if(!m) return;
+    if(playerPos){
+      const d = haversine(playerPos, {lat:p.lat, lng:p.lng});
+      if(d > HOUSE_VISIBLE_RADIUS){
+        if(map.hasLayer(m)) map.removeLayer(m);
+        return;
+      }
+    }
+    if(!map.hasLayer(m)) map.addLayer(m);
+    m.setIcon(iconFor(p));
+  });
+}
+
+// Testovací režim bez GPS: klik na mapu nastaví "kde jsem"
+function setManualPosition(latlng){
+  playerPos = {lat: latlng.lat, lng: latlng.lng};
+  if(currentUser && world.users[currentUser.name]){
+    world.users[currentUser.name].lastPos = {lat:latlng.lat, lng:latlng.lng, at: Date.now()};
+  }
+  updatePlayerMarker(playerPos, 15);
+  renderOtherPlayers();
+  if(selectedParcelId) renderSelected(selectedParcelId);
+  renderJobs();
+  saveWorld();
+}
+
+function creditWalking(dist){
+  if(!currentUser) return;
+  const u = world.users[currentUser.name];
+  if(u.walkEarnedToday === undefined) u.walkEarnedToday = 0;
+  const dailyCap = WALK_DAILY_CAP * inflationMult();
+  if(u.walkEarnedToday >= dailyCap) return;
+  let reward = dist * WALK_REWARD_PER_METER * inflationMult();
+  reward = Math.min(reward, dailyCap - u.walkEarnedToday);
+  u.balance += reward;
+  u.walkEarnedToday += reward;
+  u.distanceToday = (u.distanceToday || 0) + dist;
+  u.totalDistance = (u.totalDistance || 0) + dist;
+  saveWorld();
+  updateHeaderStats();
+}
+
+function distanceToPlayer(lat, lng){
+  if(!playerPos) return null;
+  return haversine(playerPos, {lat, lng});
+}
+
+// ===== MAPA =====
+
+function iconFor(p){
+  let cls = 'p-empty', emoji = '🏚️';
+  const owned = houseHasOwner(p);
+  if(owned && p.useType === 'residence'){ cls='p-residence'; emoji='🏠'; }
+  else if(owned && p.useType === 'rental'){
+    const allBroken = p.units && p.units.every(u => u.condition <= 0);
+    cls = allBroken ? 'p-rental-bad' : 'p-rental';
+    emoji = allBroken ? '🏚️' : '🏘️';
+  } else if(owned){
+    cls='p-residence'; emoji='🏠'; // vlastněný, ale zatím bez určeného využití
+  }
+  if(myHousePct(p) > 0) cls += ' p-mine';
+  if(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS) cls += ' p-inreach';
+  if(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS) cls += ' p-inreach';
+  return L.divIcon({html:`<div class="parcelMarker ${cls}">${emoji}</div>`, className:'', iconSize:[26,26]});
+}
+
+function initMap(){
+  map = L.map('map', {zoomControl:false}).setView(CITY_CENTER, 16);
+  L.control.zoom({position:'bottomleft'}).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution:'© OpenStreetMap', maxZoom:19
+  }).addTo(map);
+
+  L.marker(CITY_CENTER, {icon: L.divIcon({html:'<div class="parcelMarker p-cityhall">🏛️</div>', className:'', iconSize:[26,26]})})
+    .addTo(map).bindTooltip('Radnice — místo pro městskou práci');
+
+  Object.values(world.parcels).forEach(p => {
+    const m = L.marker([p.lat, p.lng], {icon: iconFor(p)}).addTo(map);
+    m.on('click', (e) => { L.DomEvent.stopPropagation(e); selectParcel(p.id); });
+    markers[p.id] = m;
+  });
+
+  let bizMarkers = {};
+  Object.values(world.businesses).forEach(biz => {
+    const m = L.marker([biz.lat, biz.lng], {
+      icon: L.divIcon({html:`<div class="parcelMarker p-business">${biz.emoji}</div>`, className:'', iconSize:[26,26]})
+    }).addTo(map);
+    m.on('click', (e) => { L.DomEvent.stopPropagation(e); m.bindPopup(businessPopupHtml(biz.id)).openPopup(); });
+    bizMarkers[biz.id] = m;
+  });
+  window.__bizMarkers = bizMarkers;
+
+  // Klik na volnou plochu mapy: v testovacím režimu nastaví pozici, vždy zavře spodní panel
+  map.on('click', (e) => {
+    if(!geoAvailable) setManualPosition(e.latlng);
+    closeSheet();
+  });
+
+  renderOtherPlayers();
+}
+
+function refreshAll(){
+  updateReachHighlight();
+  if(selectedParcelId) renderSelected(selectedParcelId);
+  renderMine();
+  updateHeaderStats();
+  const jobsTab = document.getElementById('tab-jobs');
+  if(jobsTab && jobsTab.classList.contains('active')) renderJobs();
+  const marketTab = document.getElementById('tab-market');
+  if(marketTab && marketTab.classList.contains('active')) renderMarket();
+  const financeTab = document.getElementById('tab-finance');
+  if(financeTab && financeTab.classList.contains('active')) renderFinance();
+  const newsTab = document.getElementById('tab-news');
+  if(newsTab && newsTab.classList.contains('active')) renderNews();
+  checkAchievements();
+}
+
+function updateHeaderStats(){
+  document.getElementById('dayVal').textContent = world.day;
+  const msLeft = Math.max(0, Math.round((1 - world.dayProgress) * GAME_DAY_MS));
+  const mm = Math.floor(msLeft/60000), ss = Math.floor((msLeft%60000)/1000);
+  document.getElementById('dayTimeLeft').textContent = `${mm}:${ss.toString().padStart(2,'0')}`;
+  const cycle = marketCycleLabel();
+  document.getElementById('marketCycleVal').textContent = cycle.label;
+  document.getElementById('marketCyclePill').style.color = cycle.color;
+  if(currentUser){
+    const u = world.users[currentUser.name];
+    document.getElementById('balanceVal').textContent = Math.round(u.balance);
+    document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
+    const status = housingStatus(currentUser.name);
+    const dailyCost = dailyHousingCost(currentUser.name);
+    const housingEl = document.getElementById('housingVal');
+    if(status === 'owner'){
+      housingEl.textContent = `vlastní bydlení (${Math.round(dailyCost)} Kč/den)`;
+      housingEl.parentElement.style.color = 'var(--accent)';
+    } else if(status === 'tenant'){
+      housingEl.textContent = `v nájmu (${Math.round(dailyCost)} Kč/den)`;
+      housingEl.parentElement.style.color = 'var(--accent2)';
+    } else {
+      housingEl.textContent = `bez bydlení (${LIVING_COST} Kč/den)`;
+      housingEl.parentElement.style.color = 'var(--danger)';
+    }
+  }
+}
+
+function selectParcel(id){
+  selectedParcelId = id;
+  openSheet('selected');
+  renderSelected(id);
+}
+
+function badgeFor(p){
+  if(!houseHasOwner(p)) return '<span class="badge badge-empty">Volný</span>';
+  if(p.useType === 'residence') return '<span class="badge badge-res">🏠 Bydlení</span>';
+  if(p.useType === 'rental') return '<span class="badge badge-rent">🏘️ Pronájem</span>';
+  return '<span class="badge badge-res">Bez využití</span>';
+}
+
+function distanceNoteHtml(lat, lng, radius){
+  if(!geoAvailable && !playerPos) return `<p class="distNote ok">📍 GPS vypnuto, pozice nenastavena — klepni na mapu, nebo hraj bez omezení.</p>`;
+  const d = distanceToPlayer(lat, lng);
+  if(d === null) return `<p class="distNote">📍 Zjišťuji tvou polohu…</p>`;
+  const ok = d <= radius;
+  return `<p class="distNote ${ok?'ok':'bad'}">📍 ${ok ? 'Jsi dost blízko' : `Musíš být blíž — teď ${Math.round(d)} m, potřeba ${radius} m`}</p>`;
+}
+
+function canInteract(lat, lng, radius){
+  if(!geoAvailable && !playerPos) return true; // GPS vypnuto a pozice nikdy nenastavena → bez omezení
+  const d = distanceToPlayer(lat, lng);
+  return d !== null && d <= radius;
+}
+
+// Oblíbenost lokality podle nákupů v okolí. Vrací {label, color, stars}
+function popularityInfo(p){
+  const pop = p.popularity || 0;
+  if(pop < 0.5) return {label:'klidná lokalita', color:'var(--muted)', stars:'☆☆☆'};
+  if(pop < 2)   return {label:'zajímavá lokalita', color:'var(--accent2)', stars:'★☆☆'};
+  if(pop < 5)   return {label:'žádaná lokalita', color:'var(--gold)', stars:'★★☆'};
+  return {label:'prémiová lokalita', color:'var(--orange)', stars:'★★★'};
+}
+
+function renderSelected(id){
+  const p = world.parcels[id];
+  const el = document.getElementById('selectedContent');
+  if(!p){ el.innerHTML = '<div class="empty-state">Dům nenalezen.</div>'; return; }
+  const near = canInteract(p.lat, p.lng, INTERACTION_RADIUS);
+  const myPct = myHousePct(p);
+  const decider = houseDecider(p);
+  const iDecide = iAmDecider(p);
+  const free = houseFreePct(p);
+  const owned = houseHasOwner(p);
+
+  let html = `<div class="card"><h3>Dům ${p.id.replace('h_','#')} ${badgeFor(p)}</h3>`;
+  html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
+  html += `<p style="font-size:0.92em;color:var(--muted)">${p.levels||1} ${(p.levels||1)===1?'patro':'patra/pater'} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(housePricePerPercent(p))} Kč</p>`;
+  const popInfo = popularityInfo(p);
+  html += `<p style="font-size:0.92em;"><span style="color:${popInfo.color}">${popInfo.stars} ${popInfo.label}</span> <span style="color:var(--muted)">— historie zájmu o tuhle lokalitu (trvalé, neodeznívá)</span></p>`;
+  const cyc = marketCycleLabel();
+  html += `<p style="font-size:0.92em;"><span style="color:${cyc.color}">${cyc.label}</span> <span style="color:var(--muted)">— celoměstský trh teď ceny ${marketMultiplier()>=1?'zvedá':'stahuje dolů'} (×${marketMultiplier().toFixed(2)})</span></p>`;
+  if((p.gentrifyMult||1) > 1.01){
+    html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${p.gentrifyMult.toFixed(2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
+  }
+  if(p.salesHistory && p.salesHistory.length){
+    html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
+      <p style="font-size:0.92em;margin:0 0 4px;color:var(--accent2)">📜 Nedávné prodeje tohoto domu:</p>`;
+    p.salesHistory.forEach(s => {
+      html += `<p style="font-size:0.85em;color:var(--muted);margin:1px 0;">den ${s.day}: ${s.pct} % za ${(s.pricePerPct*s.pct).toLocaleString('cs-CZ')} Kč <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span></p>`;
+    });
+    html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Skutečné prodeje ovlivňují cenu domu — tak vzniká tržní hodnota.</p></div>`;
+  }
+
+  // --- Spoluvlastnící ---
+  if(owned){
+    html += `<p style="font-size:1em;">Spoluvlastníci:</p>`;
+    Object.entries(p.owners).sort((a,b)=>b[1]-a[1]).forEach(([name, pct]) => {
+      const isDec = name === decider;
+      const isMeOwner = name===currentUser?.name;
+      html += `<p style="font-size:1em;margin:2px 0;">${isDec ? '👑 ' : '• '}<b ${isMeOwner?'':'style="cursor:pointer;text-decoration:underline;"'} ${isMeOwner?'':`onclick="viewProfile('${name}')"`}>${escapeHtml(name)}</b>: ${pct.toFixed(1)} %${isDec ? ' <span style="color:var(--muted)">(rozhoduje)</span>' : ''}${isMeOwner ? ' <span style="color:var(--accent)">(ty)</span>' : ''}</p>`;
+    });
+    if(free > 0) html += `<p style="font-size:1em;color:var(--muted);margin:2px 0;">Volných ${free.toFixed(1)} % k odkupu</p>`;
+    if(myPct > 0){
+      const myTaxDaily = effectiveHousePrice(p) * (myPct/100) * PROPERTY_TAX_RATE / 365;
+      html += `<p style="font-size:0.92em;color:var(--orange);margin:2px 0;">🏛️ Daň z nemovitosti za tvůj podíl: ${myTaxDaily.toFixed(1)} Kč/den (${Math.round(PROPERTY_TAX_RATE*100)} % hodnoty ročně)</p>`;
+    }
+  }
+
+  // --- Co s tím můžeš dělat (jasný popis práv) ---
+  const iMajority = iHaveMajority(p);
+  html += `<p style="font-size:0.92em;color:var(--muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">`;
+  if(myPct > 0){
+    if(iDecide && iMajority){
+      html += `Vlastníš ${myPct.toFixed(1)} % (většina) — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájmu i opravách. Výnos se dělí všem podle podílů.`;
+    } else if(iDecide){
+      html += `Vlastníš ${myPct.toFixed(1)} % a máš největší podíl, takže jsi <b style="color:var(--accent)">správce</b> — nastavuješ nájem a objednáváš opravy. Ale <b>změnit využití domu</b> (bydlení ↔ pronájem) může jen vlastník s víc než 50 %. Dokup podíl nad polovinu, ať můžeš přestavovat.`;
+    } else {
+      html += `Vlastníš ${myPct.toFixed(1)} %, ale spravuje ho <b>${decider}</b> (má víc). Bereš svůj podíl z nájmu, správu ani využití neurčuješ. Získej větší podíl než ${decider}, ať se staneš správcem.`;
+    }
+  } else if(owned){
+    html += `Dům spravuje <b>${decider}</b>. ${free>0 ? `Můžeš odkoupit část z volných ${free.toFixed(1)} % a stát se spoluvlastníkem.` : 'Všechny podíly jsou rozebrané.'}`;
+  } else {
+    html += `Volný dům. Kup si podíl — kdo bude mít největší podíl, spravuje ho; kdo přesáhne 50 %, může měnit i využití (přestavět na byty).`;
+  }
+  html += `</p>`;
+
+  // --- Nákup / prodej podílu ---
+  html += `<div class="row">`;
+  if(free > 0) html += `<button ${near?'':'disabled'} onclick="buyHouseStake('${p.id}')">Koupit podíl${near?'':' (musíš být u domu)'}</button>`;
+  if(myPct > 0) html += `<button class="danger" onclick="sellHouseStake('${p.id}')">Prodat městu (${Math.round(HOUSE_SELL_RATIO*100)} %)</button>`;
+  html += `</div>`;
+  if(myPct > 0){
+    const activeListing = myActiveListingFor(p.id);
+    if(activeListing){
+      const desc = activeListing.type==='auction'
+        ? `aukce ${activeListing.pct.toFixed(1)} % · nabídka ${activeListing.currentBid} Kč · končí den ${activeListing.endsAtDay}`
+        : `pevná cena ${activeListing.price} Kč za ${activeListing.pct.toFixed(1)} %`;
+      html += `<p style="font-size:0.92em;color:var(--accent2);margin-top:6px;">🏷️ Na tržišti: ${desc}</p>
+        <div class="row"><button class="secondary" onclick="cancelListing('${activeListing.id}')">Zrušit nabídku z tržiště</button></div>`;
+    } else {
+      html += `<div class="row"><button class="secondary" onclick="listHouseStake('${p.id}')">🏷️ Nabídnout podíl na tržišti (za vlastní cenu)</button></div>`;
+    }
+  }
+
+  // --- Zásadní změny využití (jen majorita >50 %) ---
+  if(iMajority){
+    if(p.useType === 'residence'){
+      html += `<p style="color:var(--accent);font-size:1em;margin-top:8px;">🏠 Dům slouží jako tvoje bydlení — životní náklady −${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % (${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den).</p>`;
+    }
+    html += `<div class="row">`;
+    if(p.useType !== 'residence') html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)</button>`;
+    if(p.useType !== 'rental') html += `<button class="secondary" ${near?'':'disabled'} onclick="startRental('${p.id}')">Přestavět na pronájem (${p.levels||1} ${(p.levels||1)===1?'byt':'bytů'}, ${Math.round(effectiveHousePrice(p)*RENTAL_SETUP_RATIO)} Kč)</button>`;
+    html += `</div>`;
+  } else if(iDecide) {
+    html += `<p style="font-size:0.92em;color:var(--muted);margin-top:6px;">Jsi správce, ale na přestavbu domu (změnu využití) potřebuješ víc než 50 % podílu.</p>`;
+  }
+  html += `</div>`; // konec hlavní karty
+
+  // --- Byty (pronájem) ---
+  if(p.useType === 'rental' && p.units){
+    const fair = fairRentForHouse(p);
+    // reálně vybraný nájem celkem (po obsazenosti)
+    const collectedTotal = p.units.reduce((s,u)=>{
+      const occ = u.condition>0 ? unitOccupancy(p,u) : 0;
+      return s + u.rentPrice * occ;
+    }, 0);
+    const myShare = collectedTotal * (myPct/100);
+    html += `<div class="card"><h3>🏘️ Pronájem — ${p.units.length} ${p.units.length===1?'byt':'bytů'}</h3>
+      <p>Reálný výběr: <b style="color:var(--gold)">${collectedTotal.toFixed(0)} Kč/den</b>${myPct>0?` · tvůj podíl (${myPct.toFixed(1)} %): <b style="color:var(--gold)">${myShare.toFixed(0)} Kč/den</b>`:''}</p>
+      <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
+      ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
+    </div>`;
+    p.units.forEach((u, idx) => {
+      const occ = u.condition>0 ? unitOccupancy(p, u) : 0;
+      const occPct = Math.round(occ*100);
+      const iAmTenant = u.tenant === currentUser?.name;
+      let occLabel, occColor;
+      if(u.condition <= 0){ occLabel='zchátralý — neobyvatelný'; occColor='var(--danger)'; }
+      else if(u.tenant){ occLabel = iAmTenant ? 'bydlíš tu' : 'pronajato hráči'; occColor='var(--accent2)'; }
+      else if(occ >= 0.85){ occLabel='obsazený (nájemníci města)'; occColor='var(--accent)'; }
+      else if(occ >= 0.4){ occLabel=`částečně obsazený (${occPct} %)`; occColor='var(--gold)'; }
+      else if(occ > 0){ occLabel=`skoro prázdný (${occPct} %)`; occColor='var(--orange)'; }
+      else { occLabel='prázdný — nájem moc vysoký'; occColor='var(--danger)'; }
+      const realCollected = u.tenant ? u.rentPrice : u.rentPrice*occ;
+      const canRent = !u.tenant && u.condition>0 && myPct===0 && housingStatus(currentUser?.name)==='homeless';
+      // popis obyvatele bytu
+      let occupantLine;
+      if(u.condition <= 0) occupantLine = '<span style="color:var(--danger)">Neobyvatelný — nutná oprava</span>';
+      else if(u.tenant) occupantLine = iAmTenant ? `Bydlí zde: <b>${u.tenant}</b> (ty)` : `Bydlí zde: <b style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${u.tenant}')">${u.tenant}</b>`;
+      else if(occ > 0) occupantLine = `Obydleno městskými nájemníky (~${occPct} % obsazenost)`;
+      else occupantLine = '<span style="color:var(--danger)">Prázdný — nikdo nemá zájem za tuhle cenu</span>';
+      // srovnání s tržním nájmem
+      const ratio = u.rentPrice / fair;
+      let priceNote;
+      if(ratio <= 0.85) priceNote = '<span style="color:var(--accent)">pod tržní cenou — plno, ale necháváš peníze ležet</span>';
+      else if(ratio <= 1.15) priceNote = '<span style="color:var(--accent)">kolem tržní ceny — dobrá rovnováha</span>';
+      else if(ratio <= 1.6) priceNote = '<span style="color:var(--gold)">nad trhem — vyšší výnos, ale prázdnější</span>';
+      else priceNote = '<span style="color:var(--danger)">hodně přes trh — riziko prázdna</span>';
+      html += `<div class="card">
+        <h3>Byt ${idx+1}. patro <span class="badge" style="background:transparent;color:${occColor};border:1px solid ${occColor}">${occLabel}</span></h3>
+        <p style="font-size:1em;">${occupantLine}</p>
+        <p>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(odhad trhu ${rentEstimateRange(p)})</span></p>
+        <p style="font-size:0.92em;">${priceNote}</p>
+        ${iDecide?`<p style="font-size:0.92em;color:var(--muted)">Reálně z tohoto bytu vybíráš ${realCollected.toFixed(0)} Kč/den${myPct<100?` (tvůj podíl ${myPct.toFixed(0)} % z toho: ${(realCollected*myPct/100).toFixed(0)} Kč)`:''}</p>`:''}
+        <p>Stav bytu: ${Math.round(u.condition)}%</p>
+        <div class="condBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':'var(--accent)'}"></div></div>
+        ${iDecide ? `<div class="row">
+          <button ${near?'':'disabled'} onclick="setUnitRentPrice('${p.id}',${idx})">Nastavit nájemné</button>
+          ${u.condition < 100 ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit (${REPAIR_COST_PER_POINT} Kč/bod)</button>` : ''}
+        </div>` : ''}
+        ${canRent ? `<div class="row"><button ${near?'':'disabled'} onclick="rentUnit('${p.id}',${idx})">Najmout si tento byt (${u.rentPrice} Kč/den)</button></div>` : ''}
+        ${iAmTenant ? `<div class="row"><button class="danger" onclick="endTenancy('${p.id}',${idx})">Dát výpověď z nájmu</button></div>` : ''}
+      </div>`;
+    });
+  }
+
+  el.innerHTML = html;
+}
+
+function renderMine(){
+  if(!currentUser) return;
+  const mine = Object.values(world.parcels).filter(p => myHousePct(p) > 0);
+  const el = document.getElementById('mineContent');
+  if(!mine.length){ el.innerHTML = '<div class="empty-state">Zatím nevlastníš žádný podíl v domě. Klikni na dům na mapě a kup si podíl.</div>'; return; }
+  let totalRentShare = 0, totalTax = 0;
+  mine.forEach(p => {
+    if(p.useType==='rental' && p.units){
+      const collected = p.units.reduce((s,u)=>{
+        const occ = u.condition>0 ? (u.tenant?1:unitOccupancy(p,u)) : 0;
+        return s + u.rentPrice*occ;
+      },0);
+      totalRentShare += collected * (myHousePct(p)/100);
+    }
+    totalTax += effectiveHousePrice(p) * (myHousePct(p)/100) * PROPERTY_TAX_RATE / 365;
+  });
+  const netDaily = totalRentShare - totalTax;
+  el.innerHTML = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">
+    Příjem z pronájmů: <b style="color:var(--gold)">+${totalRentShare.toFixed(0)} Kč/den</b><br>
+    Daň z nemovitosti: <b style="color:var(--orange)">−${totalTax.toFixed(1)} Kč/den</b><br>
+    Čistý tok z nemovitostí: <b style="color:${netDaily>=0?'var(--accent)':'var(--danger)'}">${netDaily>=0?'+':''}${netDaily.toFixed(0)} Kč/den</b>
+  </p>` +
+    mine.map(p => {
+      const iDecide = iAmDecider(p);
+      return `<div class="card">
+      <h3>Dům ${p.id.replace('h_','#')} ${badgeFor(p)}</h3>
+      <p>Tvůj podíl: <b>${myHousePct(p).toFixed(1)} %</b>${iDecide ? ' 👑 <span style="color:var(--accent)">rozhoduješ</span>' : ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${houseDecider(p)}')">${houseDecider(p)}</span>`}</p>
+      ${p.useType==='rental' && p.units ? `<p>${p.units.length} ${p.units.length===1?'byt':'bytů'} · Nájem celkem: ${p.units.filter(u=>u.condition>0).reduce((s,u)=>s+u.rentPrice,0)} Kč/den</p>` : ''}
+      <div class="row"><button class="secondary" onclick="flyToParcel('${p.id}')">Zobrazit na mapě</button></div>
+    </div>`;
+    }).join('');
+}
+
+function flyToParcel(id){
+  const p = world.parcels[id];
+  if(!p) return;
+  map.setView([p.lat, p.lng], 18);
+  selectParcel(id);
+}
+
+function flyToBusiness(bizId){
+  const biz = world.businesses[bizId];
+  if(!biz) return;
+  closeSheet();
+  map.setView([biz.lat, biz.lng], 18);
+  if(window.__bizMarkers && window.__bizMarkers[bizId]){
+    window.__bizMarkers[bizId].bindPopup(businessPopupHtml(bizId)).openPopup();
+  }
+}
+
+function renderJobs(){
+  const el = document.getElementById('jobsContent');
+  const me = currentUser ? world.users[currentUser.name] : null;
+  const current = currentUser ? getCurrentJob(currentUser.name) : null;
+  const nearCityHall = canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS);
+  let html = distanceNoteHtml(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS).replace('📍','🏛️ Radnice:');
+
+  const shifts = me?.totalShifts || 0;
+  const ban = me ? jobBanRemaining(me) : 0;
+  html += `<p style="font-size:0.92em;margin:4px 0;">📋 Odpracováno směn: <b>${shifts}</b>${ban>0?` · <span style="color:var(--danger)">zákaz práce ještě ${ban} ${ban===1?'den':'dní'}</span>`:''}</p>`;
+
+  if(current){
+    const workedToday = me.lastWorkedDay === world.day;
+    const j = current.job;
+    const seniorityShifts = (me.currentJobId === j.id ? (me.currentJobShifts||0) : 0);
+    const seniorityBonus = Math.min(SENIORITY_BONUS_CAP, seniorityShifts * SENIORITY_BONUS_PER_SHIFT);
+    const missed = me.missedInRow || 0;
+    let attendanceNote;
+    if(workedToday) attendanceNote = `<p style="font-size:0.92em;color:var(--accent)">✅ Dnes odpracováno</p>`;
+    else if(missed > 0) attendanceNote = `<p style="font-size:0.92em;color:var(--danger)">⚠️ Vynechal jsi ${missed}/${JOB_SICK_DAYS_ALLOWED} omluvených směn v řadě — další vynechání = vyhazov!</p>`;
+    else attendanceNote = `<p style="font-size:0.92em;color:var(--gold)">⚠️ Dnes ještě musíš odpracovat směnu (toleruje se ${JOB_SICK_DAYS_ALLOWED} vynechání v řadě, pak vyhazov).</p>`;
+    html += `<div class="card"><h3>Tvoje práce: ${j.name}</h3>
+      <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult())} Kč</b> / směna${seniorityBonus>=1?` + <span style="color:var(--accent)">${Math.round(seniorityBonus*inflationMult())} Kč stáž</span>`:''}</p>
+      <p style="font-size:0.92em;color:var(--muted)">Odsloužené směny na téhle pozici: ${seniorityShifts} (příplatek roste, max ${SENIORITY_BONUS_CAP} Kč) · šance na spropitné ${Math.round(TIP_CHANCE*100)} %</p>
+      ${attendanceNote}
+      <div class="row">
+        <button ${(workedToday||!nearCityHall)?'disabled':''} onclick="workShift('${j.id}')">${workedToday ? '✅ Hotovo' : 'Odpracovat směnu (u radnice)'}</button>
+        <button class="danger" onclick="quitJob('${j.id}')">Dát výpověď</button>
+      </div>
+    </div>`;
+  }
+
+  html += `<p style="font-size:0.92em;color:var(--muted);margin:10px 0 4px;">🏛️ Městská zaměstnání (postupuj od nejnižších)</p>`;
+  html += Object.values(world.jobs)
+    .filter(j => !(current && current.job.id===j.id))
+    .sort((a,b)=>a.tier-b.tier || a.salary-b.salary)
+    .map(j => {
+      const hasExp = shifts >= j.reqShifts;
+      const tierOk = me ? j.tier <= maxTierFor(me) : true;
+      const locked = !hasExp || !tierOk;
+      const holders = j.holders || [];
+      const taken = holders.length;
+      const full = taken >= j.slots;
+      let lockNote = '';
+      if(!hasExp) lockNote = `<p style="font-size:0.92em;color:var(--orange)">🔒 Potřebuje ${j.reqShifts} směn praxe (máš ${shifts})</p>`;
+      else if(!tierOk) lockNote = `<p style="font-size:0.92em;color:var(--orange)">🔒 Nejdřív si projdi nižší pozici</p>`;
+      let statusBadge;
+      if(full) statusBadge = `<span class="badge badge-empty">obsazeno ${taken}/${j.slots}</span>`;
+      else if(locked) statusBadge = `<span class="badge badge-empty">zamčeno</span>`;
+      else statusBadge = `<span class="badge badge-res">volné ${taken}/${j.slots}</span>`;
+      return `<div class="card">
+      <h3>${j.name} ${statusBadge}</h3>
+      <p>${j.desc}</p>
+      <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult())} Kč</b> / směna${j.reqShifts>0?` · praxe: ${j.reqShifts} směn`:''} · míst: ${j.slots}</p>
+      ${lockNote}
+      ${!full && !current && !locked && ban===0 ? `<div class="row"><button ${nearCityHall?'':'disabled'} onclick="takeJob('${j.id}')">Nastoupit</button></div>` : ''}
+      ${taken>0 ? `<p style="font-size:0.92em;color:var(--muted)">Zaměstnanci: ${holders.map(h=>`<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${h}')">${h}</span>`).join(', ')}</p>` : ''}
+    </div>`;
+    }).join('');
+
+  el.innerHTML = html;
+}
+
+// ===== AKCE: NEMOVITOSTI =====
+
+async function buyHouseStake(id){
+  const p = world.parcels[id];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  const free = houseFreePct(p);
+  if(free <= 0){ showAlert('Všechny podíly domu jsou rozebrané.'); return; }
+  const pricePer = housePricePerPercent(p);
+  const pct = parseFloat(await showPrompt(`Kolik % domu koupit? (volných ${free.toFixed(1)} %, cena ${Math.round(pricePer)} Kč/1 %)`, Math.min(100, free)));
+  if(isNaN(pct) || pct <= 0) return;
+  if(pct > free + 0.001){ showAlert(`Tolik volných % není — max ${free.toFixed(1)} %.`); return; }
+  const cost = Math.round(pricePer * pct);
+  const me = world.users[currentUser.name];
+  if(me.balance < cost){ showAlert(`Nemáš dost peněz (potřeba ${cost} Kč).`); return; }
+  me.balance -= cost;
+  const wasEmpty = !houseHasOwner(p) || (p.owners[currentUser.name]||0) === 0;
+  p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
+
+  // Gentrifikace: nákup dočasně zvedne ceny i oblíbenost okolních domů (do 150 m) úměrně velikosti nákupu.
+  // Bez dalších nákupů v okolí efekt postupně odezní (viz GENTRIFY_DECAY_PER_DAY v ticku).
+  const GENTRIFY_RADIUS = 150;
+  const bump = 1 + (pct/100) * 0.03; // koupě 100 % = +3 % okolí, menší podíl méně
+  Object.values(world.parcels).forEach(other => {
+    if(other.id === p.id) return;
+    if(haversine({lat:p.lat,lng:p.lng}, {lat:other.lat,lng:other.lng}) <= GENTRIFY_RADIUS){
+      if(bump > 1) other.gentrifyMult = (other.gentrifyMult || 1) * bump;
+      other.popularity = (other.popularity || 0) + pct/100; // "kolik podílů se v okolí koupilo" (historický ukazatel, neodeznívá)
+    }
+  });
+  p.popularity = (p.popularity || 0) + pct/100;
+
+  addNews('buy', `🏠 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${cost} Kč.`);
+  saveWorld(); refreshAll();
+  playSound('buy');
+  showAlert(`Koupeno ${pct.toFixed(1)} % domu za ${cost} Kč.${bump>1.001?' Zájem zvedl ceny i oblíbenost okolí.':''}`);
+}
+
+async function sellHouseStake(id){
+  const p = world.parcels[id];
+  const myPct = myHousePct(p);
+  if(myPct <= 0) return;
+  const marketPer = houseMarketPricePerPercent(p);
+  const refundPer = Math.round(marketPer * HOUSE_SELL_RATIO);
+  const condNote = (p.useType==='rental' && p.units) ? ` Cena je snížená kvůli stavu domu.` : '';
+  const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${myPct.toFixed(1)} %, dostaneš ~${refundPer} Kč za 1 %.${condNote})`, myPct));
+  if(isNaN(pct) || pct <= 0) return;
+  if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
+  const refund = Math.round(marketPer * pct * HOUSE_SELL_RATIO);
+  world.users[currentUser.name].balance += refund;
+  p.owners[currentUser.name] -= pct;
+  if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
+  if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+  addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${refund} Kč.`);
+  saveWorld(); refreshAll();
+  playSound('sell');
+  showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
+}
+
+// ===== TRŽIŠTĚ NEMOVITOSTÍ (prodej podílu mezi hráči) =====
+
+function myActiveListingFor(houseId){
+  return Object.values(world.listings||{}).find(l => l.houseId===houseId && l.seller===currentUser?.name);
+}
+
+// Nabídnout podíl na tržišti — pevná cena nebo aukce
+async function listHouseStake(id){
+  const p = world.parcels[id];
+  const myPct = myHousePct(p);
+  if(myPct <= 0){ showAlert('V tomhle domě nemáš podíl.'); return; }
+  if(myActiveListingFor(id)){ showAlert('Tenhle dům už máš na tržišti. Nejdřív zruš starou nabídku.'); return; }
+  const pct = parseFloat(await showPrompt(`Kolik % nabídnout k prodeji? (vlastníš ${myPct.toFixed(1)} %)`, myPct));
+  if(isNaN(pct) || pct <= 0) return;
+  if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
+  const isAuction = await showConfirm('OK = aukce (hráči přihazují 2 dny), Zrušit = pevná cena (kdo chce, koupí hned).');
+  const marketRef = Math.round(houseMarketPricePerPercent(p) * pct);
+  if(isAuction){
+    const startBid = parseInt(await showPrompt(`Vyvolávací cena aukce za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
+    if(isNaN(startBid) || startBid <= 0) return;
+    const lid = 'lst_'+Date.now();
+    world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction',
+      startBid, currentBid:startBid, highestBidder:null, endsAtDay: world.day + AUCTION_DURATION_DAYS};
+    addNews('market', `🔨 ${currentUser.name} vydražuje ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} (od ${startBid} Kč).`);
+    showAlert(`Aukce spuštěna — končí za ${AUCTION_DURATION_DAYS} herní dny.`);
+  } else {
+    const price = parseInt(await showPrompt(`Pevná cena za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
+    if(isNaN(price) || price <= 0) return;
+    const lid = 'lst_'+Date.now();
+    world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price};
+    addNews('market', `🏷️ ${currentUser.name} nabízí ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${price} Kč.`);
+    showAlert(`Podíl nabídnut na tržišti za ${price} Kč.`);
+  }
+  saveWorld(); refreshAll(); renderMarket();
+}
+
+function cancelListing(listingId){
+  const l = world.listings[listingId];
+  if(!l) return;
+  if(l.type==='auction' && l.highestBidder && world.users[l.highestBidder]){
+    // vrátit zablokovanou nabídku poslednímu dražiteli
+    world.users[l.highestBidder].balance += l.currentBid;
+  }
+  delete world.listings[listingId];
+  saveWorld(); refreshAll(); renderMarket();
+  showAlert('Nabídka zrušena.');
+}
+
+// Koupě z inzerátu s pevnou cenou (odkudkoliv, bez GPS)
+// Zaznamená skutečný prodej podílu a posune hodnotu domu směrem k realizované ceně.
+// Ceny tak vznikají z reálných transakcí mezi hráči (komparativní prodeje), ne jen z pevného vzorce.
+function recordSale(p, totalPrice, pct){
+  if(!p || pct <= 0) return;
+  const pricePerPct = totalPrice / pct; // cena za 1 %
+  // "očistíme" cenu od dočasných vlivů (cyklus, gentrifikace, inflace), ať dostaneme strukturální hodnotu
+  const structuralPerPct = pricePerPct / (marketMultiplier() * (p.gentrifyMult || 1) * inflationMult());
+  const structuralBase = structuralPerPct * 100; // odpovídající basePrice
+  // posun basePrice o 30 % k realizované ceně (zbytek setrvačnost — jeden prodej cenu neurčí úplně)
+  p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
+  // uložit do historie prodejů (posledních 5)
+  if(!p.salesHistory) p.salesHistory = [];
+  p.salesHistory.unshift({ pricePerPct: Math.round(pricePerPct), pct: Math.round(pct*10)/10, day: world.day });
+  if(p.salesHistory.length > 5) p.salesHistory.length = 5;
+}
+
+async function buyListing(listingId){
+  const l = world.listings[listingId];
+  if(!l || l.type!=='fixed') return;
+  if(l.seller === currentUser.name){ showAlert('Tohle je tvoje vlastní nabídka.'); return; }
+  const me = world.users[currentUser.name];
+  if(me.balance < l.price){ showAlert(`Nemáš dost peněz (potřeba ${l.price} Kč).`); return; }
+  const p = world.parcels[l.houseId];
+  const seller = world.users[l.seller];
+  // ověřit, že prodejce pořád podíl má
+  if((p.owners?.[l.seller]||0) < l.pct - 0.001){ showAlert('Prodejce už podíl nemá, nabídka je neplatná.'); delete world.listings[listingId]; saveWorld(); renderMarket(); return; }
+  if(!(await showConfirm(`Koupit ${l.pct.toFixed(1)} % domu ${l.houseId.replace('h_','#')} od ${l.seller} za ${l.price} Kč?`))) return;
+  const fee = Math.round(l.price * MARKET_FEE);
+  me.balance -= l.price;
+  if(seller) seller.balance += (l.price - fee); // prodejci jde cena minus provize (provize městu = mizí)
+  p.owners[l.seller] -= l.pct;
+  if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
+  p.owners[currentUser.name] = (p.owners[currentUser.name]||0) + l.pct;
+  recordSale(p, l.price, l.pct); // reálný prodej posune hodnotu domu
+  addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} od hráče ${l.seller} za ${l.price} Kč.`);
+  delete world.listings[listingId];
+  saveWorld(); refreshAll(); renderMarket();
+  playSound('buy');
+  showAlert(`Koupeno ${l.pct.toFixed(1)} % za ${l.price} Kč.`);
+}
+
+// Přihození v aukci (peníze se zablokují, předchozímu se vrátí)
+async function bidListing(listingId){
+  const l = world.listings[listingId];
+  if(!l || l.type!=='auction') return;
+  if(l.seller === currentUser.name){ showAlert('Nemůžeš dražit vlastní aukci.'); return; }
+  const minBid = l.highestBidder ? l.currentBid + 1 : l.currentBid;
+  const bid = parseInt(await showPrompt(`Tvá nabídka za ${l.pct.toFixed(1)} % (min. ${minBid} Kč):`, minBid), 10);
+  if(isNaN(bid) || bid < minBid){ showAlert(`Musíš přihodit aspoň ${minBid} Kč.`); return; }
+  const me = world.users[currentUser.name];
+  if(me.balance < bid){ showAlert('Nemáš dost peněz na tuhle nabídku.'); return; }
+  if(l.highestBidder === currentUser.name){ showAlert('Už vedeš v této aukci.'); return; }
+  // vrátit peníze předchozímu vedoucímu, zablokovat u nového
+  if(l.highestBidder && world.users[l.highestBidder]) world.users[l.highestBidder].balance += l.currentBid;
+  me.balance -= bid;
+  l.currentBid = bid;
+  l.highestBidder = currentUser.name;
+  saveWorld(); refreshAll(); renderMarket();
+  showAlert(`Přihozeno ${bid} Kč. Vedeš aukci.`);
+}
+
+// Vyřešení skončených aukcí (voláno na začátku nového dne)
+function resolveAuctions(){
+  Object.values(world.listings||{}).filter(l => l.type==='auction' && world.day >= l.endsAtDay).forEach(l => {
+    const p = world.parcels[l.houseId];
+    if(l.highestBidder && p && (p.owners?.[l.seller]||0) >= l.pct - 0.001){
+      // převod podílu, prodejci jde cena minus provize (blokované peníze už jsou stržené kupci)
+      const fee = Math.round(l.currentBid * MARKET_FEE);
+      if(world.users[l.seller]) world.users[l.seller].balance += (l.currentBid - fee);
+      p.owners[l.seller] -= l.pct;
+      if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
+      p.owners[l.highestBidder] = (p.owners[l.highestBidder]||0) + l.pct;
+      recordSale(p, l.currentBid, l.pct); // vydražená cena posune hodnotu domu
+      addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${l.currentBid} Kč.`);
+    } else if(l.highestBidder && world.users[l.highestBidder]){
+      // prodej se nekonal (prodejce už podíl nemá) — vrátit dražiteli peníze
+      world.users[l.highestBidder].balance += l.currentBid;
+    }
+    delete world.listings[l.id];
+  });
+}
+
+// ===== BANKA: půjčky =====
+
+function netWorthEstimate(name){
+  let worth = Math.max(0, world.users[name].balance);
+  worth += Math.max(0, world.users[name].savings || 0); // spoření se počítá do jmění
+  Object.values(world.parcels).forEach(p => { worth += (p.owners?.[name] || 0) * housePricePerPercent(p) * 0.6; });
+  Object.values(world.businesses).forEach(biz => {
+    const pct = biz.owners[name] || 0;
+    worth += pricePerPercent(biz) * pct * 0.7;
+  });
+  const debt = (world.users[name].loans || []).reduce((s,l)=>s+l.balance, 0);
+  return Math.max(0, worth - debt);
+}
+
+// Kompletní rozbor denních toků peněz hráče (pro finanční přehled).
+// Vrací příjmy, výdaje, čistou bilanci a klasifikaci aktiv/pasiv.
+function financeBreakdown(name){
+  const u = world.users[name];
+  const income = []; // {label, amount/den}
+  const expense = [];
+
+  // PŘÍJMY
+  // nájem z domů (reálný výběr po obsazenosti × podíl)
+  let rentIncome = 0;
+  Object.values(world.parcels).forEach(p => {
+    if(p.useType==='rental' && p.units){
+      const collected = p.units.reduce((s,un)=>{
+        const occ = un.condition>0 ? (un.tenant?1:unitOccupancy(p,un)) : 0;
+        return s + un.rentPrice*occ;
+      },0);
+      rentIncome += collected * ((p.owners?.[name]||0)/100);
+    }
+  });
+  if(rentIncome>0) income.push({label:'🏘️ Nájem z bytů', amount: rentIncome});
+  // podniky
+  let bizIncome = 0;
+  Object.values(world.businesses).forEach(b => {
+    const pct = b.owners[name]||0;
+    if(pct>0) bizIncome += b.hourlyYield * inflationMult() * (pct/100) * 24;
+  });
+  if(bizIncome>0) income.push({label:'📈 Výnos z podniků', amount: bizIncome});
+  // spoření úrok
+  const savingsInterest = (u.savings||0) * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR;
+  if(savingsInterest>0.5) income.push({label:'🐷 Úrok ze spoření', amount: savingsInterest});
+  // práce (pokud má) — orientačně 1 směna/den
+  const job = getCurrentJob(name);
+  if(job) income.push({label:'💼 Plat (1 směna/den)', amount: job.job.salary * inflationMult()});
+
+  // VÝDAJE
+  const status = housingStatus(name);
+  let living = status==='owner' ? LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT) : (status==='tenant'?TENANT_LIVING_COST:LIVING_COST);
+  living *= inflationMult();
+  expense.push({label:'🧾 Život a bydlení', amount: living});
+  if(status==='tenant'){
+    let rent=0; Object.values(world.parcels).forEach(p=>(p.units||[]).forEach(un=>{if(un.tenant===name)rent+=un.rentPrice;}));
+    if(rent>0) expense.push({label:'🔑 Nájem majiteli', amount: rent});
+  }
+  // daň z nemovitosti
+  let tax=0;
+  Object.values(world.parcels).forEach(p=>{ const pct=p.owners?.[name]||0; if(pct>0) tax += effectiveHousePrice(p)*(pct/100)*PROPERTY_TAX_RATE/DAYS_PER_YEAR; });
+  if(tax>0.5) expense.push({label:'🏛️ Daň z nemovitosti', amount: tax});
+  // úrok z půjček
+  let loanInterest=0;
+  (u.loans||[]).forEach(l=>{ loanInterest += l.balance * l.dailyRate; });
+  if(loanInterest>0.5) expense.push({label:'💵 Úrok z půjček', amount: loanInterest});
+
+  const totalIncome = income.reduce((s,i)=>s+i.amount,0);
+  const totalExpense = expense.reduce((s,e)=>s+e.amount,0);
+  const net = totalIncome - totalExpense;
+
+  // AKTIVA vs PASIVA
+  const assets = [], liabilities = [];
+  Object.values(world.parcels).forEach(p => {
+    const pct = p.owners?.[name]||0;
+    if(pct<=0) return;
+    const value = effectiveHousePrice(p)*(pct/100);
+    // dům nesoucí příjem (pronájem) = aktivum; nevyužitý/bydlení jen s daní = spíš pasivum
+    let dayFlow = 0;
+    if(p.useType==='rental' && p.units){
+      const collected = p.units.reduce((s,un)=>{const occ=un.condition>0?(un.tenant?1:unitOccupancy(p,un)):0; return s+un.rentPrice*occ;},0);
+      dayFlow += collected*(pct/100);
+    }
+    dayFlow -= value*PROPERTY_TAX_RATE/DAYS_PER_YEAR; // daň
+    const item = {label:`Dům ${p.id.replace('h_','#')}`, value, dayFlow};
+    if(dayFlow >= 0) assets.push(item); else liabilities.push(item);
+  });
+  Object.values(world.businesses).forEach(b=>{
+    const pct=b.owners[name]||0; if(pct<=0) return;
+    assets.push({label:b.name, value: pricePerPercent(b)*pct, dayFlow: b.hourlyYield*inflationMult()*(pct/100)*24});
+  });
+  (u.loans||[]).forEach(l=>{ liabilities.push({label:'Půjčka', value:-l.balance, dayFlow:-l.balance*l.dailyRate}); });
+
+  // PŘEDPOVĚĎ: za kolik dní dojdou peníze (jen pokud bilance záporná)
+  let daysUntilBroke = null;
+  if(net < -0.5){
+    const cash = u.balance + (u.savings||0);
+    daysUntilBroke = Math.max(0, Math.floor(cash / -net));
+  }
+
+  return {income, expense, totalIncome, totalExpense, net, assets, liabilities, daysUntilBroke};
+}
+
+async function takeLoan(){
+  const limit = Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO) + 500;
+  const amount = parseInt(await showPrompt(`Kolik si chceš půjčit? (banka ti dá max ${limit} Kč, úrok ${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)`, Math.min(2000, limit)), 10);
+  if(isNaN(amount) || amount <= 0) return;
+  if(amount > limit){ showAlert(`Banka ti tolik nepůjčí — max ${limit} Kč podle tvého majetku.`); return; }
+  const me = world.users[currentUser.name];
+  if(!me.loans) me.loans = [];
+  me.loans.push({id:'loan_'+Date.now(), type:'loan', houseId:null, principal:amount, balance:amount, dailyRate: LOAN_ANNUAL_RATE/DAYS_PER_YEAR, missedDays:0});
+  me.balance += amount;
+  me.everBorrowed = true; // pro achievement "Bez dluhů"
+  addNews('loan', `💵 ${currentUser.name} si vzal půjčku ${amount} Kč.`);
+  playSound('coin');
+  saveWorld(); refreshAll();
+  showAlert(`Půjčeno ${amount} Kč.`);
+}
+
+async function repayLoan(loanId){
+  const me = world.users[currentUser.name];
+  const loan = me.loans.find(l => l.id === loanId);
+  if(!loan) return;
+  const amount = parseInt(await showPrompt(`Kolik splatit? (dluh ${Math.round(loan.balance)} Kč)`, Math.min(Math.round(loan.balance), Math.round(me.balance))), 10);
+  if(isNaN(amount) || amount <= 0) return;
+  if(amount > me.balance){ showAlert('Nemáš dost peněz.'); return; }
+  const pay = Math.min(amount, loan.balance);
+  me.balance -= pay;
+  loan.balance -= pay;
+  loan.missedDays = 0;
+  if(loan.balance <= 0.5) me.loans = me.loans.filter(l => l !== loan);
+  saveWorld(); refreshAll(); renderBank();
+  showAlert(`Splaceno ${Math.round(pay)} Kč.`);
+}
+
+// Banka si po LOAN_SEIZURE_MISSED_DAYS dnech neplacení vezme majetek na pokrytí dluhu:
+// nejdřív podíl v domě (60 % ceny), jinak podíl v podniku (70 % ceny)
+function seizeAssetForDebt(user, loan){
+  const owner = user.name;
+  const house = Object.values(world.parcels).find(p => (p.owners?.[owner] || 0) > 0);
+  let seizedDesc = null;
+
+  if(house){
+    const pct = house.owners[owner];
+    const proceeds = Math.round(housePricePerPercent(house) * pct * HOUSE_SELL_RATIO);
+    seizedDesc = `${pct.toFixed(1)} % domu ${house.id.replace('h_','#')} (výplata ${proceeds} Kč)`;
+    applySeizureProceeds(user, loan, proceeds);
+    delete house.owners[owner];
+    if(!houseHasOwner(house)){ house.useType = null; delete house.units; }
+  } else {
+    const biz = Object.values(world.businesses).find(b => (b.owners[owner] || 0) > 0);
+    if(biz){
+      const pct = biz.owners[owner];
+      const proceeds = Math.round(pricePerPercent(biz) * pct * BUSINESS_SELL_RATIO);
+      seizedDesc = `${pct.toFixed(1)} % podílu v ${biz.name} (výplata ${proceeds} Kč)`;
+      applySeizureProceeds(user, loan, proceeds);
+      delete biz.owners[owner];
+    }
+  }
+
+  if(seizedDesc){
+    loan.missedDays = 0;
+    if(currentUser && currentUser.name === owner){
+      showAlert(`⚠️ Banka ti zabavila majetek kvůli nesplácené půjčce: ${seizedDesc}.`);
+    }
+  } else {
+    loan.missedDays = LOAN_SEIZURE_MISSED_DAYS - 0.5;
+  }
+}
+
+function applySeizureProceeds(user, loan, proceeds){
+  const pay = Math.min(proceeds, loan.balance);
+  loan.balance -= pay;
+  const leftover = proceeds - pay;
+  if(leftover > 0) user.balance += leftover;
+  if(loan.balance <= 0.5){
+    user.loans = (user.loans || []).filter(l => l !== loan);
+  }
+}
+
+function renderMarket(){
+  const el = document.getElementById('marketContent');
+  // úklid neplatných nabídek (prodejce už podíl nemá)
+  let cleaned = false;
+  Object.values(world.listings||{}).forEach(l => {
+    const p = world.parcels[l.houseId];
+    if(!p || (p.owners?.[l.seller]||0) < l.pct - 0.001){
+      if(l.type==='auction' && l.highestBidder && world.users[l.highestBidder]) world.users[l.highestBidder].balance += l.currentBid;
+      delete world.listings[l.id];
+      cleaned = true;
+    }
+  });
+  if(cleaned) saveWorld();
+  const listings = Object.values(world.listings||{});
+  let html = `<p style="font-size:0.92em;color:var(--muted);margin-bottom:8px;">Podíly v domech nabízené hráči. Koupit můžeš odkudkoliv (je to finanční transakce). Provize ${Math.round(MARKET_FEE*100)} % z prodeje jde městu.</p>`;
+
+  if(!listings.length){
+    html += `<div class="empty-state">Na tržišti teď nejsou žádné nabídky. Svůj podíl nabídneš v detailu domu tlačítkem „Nabídnout na tržišti".</div>`;
+    el.innerHTML = html;
+    return;
+  }
+
+  // seřadit: aukce dřív končící nahoře, pak pevné ceny
+  listings.sort((a,b)=>{
+    if(a.type!==b.type) return a.type==='auction'?-1:1;
+    if(a.type==='auction') return a.endsAtDay-b.endsAtDay;
+    return a.price-b.price;
+  });
+
+  html += listings.map(l => {
+    const p = world.parcels[l.houseId];
+    const mine = l.seller === currentUser?.name;
+    const houseLabel = `Dům ${l.houseId.replace('h_','#')}`;
+    if(l.type==='auction'){
+      const leads = l.highestBidder === currentUser?.name;
+      const daysLeft = Math.max(0, l.endsAtDay - world.day);
+      return `<div class="card">
+        <h3>🔨 Aukce — ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
+        <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.seller}')">${l.seller}</span>`}</p>
+        <p>Aktuální nabídka: <b style="color:var(--gold)">${l.currentBid} Kč</b>${l.highestBidder?` (vede ${leads?'ty':`<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.highestBidder}')">${l.highestBidder}</span>`})`:' – zatím nikdo'}</p>
+        <p style="font-size:0.92em;color:var(--muted)">Končí za ${daysLeft} ${daysLeft===1?'den':'dní'} (den ${l.endsAtDay})</p>
+        ${!mine ? `<div class="row"><button onclick="bidListing('${l.id}')">Přihodit</button><button class="secondary" onclick="flyToParcel('${l.houseId}')">Na mapě</button></div>`
+                : `<div class="row"><button class="danger" onclick="cancelListing('${l.id}')">Zrušit aukci</button></div>`}
+      </div>`;
+    } else {
+      return `<div class="card">
+        <h3>🏷️ ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
+        <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.seller}')">${l.seller}</span>`}</p>
+        <p>Cena: <b style="color:var(--gold)">${l.price} Kč</b> <span style="font-size:0.92em;color:var(--muted)">(${Math.round(l.price/l.pct)} Kč/1 %)</span></p>
+        ${!mine ? `<div class="row"><button onclick="buyListing('${l.id}')">Koupit</button><button class="secondary" onclick="flyToParcel('${l.houseId}')">Na mapě</button></div>`
+                : `<div class="row"><button class="danger" onclick="cancelListing('${l.id}')">Stáhnout nabídku</button></div>`}
+      </div>`;
+    }
+  }).join('');
+
+  el.innerHTML = html;
+}
+
+// ===== PROFIL HRÁČE =====
+const AVATAR_CHOICES = ['🧑','👩','👨','🧓','👷','💼','🧑‍🌾','🕵️','🤵','👸','🦸','🧛'];
+
+// ===== ACHIEVEMENTY / ODZNAKY =====
+// každý má check(u) → true, když je splněný. Kontrolují se po akcích a v novém dni.
+const ACHIEVEMENTS = [
+  {id:'first_job',   icon:'💼', title:'První výplata',      desc:'Odpracuj svou první směnu.',              check:u=>(u.totalShifts||0)>=1},
+  {id:'first_home',  icon:'🏠', title:'Vlastní střecha',     desc:'Získej podíl v domě určeném jako bydlení.', check:u=>housingStatus(u.name)==='owner'},
+  {id:'first_house', icon:'🔑', title:'Malý investor',       desc:'Vlastni podíl aspoň v jednom domě.',       check:u=>Object.values(world.parcels).some(p=>(p.owners?.[u.name]||0)>0)},
+  {id:'landlord',    icon:'🏘️', title:'Pronajímatel',        desc:'Měj byt k pronájmu.',                     check:u=>Object.values(world.parcels).some(p=>p.useType==='rental'&&p.units&&(p.owners?.[u.name]||0)>0)},
+  {id:'walker_5',    icon:'🚶', title:'Chodec',              desc:'Nachoď celkem 5 km.',                     check:u=>(u.totalDistance||0)>=5000},
+  {id:'walker_25',   icon:'🏃', title:'Maratonec',           desc:'Nachoď celkem 25 km.',                    check:u=>(u.totalDistance||0)>=25000},
+  {id:'saver',       icon:'🐷', title:'Spořílek',            desc:'Měj na spoření aspoň 5 000 Kč.',          check:u=>(u.savings||0)>=5000},
+  {id:'investor',    icon:'📈', title:'Podílník',            desc:'Vlastni podíl v nějakém podniku.',         check:u=>Object.values(world.businesses).some(b=>(b.owners[u.name]||0)>0)},
+  {id:'career',      icon:'🎓', title:'Kariérista',          desc:'Odpracuj 25 směn.',                       check:u=>(u.totalShifts||0)>=25},
+  {id:'wealthy',     icon:'💰', title:'Boháč',               desc:'Dosáhni čistého jmění 50 000 Kč.',        check:u=>netWorthEstimate(u.name)>=50000},
+  {id:'magnate',     icon:'👑', title:'Magnát',              desc:'Dosáhni čistého jmění 150 000 Kč.',        check:u=>netWorthEstimate(u.name)>=150000},
+  {id:'empire',      icon:'🏛️', title:'Realitní impérium',   desc:'Vlastni podíl v 5 domech.',               check:u=>Object.values(world.parcels).filter(p=>(p.owners?.[u.name]||0)>0).length>=5},
+  {id:'debtfree',    icon:'✅', title:'Bez dluhů',           desc:'Splať půjčku úplně (po tom, co sis nějakou vzal).', check:u=>(u.everBorrowed && (u.loans||[]).length===0)},
+];
+
+// Zkontroluje nově splněné achievementy hráče, oznámí je a uloží
+function checkAchievements(){
+  if(!currentUser) return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  if(!u.achievements) u.achievements = [];
+  let newlyUnlocked = [];
+  ACHIEVEMENTS.forEach(a => {
+    if(!u.achievements.includes(a.id)){
+      try { if(a.check(u)){ u.achievements.push(a.id); newlyUnlocked.push(a); } } catch(e){}
+    }
+  });
+  if(newlyUnlocked.length){
+    newlyUnlocked.forEach(a => addNews('achievement', `🏆 ${u.name} získal odznak „${a.title}"!`));
+    saveWorld();
+    newlyUnlocked.forEach((a, i) => setTimeout(() => {
+      playSound('levelup');
+      showToast(`🏆 Odznak odemčen: ${a.icon} ${a.title}`);
+    }, i * 1400));
+  }
+}
+
+function titleForWorth(worth){
+  if(worth < 5000) return 'Nováček';
+  if(worth < 20000) return 'Nájemník';
+  if(worth < 60000) return 'Majitel';
+  if(worth < 150000) return 'Investor';
+  if(worth < 400000) return 'Magnát';
+  return 'Realitní král';
+}
+
+async function changeAvatar(){
+  const current = world.users[currentUser.name].avatar || '🧑';
+  const choice = await showPrompt(`Napiš/zkopíruj jeden z těchto emoji:\n${AVATAR_CHOICES.join(' ')}`, current);
+  if(choice && choice.trim()){
+    // povolit jen emoji, které je v nabídce (obrana proti vložení HTML/skriptu do avataru)
+    const picked = choice.trim();
+    const safe = AVATAR_CHOICES.includes(picked) ? picked : '🧑';
+    world.users[currentUser.name].avatar = safe;
+    document.getElementById('userInfo').innerHTML = `<span style="cursor:pointer">${escapeHtml(safe)} ${escapeHtml(currentUser.name)} ▸</span>`;
+    saveWorld(); renderProfile();
+  }
+}
+
+// ===== NÁPOVĚDA "JAK TO FUNGUJE" (finanční gramotnost pro mladší hráče) =====
+function guideSection(emoji, title, bodyHtml){
+  return `<div class="card"><h3>${emoji} ${title}</h3>${bodyHtml}</div>`;
+}
+
+function setFontScale(scale){
+  document.documentElement.style.setProperty('--fs-scale', scale);
+  try { localStorage.setItem('bucovice_fontscale', scale); } catch(e){}
+}
+function loadFontScale(){
+  let scale = 1;
+  try { scale = parseFloat(localStorage.getItem('bucovice_fontscale')) || 1; } catch(e){}
+  document.documentElement.style.setProperty('--fs-scale', scale);
+}
+
+// Barvy/rámečky pro typy novinek
+const NEWS_STYLE = {
+  join:       {color:'var(--accent2)'},
+  buy:        {color:'var(--accent)'},
+  sell:       {color:'var(--gold)'},
+  trade:      {color:'var(--accent)'},
+  market:     {color:'var(--gold)'},
+  rental:     {color:'var(--purple)'},
+  invest:     {color:'var(--accent2)'},
+  job:        {color:'var(--muted)'},
+  loan:       {color:'var(--danger)'},
+  achievement:{color:'var(--gold)'},
+  event:      {color:'var(--orange)'},
+};
+function renderNews(){
+  const el = document.getElementById('newsContent');
+  const news = world.news || [];
+  if(!news.length){
+    el.innerHTML = `<div class="empty-state">Zatím se nic nestalo. Až někdo koupí dům, nastoupí do práce nebo se přidá nový hráč, objeví se to tady.</div>`;
+    return;
+  }
+  let html = `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co se děje ve městě — nejnovější nahoře. ${countPlayers()>1?'':'(Až budete hrát víc hráčů, uvidíš tu i jejich akce.)'}</p>`;
+  news.forEach(n => {
+    const st = NEWS_STYLE[n.type] || {color:'var(--text)'};
+    html += `<div class="card" style="border-left:3px solid ${st.color};padding:8px 10px;margin-bottom:6px;">
+      <p style="margin:0;font-size:0.95em;">${escapeHtml(n.text)}</p>
+      <p style="margin:2px 0 0;font-size:0.75em;color:var(--muted);">den ${n.day}${timeAgo(n.ts)}</p>
+    </div>`;
+  });
+  el.innerHTML = html;
+}
+function countPlayers(){ return Object.keys(world.users||{}).length; }
+// "před X min/hod" z timestampu
+function timeAgo(ts){
+  if(!ts) return '';
+  const s = Math.floor((Date.now()-ts)/1000);
+  if(s < 60) return ' · před chvílí';
+  if(s < 3600) return ` · před ${Math.floor(s/60)} min`;
+  if(s < 86400) return ` · před ${Math.floor(s/3600)} h`;
+  return ` · před ${Math.floor(s/86400)} dny`;
+}
+
+function renderFinance(){
+  const el = document.getElementById('financeContent');
+  if(!currentUser){ el.innerHTML='<div class="empty-state"></div>'; return; }
+  const u = world.users[currentUser.name];
+  const f = financeBreakdown(currentUser.name);
+
+  let html = '';
+
+  // 1) ROZPOČET — příjmy vs výdaje s předpovědí
+  html += `<div class="card">
+    <h3>📊 Denní rozpočet</h3>
+    <p style="font-size:0.85em;color:var(--muted)">Kolik ti každý den přiteče a odteče (odhad podle současného stavu).</p>`;
+  html += `<p style="margin-top:6px;color:var(--accent)"><b>Příjmy: +${Math.round(f.totalIncome)} Kč/den</b></p>`;
+  f.income.forEach(i=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${i.label}: +${Math.round(i.amount)} Kč</p>`);
+  if(!f.income.length) html += `<p style="font-size:0.9em;margin-left:10px;color:var(--muted)">zatím žádné — zkus práci nebo pronájem</p>`;
+  html += `<p style="margin-top:6px;color:var(--danger)"><b>Výdaje: −${Math.round(f.totalExpense)} Kč/den</b></p>`;
+  f.expense.forEach(e=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${e.label}: −${Math.round(e.amount)} Kč</p>`);
+  const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
+  html += `<p style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">Denní bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
+
+  // předpověď
+  if(f.net >= 0){
+    html += `<p style="font-size:0.9em;color:var(--accent)">✅ Vyděláváš víc, než utrácíš — tvůj majetek roste. Skvělé hospodaření!</p>`;
+  } else if(f.daysUntilBroke !== null){
+    const warn = f.daysUntilBroke <= 5 ? 'var(--danger)' : 'var(--gold)';
+    html += `<p style="font-size:0.9em;color:${warn}">⚠️ Utrácíš víc, než vyděláváš. Při současném tempu ti peníze dojdou <b>za ${f.daysUntilBroke} ${f.daysUntilBroke===1?'den':(f.daysUntilBroke<5?'dny':'dní')}</b>. Seber si příjem (práce, pronájem) nebo omez výdaje.</p>`;
+  }
+  html += `</div>`;
+
+  // 2) AKTIVA vs PASIVA
+  html += `<div class="card">
+    <h3>⚖️ Aktiva vs. pasiva</h3>
+    <p style="font-size:0.85em;color:var(--muted)"><b>Aktivum</b> ti peníze nese. <b>Pasivum</b> ti je bere. Boháči hromadí aktiva.</p>`;
+  if(f.assets.length){
+    html += `<p style="color:var(--accent);margin-top:6px;"><b>💚 Aktiva (nesou příjem):</b></p>`;
+    f.assets.forEach(a=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${escapeHtml(a.label)}: hodnota ${Math.round(a.value).toLocaleString('cs-CZ')} Kč · ${a.dayFlow>=0?'+':''}${Math.round(a.dayFlow)} Kč/den</p>`);
+  }
+  if(f.liabilities.length){
+    html += `<p style="color:var(--danger);margin-top:6px;"><b>❤️ Pasiva (berou peníze):</b></p>`;
+    f.liabilities.forEach(a=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${escapeHtml(a.label)}: ${a.value<0?'dluh ':''}${Math.round(Math.abs(a.value)).toLocaleString('cs-CZ')} Kč · ${Math.round(a.dayFlow)} Kč/den</p>`);
+  }
+  if(!f.assets.length && !f.liabilities.length) html += `<p style="font-size:0.9em;color:var(--muted);margin-top:6px;">Zatím nevlastníš žádný majetek. Kup podíl v domě nebo firmě a začni budovat aktiva.</p>`;
+  html += `</div>`;
+
+  // 3) SLOŽENÉ ÚROČENÍ NÁZORNĚ
+  html += `<div class="card">
+    <h3>🔢 Síla složeného úroku</h3>
+    <p style="font-size:0.85em;color:var(--muted)">Peníze (i dluhy) rostou samy — a čím déle, tím rychleji. Podívej:</p>`;
+  // graf: 1000 Kč na spoření vs stejná půjčka, přes 90 dní
+  const startAmt = 1000;
+  const savPts=[], loanPts=[];
+  for(let d=0; d<=90; d+=15){
+    savPts.push(Math.round(startAmt * Math.pow(1+SAVINGS_ANNUAL_RATE/DAYS_PER_YEAR, d)));
+    loanPts.push(Math.round(startAmt * Math.pow(1+LOAN_ANNUAL_RATE/DAYS_PER_YEAR, d)));
+  }
+  html += `<p style="font-size:0.9em;">💰 <b>1000 Kč na spoření</b> (${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} %):</p>
+    <p style="font-size:0.85em;margin-left:10px;color:var(--accent)">za 90 dní → ${savPts[savPts.length-1]} Kč (+${savPts[savPts.length-1]-startAmt} Kč zadarmo)</p>`;
+  html += `<p style="font-size:0.9em;">💵 <b>1000 Kč půjčka</b> (${Math.round(LOAN_ANNUAL_RATE*100)} %), když nesplácíš:</p>
+    <p style="font-size:0.85em;margin-left:10px;color:var(--danger)">za 90 dní → dluh ${loanPts[loanPts.length-1]} Kč (+${loanPts[loanPts.length-1]-startAmt} Kč navíc)</p>`;
+  html += `<p style="font-size:0.85em;color:var(--muted);margin-top:6px;">💡 Proto se vyplatí spořit brzy a splácet dluhy rychle — úrok pracuje pro tebe, nebo proti tobě.</p>`;
+  html += `</div>`;
+
+  // 4) REZERVA
+  const cash = u.balance + (u.savings||0);
+  const dailyBurn = f.totalExpense;
+  const daysReserve = dailyBurn>0 ? Math.floor(cash / dailyBurn) : 999;
+  let reserveColor = daysReserve>=14 ? 'var(--accent)' : (daysReserve>=5 ? 'var(--gold)' : 'var(--danger)');
+  html += `<div class="card">
+    <h3>🛟 Tvoje rezerva</h3>
+    <p>Hotovost + spoření: <b>${Math.round(cash).toLocaleString('cs-CZ')} Kč</b></p>
+    <p>Vydrží ti krýt výdaje na: <b style="color:${reserveColor}">${daysReserve>=999?'dlouho':daysReserve+' dní'}</b></p>
+    <p style="font-size:0.85em;color:var(--muted)">Chytré je mít rezervu aspoň na 2 týdny — kdyby přišel nečekaný výdaj nebo výpadek příjmu, nemusíš si hned půjčovat.</p>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+function renderGuide(){
+  const el = document.getElementById('guideContent');
+  let html = `<div class="card"><h3>🔤 Velikost písma</h3>
+    <p>Zvětši si text, aby se ti dobře četl.</p>
+    <div class="row">
+      <button class="secondary" onclick="setFontScale(1)">A <span style="font-size:0.8em">malé</span></button>
+      <button class="secondary" onclick="setFontScale(1.2)">A <span style="font-size:1em">větší</span></button>
+      <button class="secondary" onclick="setFontScale(1.45)">A <span style="font-size:1.2em">velké</span></button>
+    </div>
+    <div class="row"><button class="secondary" onclick="closeSheet();startTutorial();">▶ Znovu spustit úvodní návod</button></div>
+    <div class="row"><button class="secondary" onclick="toggleSound();renderGuide();">${soundEnabled?'🔊 Zvuky: zapnuté':'🔇 Zvuky: vypnuté'}</button></div>
+  </div>`;
+  html += `<p style="font-size:0.92em;color:var(--muted);margin-bottom:8px;">Vysvětlení všech peněžních věcí ve hře — jednoduše, ať víš přesně, co se s tvými penězi děje.</p>`;
+
+  html += guideSection('💰','Jak vydělat peníze', `
+    <p>Ve hře máš víc způsobů, jak si vydělat:</p>
+    <p>• <b>Práce</b> — odpracuješ směnu u radnice a dostaneš plat. Čím déle na jednom místě pracuješ, tím víc si přivyděláš navíc (příplatek za praxi).</p>
+    <p>• <b>Chůze</b> — když se opravdu projdeš po městě, appka ti za nachozené metry přidá peníze.</p>
+    <p>• <b>Pronájem</b> — když vlastníš byt a někdo si ho pronajme, každý den ti chodí nájem.</p>
+    <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
+  `);
+
+  html += guideSection('🏠','Bydlení — proč se vyplatí mít domov', `
+    <p>Každý den <b>musíš zaplatit za bydlení</b> — je to jako doma platit jídlo a energie. Máš tři možnosti:</p>
+    <p>1️⃣ <b>Vlastníš byt/dům</b> → platíš jen <b>${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den</b> (nejlevnější)</p>
+    <p>2️⃣ <b>Bydlíš v nájmu</b> u jiného hráče → platíš nájem + malý poplatek navíc</p>
+    <p>3️⃣ <b>Nemáš kde bydlet</b> → platíš <b>${LIVING_COST} Kč/den</b> (nejdražší — jako bys pořád spal v hotelu)</p>
+    <p style="color:var(--muted)">💡 Ponaučení: vlastnit vlastní bydlení se dlouhodobě vždycky vyplatí.</p>
+  `);
+
+  html += guideSection('🤝','Podíly v domě — co to znamená', `
+    <p>Dům nemusíš koupit celý. Můžeš koupit třeba jen <b>20 %</b> — to se nazývá <b>podíl</b>.</p>
+    <p>Kdo má v domě <b>největší podíl</b>, ten dům spravuje (nastavuje nájem, objednává opravy).</p>
+    <p>Kdo má <b>víc než 50 %</b> (nadpoloviční většina), ten navíc může měnit, k čemu dům slouží (bydlení / pronájem).</p>
+    <p>Peníze z nájmu se dělí <b>přesně podle podílů</b> — kdo má 20 %, dostane 20 % z výdělku.</p>
+  `);
+
+  html += guideSection('🏘️','Nájem a byty', `
+    <p>Když z domu uděláš pronájem, každé patro = jeden byt. Ty jako majitel si <b>nastavíš nájemné</b>.</p>
+    <p>Pozor: <b>moc vysoký nájem = nikdo si byt nepronajme</b> (prázdný byt = žádné peníze). Appka ti vždycky poradí "tržní cenu" — kolem ní bývá byt obsazený a spokojený zároveň nájemce i majitel.</p>
+    <p>Byty <b>postupně chátrají</b> (víc, když jsou obydlené) — musíš je čas od času opravit, jinak přestanou vydělávat.</p>
+  `);
+
+  html += guideSection('💵','Půjčky a úrok', `
+    <p>Banka ti může půjčit peníze, ale <b>ne zadarmo</b>. Za to, že ti peníze půjčila, platíš navíc <b>úrok</b> — ${Math.round(LOAN_ANNUAL_RATE*100)} % z půjčené částky za rok.</p>
+    <p>Příklad: půjčíš si 1000 Kč. Za rok bys bance dlužil o ${Math.round(LOAN_ANNUAL_RATE*100)} % víc, kdybys nic nesplácel — tedy ${Math.round(1000*LOAN_ANNUAL_RATE)} Kč navíc.</p>
+    <p>Banka si sama bere malou splátku každý den (${Math.round(LOAN_MIN_PAYMENT_RATIO*100)} % z půjčené částky), pokud máš na účtu dost peněz.</p>
+    <p style="color:var(--danger)">⚠️ Když ${LOAN_SEIZURE_MISSED_DAYS} dní po sobě nemáš na splátku, banka ti <b>zabaví majetek</b> (dům nebo podíl ve firmě), aby dluh pokryla. Půjčka je vážná věc — nikdy si nepůjčuj víc, než dokážeš splácet.</p>
+  `);
+
+  html += guideSection('🐷','Spoření a úrok naopak', `
+    <p>Když máš peníze, které hned nepotřebuješ, můžeš je dát na <b>spořicí účet</b> v bance.</p>
+    <p>Tam ti pomalu rostou — banka ti přidá <b>${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % za rok</b>. Je to opak půjčky: u půjčky ty platíš bance, u spoření banka platí tobě.</p>
+    <p>Úrok ze spoření (${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} %) je ale mnohem menší než úrok z půjčky (${Math.round(LOAN_ANNUAL_RATE*100)} %). Spoření je <b>bezpečné, ale pomalé</b> — velké bohatství se buduje spíš chytrými investicemi do domů a firem.</p>
+    <p style="color:var(--muted)">💡 Ponaučení: peníze, co jen leží, nevydělávají. Ať už spoříš nebo investuješ, dej penězům práci.</p>
+  `);
+
+  html += guideSection('🧾','Denní útrata za život', `
+    <p>Každý den něco stojí bydlení a život — jídlo, energie, doprava. V profilu vidíš přesný rozpad, kam ti peníze jdou.</p>
+    <p>Ceny navíc <b>den ode dne trochu kolísají</b> (jako ve skutečnosti — někdy je dráž, jindy líp). Proto se ti denní útrata mění.</p>
+    <p style="color:var(--muted)">💡 Ponaučení: sleduj, kolik ti denně odchází, a měj vždy rezervu na horší dny.</p>
+  `);
+
+  html += guideSection('🏛️','Daň z nemovitosti', `
+    <p>Za každý dům nebo podíl, který <b>vlastníš</b>, platíš malou <b>daň</b> — ${Math.round(PROPERTY_TAX_RATE*100)} % jeho hodnoty za rok, rozpočítáno na dny.</p>
+    <p>Daň jde "městu" (zmizí ze hry) — je to jako ve skutečném životě, kde vlastníci nemovitostí platí daň obci.</p>
+    <p style="color:var(--muted)">💡 Ponaučení: nemovitost, kterou jen tak držíš a nevyužíváš, tě stojí peníze. Vyplatí se ji buď obývat, nebo pronajímat.</p>
+  `);
+
+  html += guideSection('📈','Investice do firem', `
+    <p>Ve městě jsou skutečné podniky (obchody, hotely...). Můžeš si koupit <b>podíl</b> ve firmě, stejně jako u domu.</p>
+    <p>Firma vydělává peníze každou hodinu a dělí je mezi všechny, kdo v ní mají podíl — podle velikosti podílu.</p>
+    <p>Na rozdíl od pronájmu se o firmu <b>nemusíš starat</b> (žádné opravy) — je to pasivní, ale obvykle vydělává o něco méně než dobře spravovaný pronájem.</p>
+  `);
+
+  html += guideSection('🏷️','Tržiště — prodej a aukce', `
+    <p>Svůj podíl v domě můžeš prodat <b>jinému hráči</b> dvěma způsoby:</p>
+    <p>• <b>Pevná cena</b> — ty určíš cenu, kdo chce, ten koupí</p>
+    <p>• <b>Aukce</b> — hráči mezi sebou <b>přihazují</b>, kdo dá nejvíc, ten vyhraje (jako dražba)</p>
+    <p>Z každého prodeje jde <b>${Math.round(MARKET_FEE*100)} % provize</b> "městu" — je to jako poplatek realitní kanceláři ve skutečném světě.</p>
+  `);
+
+  html += guideSection('📊','Proč ceny domů kolísají', `
+    <p>Ceny nemovitostí ve hře nejsou napořád stejné — ovlivňuje je několik věcí:</p>
+    <p>1️⃣ <b>Skutečné prodeje</b> — když se dům (nebo jeho podíl) prodá, ta cena posune jeho hodnotu. Přesně jako v realitě: cena vzniká z toho, za kolik se podobné domy opravdu prodaly. V detailu domu vidíš jeho nedávné prodeje.</p>
+    <p>2️⃣ <b>Zájem v okolí</b> — čím víc se poblíž kupuje, tím dražší lokalita dočasně je. Bez dalších nákupů efekt postupně odezní.</p>
+    <p>3️⃣ <b>Tržní cyklus</b> — celé město prochází obdobími <b>růstu</b> (📈 konjunktura, 🔥 boom) a <b>poklesu</b> (📉 recese). V recesi jsou nákupy výhodnější, v boomu prodeje.</p>
+  `);
+
+  html += guideSection('📈','Inflace — proč čísla rostou', `
+    <p>Časem se ve hře <b>všechno pomalu zdražuje</b> — domy, nájmy, ale i platy a ceny v obchodě. Tomu se říká <b>inflace</b> (asi ${(INFLATION_ANNUAL*100).toFixed(1)} % za rok).</p>
+    <p>Protože rostou ceny i platy stejně, v praxi se toho moc nemění — jen jsou čísla větší. Ale pozor: <b>peníze, které jen leží</b> (hotovost), postupně <b>ztrácejí hodnotu</b> — za stejnou částku si za rok koupíš míň.</p>
+    <p style="color:var(--muted)">💡 Ponaučení: nenechávej hromadu peněz jen tak ležet. Dej je na spoření (aspoň drží krok s inflací) nebo je investuj do domů a firem (porazí inflaci).</p>
+  `);
+
+  html += guideSection('💼','Práce a kariéra', `
+    <p>Práce má úrovně — začínáš na nejnižší pozici a postupuješ <b>o jednu úroveň výš</b>, jak přibývá odpracovaných směn.</p>
+    <p>⚠️ Když máš práci a <b>nepřijdeš na směnu</b>, appka to toleruje ${JOB_SICK_DAYS_ALLOWED}×, pak přijde vyhazov a ${JOB_BAN_DAYS} dní nesmíš nikde pracovat. Stejně jako ve skutečné práci — docházka se počítá.</p>
+  `);
+
+  html += guideSection('🧮','Čisté jmění — jak "bohatý" doopravdy jsi', `
+    <p>Čisté jmění = <b>všechno, co máš</b> (peníze v kapse + hodnota domů a podílů) <b>mínus všechno, co dlužíš</b> (půjčky).</p>
+    <p>Proto může mít někdo hodně domů, ale malé jmění, pokud má i velké dluhy. Sleduj svoje jmění v profilu a žebříčku — je to nejlepší způsob, jak poznat, jak se ti ve hře opravdu daří.</p>
+  `);
+
+  html += guideSection('📰','Městské noviny', `
+    <p>V liště je tlačítko 📰 <b>Noviny</b> — kronika všeho, co se ve městě děje: kdo koupil nebo prodal dům, kdo otevřel pronájem, kdo se přidal, kdo si vzal půjčku nebo získal odznak.</p>
+    <p>Je to skvělý způsob, jak sledovat soupeře — co kupují, kam investují — a učit se z toho.</p>
+  `);
+
+  html += guideSection('💡','Finanční přehled — tvůj nejlepší pomocník', `
+    <p>V liště vpravo je tlačítko 💡 <b>Finanční přehled</b>. Ukáže ti čtyři nejdůležitější věci:</p>
+    <p>📊 <b>Rozpočet</b> — kolik ti denně přiteče a odteče, a jestli náhodou neutrácíš víc, než vyděláváš (to je cesta do dluhů).</p>
+    <p>⚖️ <b>Aktiva vs. pasiva</b> — <b>aktivum</b> ti peníze nese (pronájem, firma), <b>pasivum</b> ti je bere (nevyužitý dům s daní, půjčka). Boháči sbírají aktiva.</p>
+    <p>🔢 <b>Složený úrok</b> — uvidíš, jak peníze na spoření rostou samy, a jak dluh nabaluje, když nesplácíš.</p>
+    <p>🛟 <b>Rezerva</b> — kolik dní tě uživí tvé úspory. Chytré je mít rezervu aspoň na 2 týdny.</p>
+  `);
+
+  html += guideSection('🎲','Nečekané události', `
+    <p>V životě se občas stane něco nečekaného — rozbije se pračka, přijde neplánovaný výdaj, nebo naopak najdeš peníze.</p>
+    <p>Právě proto se vyplatí mít <b>rezervu</b>. Kdo ji má, nečekaný výdaj v pohodě zvládne. Kdo ji nemá, musí si půjčit — a platit úrok.</p>
+  `);
+
+  el.innerHTML = html;
+}
+
+let profileViewTarget = null; // jméno hráče, jehož profil se má zobrazit; null = můj vlastní
+
+function viewProfile(name){
+  profileViewTarget = name;
+  openSheet('profile');
+}
+
+function renderProfile(){
+  const el = document.getElementById('profileContent');
+  const targetName = profileViewTarget || currentUser.name;
+  const u = world.users[targetName];
+  if(!u){ el.innerHTML = '<div class="empty-state">Profil nenalezen.</div>'; return; }
+  const isOwn = targetName === currentUser.name;
+
+  const worth = netWorthEstimate(u.name);
+  const title = titleForWorth(worth);
+  const houses = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
+  const rentalUnits = houses.reduce((s,p)=> s + (p.useType==='rental'&&p.units?p.units.length:0), 0);
+  const bizCount = Object.values(world.businesses).filter(b => (b.owners[u.name]||0) > 0).length;
+  const job = getCurrentJob(u.name);
+  const status = housingStatus(u.name);
+  const statusLabel = {owner:'🏠 vlastní bydlení', tenant:'🔑 v nájmu', homeless:'🚶 bez bydlení'}[status];
+
+  const ranked = Object.values(world.users).map(x=>({name:x.name, w:netWorthEstimate(x.name)})).sort((a,b)=>b.w-a.w);
+  const rank = ranked.findIndex(x=>x.name===u.name) + 1;
+
+  const daysPlayed = Math.max(0, world.day - (u.joinedGameDay||world.day));
+  const realDays = Math.floor((Date.now() - (u.joinedRealDate||Date.now())) / (24*60*60*1000));
+
+  let html = '';
+  if(!isOwn) html += `<div class="row"><button class="secondary" onclick="viewProfile(currentUser.name)">◂ Zpět na můj profil</button></div>`;
+
+  html += `<div class="card" style="text-align:center;">
+    <div style="font-size:48px;${isOwn?'cursor:pointer':''}" ${isOwn?'onclick="changeAvatar()"':''}>${escapeHtml(u.avatar||'🧑')}</div>
+    <h3 style="margin:4px 0;">${escapeHtml(u.name)}${isOwn?' <span style="color:var(--accent);font-size:1em;">(ty)</span>':''}</h3>
+    <p style="color:var(--gold);font-weight:600;">${title}</p>
+    ${isOwn?'<p style="font-size:0.92em;color:var(--muted)">klepni na avatar pro změnu</p>':''}
+  </div>`;
+
+  html += `<div class="card">
+    <h3>📊 Statistiky</h3>
+    <p>Čisté jmění: <b style="color:var(--gold)">${worth.toLocaleString('cs-CZ')} Kč</b> ${rank<=3?['🥇','🥈','🥉'][rank-1]:`(${rank}. místo)`}</p>
+    <p>Hotovost: ${Math.round(u.balance).toLocaleString('cs-CZ')} Kč</p>
+    <p>Na spoření: ${Math.round(u.savings||0).toLocaleString('cs-CZ')} Kč</p>
+    <p>Bydlení: ${statusLabel}</p>
+    <p>Domů s podílem: <b>${houses.length}</b>${rentalUnits?` (${rentalUnits} bytů k pronájmu)`:''}</p>
+    <p>Podílů v podnicích: <b>${bizCount}</b></p>
+    <p>Zaměstnání: ${job ? `<b>${job.job.name}</b> (${job.job.salary} Kč/směna)` : 'nezaměstnaný'}</p>
+  </div>`;
+
+  if(isOwn){
+    const baseCost = status==='owner' ? LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT) : (status==='tenant' ? TENANT_LIVING_COST : LIVING_COST);
+    let rentPart = 0;
+    if(status==='tenant'){ Object.values(world.parcels).forEach(p=>(p.units||[]).forEach(un=>{ if(un.tenant===u.name) rentPart += un.rentPrice; })); }
+    html += `<div class="card">
+      <h3>🧾 Kam jdou tvoje denní peníze</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Každý den utratíš zhruba tolik za život (ceny den ode dne trochu kolísají):</p>
+      ${LIVING_BREAKDOWN.map(c=>`<p>${c.label}: ~${Math.round(baseCost*c.ratio)} Kč/den</p>`).join('')}
+      ${rentPart>0?`<p>🔑 Nájem majiteli: ${Math.round(rentPart)} Kč/den</p>`:''}
+      <p style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">Celkem za bydlení a život: <b style="color:var(--gold)">~${Math.round(baseCost+rentPart)} Kč/den</b></p>
+      ${status==='homeless'?'<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc — pořiď si podíl v domě nebo si najmi byt.</p>':''}
+    </div>`;
+  }
+
+  html += `<div class="card">
+    <h3>🏆 Rekordy a činy</h3>
+    <p>Nejvyšší dosažené jmění: <b style="color:var(--gold)">${Math.round(u.peakWorth||worth).toLocaleString('cs-CZ')} Kč</b></p>
+    <p>Odpracováno směn: <b>${u.totalShifts||0}</b></p>
+    <p>Celkem nachozeno: <b>${((u.totalDistance||0)/1000).toFixed(2).replace('.',',')} km</b></p>
+    <p>Aktivních půjček: ${(u.loans||[]).length}</p>
+  </div>`;
+
+  html += `<div class="card">
+    <h3>📅 Historie</h3>
+    <p>Ve městě od: <b>herního dne ${u.joinedGameDay||1}</b></p>
+    <p>Odehráno: <b>${daysPlayed}</b> herních dní${realDays>0?` (${realDays} reálných dní)`:''}</p>
+    <p>Aktuální den: ${world.day}</p>
+  </div>`;
+
+  // Achievementy / odznaky
+  const unlocked = u.achievements || [];
+  html += `<div class="card">
+    <h3>🏆 Odznaky (${unlocked.length}/${ACHIEVEMENTS.length})</h3>
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;">`;
+  ACHIEVEMENTS.forEach(a => {
+    const has = unlocked.includes(a.id);
+    html += `<div style="width:calc(50% - 4px);background:var(--bg);border:1px solid ${has?'var(--gold)':'var(--border)'};border-radius:8px;padding:8px;${has?'':'opacity:0.45;'}">
+      <div style="font-size:20px;">${has?a.icon:'🔒'}</div>
+      <div style="font-size:0.85em;font-weight:600;color:${has?'var(--gold)':'var(--muted)'}">${escapeHtml(a.title)}</div>
+      <div style="font-size:0.75em;color:var(--muted);line-height:1.3;margin-top:2px;">${escapeHtml(a.desc)}</div>
+    </div>`;
+  });
+  html += `</div></div>`;
+
+  el.innerHTML = html;
+}
+
+let leaderboardMode = 'worth'; // 'worth' | 'houses' | 'distance'
+function setLeaderboardMode(mode){ leaderboardMode = mode; renderLeaderboard(); }
+
+function renderLeaderboard(){
+  const el = document.getElementById('leaderboardContent');
+  const players = Object.values(world.users).map(u => ({
+    name: u.name,
+    worth: netWorthEstimate(u.name),
+    cash: Math.round(u.balance),
+    houses: Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0).length,
+    distance: Math.round(u.totalDistance || 0)
+  }));
+
+  if(!players.length){ el.innerHTML = '<div class="empty-state">Zatím žádní hráči.</div>'; return; }
+
+  const modes = {
+    worth:    {label:'💰 Jmění',      key:'worth',    fmt:v=>v.toLocaleString('cs-CZ')+' Kč', note:'Řazeno podle čistého jmění (hotovost + hodnota podílů − dluhy).'},
+    houses:   {label:'🏠 Nemovitosti', key:'houses',   fmt:v=>v+' '+(v===1?'dům':(v>=2&&v<=4?'domy':'domů')), note:'Řazeno podle počtu domů, ve kterých máš podíl.'},
+    distance: {label:'🚶 Nachozeno',   key:'distance', fmt:v=>(v/1000).toFixed(2).replace('.',',')+' km', note:'Řazeno podle celkové nachozené vzdálenosti.'}
+  };
+  const m = modes[leaderboardMode];
+  players.sort((a,b) => b[m.key] - a[m.key]);
+
+  // přepínač
+  let html = `<div class="tabs" style="margin-bottom:10px;">` +
+    Object.values(modes).map(md =>
+      `<div class="tab ${md.key===leaderboardMode?'active':''}" onclick="setLeaderboardMode('${md.key}')">${md.label}</div>`
+    ).join('') + `</div>`;
+  html += `<p style="font-size:0.92em;color:var(--muted);margin-bottom:8px;">${m.note}</p>`;
+
+  const medals = ['🥇','🥈','🥉'];
+  html += players.map((pl, i) => {
+    const isMe = pl.name === currentUser?.name;
+    const rank = medals[i] || `${i+1}.`;
+    return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':`onclick="viewProfile('${pl.name}')"`}>
+      <h3>${rank} ${escapeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}</h3>
+      <p><b style="color:var(--gold)">${m.fmt(pl[m.key])}</b></p>
+      <p style="font-size:0.92em;color:var(--muted)">Jmění ${pl.worth.toLocaleString('cs-CZ')} Kč · ${pl.houses} ${pl.houses===1?'dům':'domů'} · ${(pl.distance/1000).toFixed(1).replace('.',',')} km</p>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = html;
+}
+
+function renderBank(){
+  const el = document.getElementById('bankContent');
+  if(!currentUser){ el.innerHTML = '<div class="empty-state"></div>'; return; }
+  const me = world.users[currentUser.name];
+  if(!me.loans) me.loans = [];
+  const totalDebt = me.loans.reduce((s,l)=>s+l.balance,0);
+  const limit = Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO) + 500;
+  let html = `<div class="card">
+    <h3>🏦 Městská banka</h3>
+    <p>Odhad tvého čistého jmění: <b style="color:var(--gold)">${Math.round(netWorthEstimate(currentUser.name))} Kč</b></p>
+    <p>Celkový dluh: <b style="color:${totalDebt>0?'var(--danger)':'var(--muted)'}">${Math.round(totalDebt)} Kč</b></p>
+    <p>Limit pro novou půjčku: ${limit} Kč</p>
+    <div class="row"><button onclick="takeLoan()">Vzít půjčku (${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)</button></div>
+    <p style="font-size:0.85em;margin-top:8px;">Půjčku využiješ na nákup podílů v domech a podnicích. Banka strhává splátky automaticky — když je dlouho neplatíš, zabaví ti majetek.</p>
+  </div>`;
+
+  // Spořicí účet
+  html += `<div class="card">
+    <h3>🐷 Spořicí účet</h3>
+    <p>Naspořeno: <b style="color:var(--accent)">${Math.round(me.savings||0)} Kč</b> · úrok <b>${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % p.a.</b></p>
+    <p style="font-size:0.85em;color:var(--muted)">Peníze uložené na spoření <b>pomalu rostou</b> a jsou v bezpečí (neutratíš je omylem). Úrok je ale mnohem nižší než u půjčky — spořit je bezpečné, ale bohatství se buduje spíš investicemi.</p>
+    <div class="row">
+      <button class="secondary" onclick="depositSavings()">Vložit na spoření</button>
+      <button class="secondary" onclick="withdrawSavings()">Vybrat</button>
+    </div>
+  </div>`;
+
+  if(!me.loans.length){
+    html += '<div class="empty-state">Žádné aktivní půjčky.</div>';
+  } else {
+    html += me.loans.map(l => {
+      const missed = l.missedDays || 0;
+      return `<div class="card">
+        <h3>💵 Půjčka</h3>
+        <p>Dluh: <b style="color:var(--danger)">${Math.round(l.balance)} Kč</b> · úrok ${(l.dailyRate*DAYS_PER_YEAR*100).toFixed(1)} % p.a.</p>
+        <p style="font-size:0.92em;color:var(--muted)">Banka strhává min. splátku automaticky (${Math.round(l.principal*LOAN_MIN_PAYMENT_RATIO)} Kč/den), když máš na účtu dost.</p>
+        ${missed > 0 ? `<p style="color:${missed>=LOAN_SEIZURE_MISSED_DAYS*0.6?'var(--danger)':'var(--gold)'}">⚠️ ${missed.toFixed(1)} / ${LOAN_SEIZURE_MISSED_DAYS} dní nezaplaceno — pak banka zabaví majetek na pokrytí dluhu.</p>` : ''}
+        <div class="row"><button onclick="repayLoan('${l.id}')">Splatit</button></div>
+      </div>`;
+    }).join('');
+  }
+  el.innerHTML = html;
+}
+
+async function depositSavings(){
+  const me = world.users[currentUser.name];
+  const amount = parseInt(await showPrompt(`Kolik vložit na spoření? (na účtu máš ${Math.round(me.balance)} Kč)`, Math.max(0, Math.round(me.balance/2))), 10);
+  if(isNaN(amount) || amount <= 0) return;
+  if(amount > me.balance){ showAlert('Tolik na účtu nemáš.'); return; }
+  me.balance -= amount;
+  me.savings = (me.savings || 0) + amount;
+  saveWorld(); refreshAll(); renderBank();
+  playSound('coin');
+  showAlert(`Vloženo ${amount} Kč na spoření. Budou pomalu růst.`);
+}
+
+async function withdrawSavings(){
+  const me = world.users[currentUser.name];
+  if(!(me.savings > 0)){ showAlert('Na spoření nic nemáš.'); return; }
+  const amount = parseInt(await showPrompt(`Kolik vybrat ze spoření? (naspořeno ${Math.round(me.savings)} Kč)`, Math.round(me.savings)), 10);
+  if(isNaN(amount) || amount <= 0) return;
+  if(amount > me.savings){ showAlert('Tolik naspořeno nemáš.'); return; }
+  me.savings -= amount;
+  me.balance += amount;
+  saveWorld(); refreshAll(); renderBank();
+  showAlert(`Vybráno ${amount} Kč ze spoření na účet.`);
+}
+
+function setUseType(id, type){
+  const p = world.parcels[id];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iHaveMajority(p)){ showAlert('Změnit využití domu může jen vlastník s víc než 50 % podílu.'); return; }
+  p.useType = type;
+  if(type === 'residence'){ delete p.units; }
+  saveWorld(); refreshAll();
+}
+
+async function startRental(id){
+  const p = world.parcels[id];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iHaveMajority(p)){ showAlert('Přestavět dům na pronájem může jen vlastník s víc než 50 % podílu.'); return; }
+  const setupCost = Math.round(effectiveHousePrice(p) * RENTAL_SETUP_RATIO);
+  const me = world.users[currentUser.name];
+  if(me.balance < setupCost){ showAlert(`Zařízení bytů k pronájmu (nábytek, úklid, inzerce) stojí ${setupCost} Kč — tolik nemáš.`); return; }
+  const numUnits = p.levels || 1;
+  const suggestedRent = fairRentForHouse(p);
+  const rent = parseInt(await showPrompt(`Zařízení ${numUnits} ${numUnits===1?'bytu':'bytů'} stojí ${setupCost} Kč. Nájemné za byt/den (Kč)? Odhadovaná tržní cena: ${rentEstimateRange(p)}.`, suggestedRent), 10);
+  if(isNaN(rent) || rent <= 0) return;
+  me.balance -= setupCost;
+  p.useType = 'rental';
+  p.units = Array.from({length: numUnits}, () => ({rentPrice: rent, condition: 100}));
+  addNews('rental', `🏘️ ${currentUser.name} otevřel pronájem v domě ${p.id.replace('h_','#')} (${numUnits} ${numUnits===1?'byt':'bytů'}, nájem ${rent} Kč).`);
+  saveWorld(); refreshAll();
+  showAlert(`Zaplaceno ${setupCost} Kč za zařízení ${numUnits} ${numUnits===1?'bytu':'bytů'}. Nájem se připisuje průběžně v reálném čase, byty postupně chátrají.`);
+}
+
+async function setUnitRentPrice(id, idx){
+  const p = world.parcels[id];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iAmDecider(p)){ showAlert('Nájemné nastavuje jen největší podílník.'); return; }
+  const unit = p.units[idx];
+  const fair = fairRentForHouse(p);
+  const rent = parseInt(await showPrompt(`Nové nájemné za byt (${idx+1}. patro), Kč/den. Odhad trhu ${rentEstimateRange(p)} (vyšší = víc peněz, ale riziko prázdna):`, unit.rentPrice), 10);
+  if(isNaN(rent) || rent <= 0) return;
+  unit.rentPrice = rent;
+  saveWorld(); refreshAll();
+}
+
+async function repairUnit(id, idx){
+  const p = world.parcels[id];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iAmDecider(p)){ showAlert('Opravy hradí a řídí jen největší podílník.'); return; }
+  const unit = p.units[idx];
+  const missing = 100 - unit.condition;
+  if(missing <= 0) return;
+  const cost = Math.round(missing * REPAIR_COST_PER_POINT);
+  if(!(await showConfirm(`Oprava bytu (${idx+1}. patro) na 100 % bude stát ${cost} Kč. Pokračovat?`))) return;
+  const me = world.users[currentUser.name];
+  if(me.balance < cost){ showAlert('Nemáš dost peněz na stavebniny.'); return; }
+  me.balance -= cost;
+  unit.condition = 100;
+  saveWorld(); refreshAll();
+}
+
+// --- Nájem bytu hráčem ---
+
+async function rentUnit(id, idx){
+  const p = world.parcels[id];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu, který si chceš najmout.'); return; }
+  const unit = p.units[idx];
+  if(unit.tenant){ showAlert('Tento byt už má nájemníka.'); return; }
+  if(unit.condition <= 0){ showAlert('Byt je zchátralý, nedá se v něm bydlet.'); return; }
+  if((p.owners?.[currentUser.name]||0) > 0){ showAlert('Ve vlastním domě si byt nenajímáš — jsi spoluvlastník.'); return; }
+  const status = housingStatus(currentUser.name);
+  if(status === 'owner'){ showAlert('Máš vlastní bydlení. Nejdřív by ses musel ho zbavit, než půjdeš do nájmu.'); return; }
+  if(status === 'tenant'){ showAlert('Už bydlíš v nájmu jinde. Nejdřív dej výpověď.'); return; }
+  const totalDaily = TENANT_LIVING_COST + unit.rentPrice;
+  if(!(await showConfirm(`Najmout byt ${idx+1}. patro za ${unit.rentPrice} Kč/den? Celkem za bydlení zaplatíš ${totalDaily} Kč/den (nájem + životní složka) — pořád míň než ${LIVING_COST} Kč bez bydlení.`))) return;
+  unit.tenant = currentUser.name;
+  addNews('rental', `🔑 ${currentUser.name} se nastěhoval do nájmu v domě ${p.id.replace('h_','#')}.`);
+  saveWorld(); refreshAll();
+  showAlert(`Nastěhoval ses do nájmu (${idx+1}. patro). Nájem se platí průběžně.`);
+}
+
+async function endTenancy(id, idx){
+  const p = world.parcels[id];
+  const unit = p.units[idx];
+  if(unit.tenant !== currentUser.name) return;
+  if(!(await showConfirm('Dát výpověď z nájmu? Budeš zase platit plné životní náklady, dokud si nenajdeš jiné bydlení.'))) return;
+  unit.tenant = null;
+  saveWorld(); refreshAll();
+}
+
+// ===== AKCE: ZAMĚSTNÁNÍ =====
+
+function getCurrentJob(name){
+  const job = Object.values(world.jobs).find(j => (j.holders||[]).includes(name));
+  return job ? {job} : null;
+}
+
+// Nejvyšší tier, na který hráč dosáhne = (nejvyšší splněný tier podle praxe) + 1 (posun jen o úroveň)
+function maxTierFor(u){
+  const shifts = u.totalShifts || 0;
+  let highestQualified = -1;
+  JOB_DEFS.forEach(j => { if(shifts >= j.reqShifts && j.tier > highestQualified) highestQualified = j.tier; });
+  // hráč může nastoupit na tier o 1 vyšší, než na jaký má praxi (ale musí splnit reqShifts dané pozice)
+  return highestQualified + 1;
+}
+function jobBanRemaining(u){ return Math.max(0, (u.jobBanUntil || 0) - world.day); }
+
+function takeJob(jobId){
+  if(!canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS)){ showAlert('Musíš být u radnice.'); return; }
+  const me = world.users[currentUser.name];
+  const ban = jobBanRemaining(me);
+  if(ban > 0){ showAlert(`Máš zákaz práce ještě ${ban} ${ban===1?'den':'dní'} kvůli vynechané směně.`); return; }
+  if(getCurrentJob(currentUser.name)){ showAlert('Už máš práci — nejdřív dej výpověď.'); return; }
+  const job = world.jobs[jobId];
+  if(!job.holders) job.holders = [];
+  if(job.holders.length >= job.slots){ showAlert(`Všechna místa (${job.slots}) na téhle pozici jsou obsazená.`); return; }
+  if((me.totalShifts||0) < job.reqShifts){ showAlert(`Na tuhle pozici potřebuješ ${job.reqShifts} odpracovaných směn (máš ${me.totalShifts||0}). Začni od nižší pozice.`); return; }
+  if(job.tier > maxTierFor(me)){ showAlert('Nemůžeš přeskočit víc úrovní najednou — postupuj postupně od nižších pozic.'); return; }
+  job.holders.push(currentUser.name);
+  me.jobStartDay = world.day; // grace: dnešek se nekontroluje na docházku
+  me.currentJobId = jobId;
+  me.currentJobShifts = 0;
+  me.missedInRow = 0;
+  addNews('job', `💼 ${currentUser.name} nastoupil do práce jako ${job.name}.`);
+  saveWorld(); renderJobs();
+}
+
+function quitJob(jobId){
+  const job = world.jobs[jobId];
+  if(job.holders) job.holders = job.holders.filter(n => n !== currentUser.name);
+  const me = world.users[currentUser.name];
+  if(me) delete me.jobStartDay;
+  saveWorld(); renderJobs();
+}
+
+function workShift(jobId){
+  if(!canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS)){ showAlert('Musíš být u radnice.'); return; }
+  const job = world.jobs[jobId];
+  const me = world.users[currentUser.name];
+  if(me.lastWorkedDay === world.day){ showAlert('Dnes už jsi odpracoval směnu.'); return; }
+
+  // příplatek za odsloužené směny NA TÉTO pozici (stáž) — resetuje se při změně práce
+  if(me.currentJobId !== jobId){ me.currentJobId = jobId; me.currentJobShifts = 0; }
+  const seniorityBonus = Math.min(SENIORITY_BONUS_CAP, (me.currentJobShifts||0) * SENIORITY_BONUS_PER_SHIFT);
+
+  // náhodný bonus/spropitné
+  let tip = 0;
+  const gotTip = Math.random() < TIP_CHANCE;
+  if(gotTip){
+    const ratio = TIP_MIN_RATIO + Math.random() * (TIP_MAX_RATIO - TIP_MIN_RATIO);
+    tip = Math.round(job.salary * ratio);
+  }
+
+  const total = Math.round((job.salary + Math.round(seniorityBonus) + tip) * inflationMult());
+  me.balance += total;
+  me.lastWorkedDay = world.day;
+  me.totalShifts = (me.totalShifts || 0) + 1;
+  me.currentJobShifts = (me.currentJobShifts || 0) + 1;
+  me.missedInRow = 0;
+  saveWorld(); refreshAll(); renderJobs();
+
+  let msg = `Odpracováno: +${Math.round(job.salary*inflationMult())} Kč`;
+  if(seniorityBonus >= 1) msg += ` · příplatek za stáž +${Math.round(seniorityBonus*inflationMult())} Kč`;
+  if(gotTip) msg += ` · 🎉 spropitné +${Math.round(tip*inflationMult())} Kč`;
+  playSound(gotTip ? 'coin' : 'work');
+  showAlert(msg + ` = ${total} Kč celkem.`);
+}
+
+// ===== PODNIKY (frakční vlastnictví) =====
+
+function soldPct(biz){ return Object.values(biz.owners).reduce((s,v)=>s+v, 0); }
+function pricePerPercent(biz){ return biz.totalValue / 100; }
+
+function businessPopupHtml(bizId){
+  const biz = world.businesses[bizId];
+  const sold = soldPct(biz);
+  const myPct = currentUser ? (biz.owners[currentUser.name] || 0) : 0;
+  const ownerCount = Object.keys(biz.owners).length;
+  return `<div style="font-size:1em;min-width:180px;">
+    <b>${biz.emoji} ${biz.name}</b><br>
+    <span style="color:#888">${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount})</span><br>
+    Cena za 1 %: <b>${Math.round(pricePerPercent(biz)).toLocaleString('cs-CZ')} Kč</b> (nese ${(biz.hourlyYield*inflationMult()*24/100).toFixed(1)} Kč/den)<br>
+    Prodáno: ${sold.toFixed(1)} % (${ownerCount} vlastníků)<br>
+    ${myPct>0 ? `Tvůj podíl: <b>${myPct.toFixed(1)} %</b><br>` : ''}
+    <button style="margin-top:6px;" onclick="buyStake('${biz.id}')">Koupit podíl</button>
+    ${myPct>0 ? `<button style="margin-top:6px;" onclick="sellStake('${biz.id}')">Prodat podíl</button>` : ''}
+  </div>`;
+}
+
+function renderBusinesses(){
+  const el = document.getElementById('businessesContent');
+  const list = Object.values(world.businesses).sort((a,b)=>b.hourlyYield-a.hourlyYield);
+  let myTotalIncome = 0;
+  if(currentUser){
+    list.forEach(biz => {
+      const pct = biz.owners[currentUser.name] || 0;
+      if(pct>0) myTotalIncome += biz.hourlyYield * (pct/100);
+    });
+  }
+  let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>`;
+  html += list.map(biz => {
+    const sold = soldPct(biz);
+    const myPct = currentUser ? (biz.owners[currentUser.name] || 0) : 0;
+    const near = canInteract(biz.lat, biz.lng, INTERACTION_RADIUS);
+    const per1Cost = Math.round(pricePerPercent(biz));
+    const per1Day = biz.hourlyYield * inflationMult() * 24 / 100; // co nese 1 % za den
+    const yearlyPct = Math.round(biz.hourlyYield*24*365 / biz.totalValue * 100); // roční návratnost
+    return `<div class="card">
+      <h3>${biz.emoji} ${biz.name} ${myPct>0 ? '<span class="badge badge-res">tvůj podíl</span>':''}</h3>
+      <p>${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount} recenzí)</p>
+      <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
+      <p style="font-size:0.85em;color:var(--muted)">Návratnost ≈ <b style="color:var(--gold)">${yearlyPct} % ročně</b> · prodáno ${sold.toFixed(0)} %</p>
+      ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → vydělává ti <b style="color:var(--accent)">${(biz.hourlyYield*inflationMult()*myPct/100*24).toFixed(1)} Kč/den</b></p>` : ''}
+      ${distanceNoteHtml(biz.lat, biz.lng, INTERACTION_RADIUS)}
+      <div class="row">
+        <button ${near?'':'disabled'} onclick="buyStake('${biz.id}')">Koupit podíl</button>
+        ${myPct>0 ? `<button class="danger" onclick="sellStake('${biz.id}')">Prodat podíl</button>` : ''}
+        <button class="secondary" onclick="flyToBusiness('${biz.id}')">Na mapě</button>
+      </div>
+    </div>`;
+  }).join('');
+  el.innerHTML = html;
+}
+
+async function buyStake(bizId){
+  const biz = world.businesses[bizId];
+  if(!canInteract(biz.lat, biz.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k podniku.'); return; }
+  const available = 100 - soldPct(biz);
+  if(available <= 0){ showAlert('Podnik je celý rozprodaný.'); return; }
+  const per1 = Math.round(pricePerPercent(biz));
+  const per1DayInfo = (biz.hourlyYield*inflationMult()*24/100).toFixed(1);
+  const pct = parseFloat(await showPrompt(`Kolik % koupit? Volných ${available.toFixed(1)} %.\n1 % stojí ${per1.toLocaleString('cs-CZ')} Kč a nese ${per1DayInfo} Kč/den.`, Math.min(5, available)));
+  if(isNaN(pct) || pct <= 0) return;
+  if(pct > available){ showAlert(`Tolik volných % není — max ${available.toFixed(1)} %.`); return; }
+  const cost = Math.round(pricePerPercent(biz) * pct);
+  const me = world.users[currentUser.name];
+  if(me.balance < cost){ showAlert('Nemáš dost peněz.'); return; }
+  me.balance -= cost;
+  biz.owners[currentUser.name] = (biz.owners[currentUser.name] || 0) + pct;
+  addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${pct.toFixed(0)} % za ${cost} Kč).`);
+  saveWorld(); refreshAll();
+  showAlert(`Koupeno ${pct.toFixed(1)} % podílu za ${cost} Kč.`);
+}
+
+async function sellStake(bizId){
+  const biz = world.businesses[bizId];
+  const myPct = biz.owners[currentUser.name] || 0;
+  if(myPct <= 0) return;
+  const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${myPct.toFixed(1)} %, zpět dostaneš ${Math.round(BUSINESS_SELL_RATIO*100)} % ceny)`, myPct));
+  if(isNaN(pct) || pct <= 0) return;
+  if(pct > myPct){ showAlert('Tolik nevlastníš.'); return; }
+  const refund = Math.round(pricePerPercent(biz) * pct * BUSINESS_SELL_RATIO);
+  world.users[currentUser.name].balance += refund;
+  biz.owners[currentUser.name] -= pct;
+  if(biz.owners[currentUser.name] <= 0.001) delete biz.owners[currentUser.name];
+  saveWorld(); refreshAll();
+  playSound('sell');
+  showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
+}
+
+// ===== LOGIN =====
+
+// Očistí přezdívku: povolí jen písmena, číslice, mezery a pár neškodných znaků; omezí délku.
+// Brání XSS (jméno se vkládá do HTML na mnoha místech) i rozbití rozvržení dlouhým jménem.
+function sanitizeName(raw){
+  let n = (raw || '').trim();
+  // odstranit HTML-nebezpečné znaky a řídicí znaky
+  n = n.replace(/[<>&"'`/\\{}]/g, '').replace(/[\u0000-\u001f]/g, '');
+  n = n.slice(0, 20).trim();
+  return n;
+}
+
+function login(){
+  const name = sanitizeName(document.getElementById('nameInput').value) || 'Host' + Math.floor(Math.random()*9999);
+  if(!world.users[name]){
+    world.users[name] = {name, balance: START_BALANCE, lastWorkedDay: -1, walkEarnedToday: 0, distanceToday: 0, totalDistance: 0, loans: [], totalShifts: 0, jobBanUntil: 0,
+      joinedRealDate: Date.now(), joinedGameDay: world.day, peakWorth: START_BALANCE, avatar: '🧑', savings: 0};
+    addNews('join', `👋 ${name} se přidal do města!`);
+    saveWorld();
+  }
+  currentUser = {name};
+  const u = world.users[name];
+  document.getElementById('userInfo').innerHTML = `<span style="cursor:pointer">${escapeHtml(u.avatar||'🧑')} ${escapeHtml(name)} ▸</span>`;
+  document.getElementById('userInfo').onclick = () => viewProfile(currentUser.name);
+  document.getElementById('loginOverlay').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  setTimeout(() => { map.invalidateSize(); refreshAll(); }, 200);
+  startGeoTracking();
+  setTimeout(maybeShowTutorial, 400);
+}
+
+// ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
+const SHEET_TITLES = {
+  selected:'Vybraný dům', mine:'Moje nemovitosti',
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', finance:'Finanční přehled', guide:'Jak to funguje'
+};
+
+function openSheet(tabName){
+  document.querySelectorAll('.railBtn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  document.querySelectorAll('.panelContent').forEach(p => p.classList.remove('active'));
+  const target = document.getElementById('tab-' + tabName);
+  if(target) target.classList.add('active');
+  document.getElementById('sheetTitle').textContent = SHEET_TITLES[tabName] || '';
+  document.getElementById('bottomSheet').classList.add('open');
+  if(tabName === 'mine') renderMine();
+  if(tabName === 'jobs') renderJobs();
+  if(tabName === 'businesses') renderBusinesses();
+  if(tabName === 'market') renderMarket();
+  if(tabName === 'bank') renderBank();
+  if(tabName === 'leaderboard') renderLeaderboard();
+  if(tabName === 'profile') renderProfile();
+  if(tabName === 'news') renderNews();
+  if(tabName === 'finance') renderFinance();
+  if(tabName === 'guide') renderGuide();
+}
+
+function closeSheet(){
+  document.getElementById('bottomSheet').classList.remove('open');
+  document.querySelectorAll('.railBtn').forEach(b => b.classList.remove('active'));
+}
+
+document.querySelectorAll('.railBtn').forEach(btn => {
+  btn.addEventListener('click', () => openSheet(btn.dataset.tab));
+});
+document.getElementById('sheetCloseBtn').addEventListener('click', closeSheet);
+
+document.getElementById('guestLoginBtn').addEventListener('click', login);
+document.getElementById('tutNextBtn').addEventListener('click', nextTutStep);
+document.getElementById('tutSkipBtn').addEventListener('click', endTutorial);
+document.getElementById('modalOkBtn').addEventListener('click', modalConfirmOk);
+document.getElementById('modalCancelBtn').addEventListener('click', modalConfirmCancel);
+document.getElementById('modalInput').addEventListener('keydown', (e) => { if(e.key === 'Enter') modalConfirmOk(); });
+document.getElementById('retryGpsBtn').addEventListener('click', (e) => { e.stopPropagation(); startGeoTracking(); });
+
+// ===== TUTORIÁL PRO NOVÉ HRÁČE =====
+const TUTORIAL_STEPS = [
+  {icon:'👋', title:'Vítej ve městě!', text:'Bučovice zůstaly bez majitelů. Tvůj úkol: zbohatnout a nasbírat co nejvíc nemovitostí. Ukážu ti to ve třech krocích.'},
+  {icon:'🚶', title:'1. Choď po městě', text:'Hra se hraje naživo — za nachozené metry dostáváš peníze. K domům a k práci se musíš fyzicky přiblížit. Nemáš GPS? Klepni na mapu, kam se chceš „postavit".'},
+  {icon:'💼', title:'2. Vydělej první peníze', text:'Dojdi k radnici a nastup do práce (třeba úklid). Každý den si odpracuj směnu a dostaneš plat. To je tvůj jistý příjem na začátek.'},
+  {icon:'🏠', title:'3. Kup si bydlení', text:'Dojdi k nějakému domu a kup si podíl (stačí pár %). Vlastní bydlení je nejlevnější — ušetříš na denních nákladech. Pak můžeš dům pronajímat a vydělávat.'},
+  {icon:'📖', title:'Kdykoliv poradím', text:'Nevíš si rady? Vpravo je tlačítko 📖 „Jak to funguje" — vysvětlí všechno o penězích, nájmu i půjčkách. Hodně štěstí!'},
+];
+let tutStep = 0;
+
+function startTutorial(){
+  tutStep = 0;
+  document.getElementById('tutorialOverlay').style.display = 'block';
+  showTutStep();
+}
+function showTutStep(){
+  const s = TUTORIAL_STEPS[tutStep];
+  document.getElementById('tutIcon').textContent = s.icon;
+  document.getElementById('tutTitle').textContent = s.title;
+  document.getElementById('tutText').textContent = s.text;
+  document.getElementById('tutNextBtn').textContent = (tutStep === TUTORIAL_STEPS.length-1) ? 'Začít hrát ▸' : 'Další ▸';
+  document.getElementById('tutDots').innerHTML = TUTORIAL_STEPS.map((_,i)=>`<div class="tutDot ${i===tutStep?'on':''}"></div>`).join('');
+}
+function nextTutStep(){
+  tutStep++;
+  if(tutStep >= TUTORIAL_STEPS.length){ endTutorial(); return; }
+  showTutStep();
+}
+function endTutorial(){
+  document.getElementById('tutorialOverlay').style.display = 'none';
+  try { localStorage.setItem('bucovice_tutorial_done', '1'); } catch(e){}
+}
+function maybeShowTutorial(){
+  let done = false;
+  try { done = localStorage.getItem('bucovice_tutorial_done') === '1'; } catch(e){}
+  if(!done) startTutorial();
+}
+
+window.onload = () => {
+  loadFontScale();
+  loadSoundPref();
+  loadWorld();
+  initMap();
+  setInterval(tick, 5000);
+  setInterval(updateHeaderStats, 1000);
+};
+</script>
+</body>
+</html>
