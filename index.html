@@ -250,7 +250,7 @@
 
     <input id="nameInput" placeholder="Tvoje přezdívka" style="margin-top:12px;" />
     <button id="guestLoginBtn" style="width:100%;margin-top:6px;">Vstoupit do města</button>
-    <div class="muted-small">Appka se zeptá na přístup k poloze — bez toho nepůjde chodit "naživo", ale dá se hrát i bez GPS (klepni na mapu, kde zrovna „jsi").</div>
+    <div class="muted-small">Appka se zeptá na přístup k poloze. Hra funguje na základě reálné chůze — je potřeba povolit GPS.</div>
   </div>
 </div>
 
@@ -258,7 +258,7 @@
   <div id="map"></div>
 
   <div id="topBar">
-    <div id="gpsWarning">📍 GPS není dostupná — klepni na mapu, tím nastavíš "kde jsi" (testovací režim), jinak hraješ bez omezení vzdálenosti a bez odměny za chůzi.
+    <div id="gpsWarning">📍 GPS není dostupná — hra potřebuje tvou polohu. Povol prosím přístup k poloze pro tuto stránku.
       <button id="retryGpsBtn" class="secondary" style="margin-left:8px;padding:4px 10px;font-size:0.85em;">Zkusit povolit GPS znovu</button>
     </div>
     <div class="statsRow">
@@ -447,26 +447,26 @@ const GPS_NOISE_IGNORE = 2;           // m — ignoruj drobné chvění
 
 // Reálné podniky v Bučovicích (Google Places) — cena a výnos odhadnuty z hodnocení a počtu recenzí (popularita)
 const BUSINESS_DEFS = [
-  {id:'b1',  name:'Castle Bučovice',        lat:49.1496409, lng:17.0014607, category:'Památka',     emoji:'🏰', totalValue:700000, hourlyYield:30.4, rating:4.4, ratingCount:1425},
-  {id:'b2',  name:'Lidl',                   lat:49.14798,   lng:17.0024100, category:'Supermarket',  emoji:'🏬', totalValue:440000, hourlyYield:19.1, rating:4.3, ratingCount:823},
-  {id:'b3',  name:'Penny Market',           lat:49.1474805, lng:17.0024289, category:'Supermarket',  emoji:'🏬', totalValue:360000, hourlyYield:15.6, rating:3.4, ratingCount:681},
-  {id:'b4',  name:'VENA-TRADE (benzinka)',  lat:49.1464777, lng:17.0068654, category:'Benzinka',     emoji:'⛽', totalValue:320000, hourlyYield:13.9, rating:4.1, ratingCount:197},
-  {id:'b5',  name:'Hotel Arkáda',           lat:49.1505661, lng:17.0025120, category:'Hotel',        emoji:'🏨', totalValue:300000, hourlyYield:13.0, rating:4.1, ratingCount:657},
-  {id:'b6',  name:'Penzion Rustico',        lat:49.1520241, lng:17.0011680, category:'Hotel',        emoji:'🏨', totalValue:260000, hourlyYield:11.3, rating:4.9, ratingCount:54},
-  {id:'b7',  name:'Vinárna U Šembery',      lat:49.1524681, lng:17.0035346, category:'Restaurace',   emoji:'🍽️', totalValue:140000,  hourlyYield:6.1,  rating:4.5, ratingCount:512},
-  {id:'b8',  name:'Restaurace Litovel',     lat:49.1516310, lng:17.0104640, category:'Restaurace',   emoji:'🍽️', totalValue:130000,  hourlyYield:5.6,  rating:4.5, ratingCount:537},
-  {id:'b9',  name:'Penzion Sole',           lat:49.1496072, lng:17.0041136, category:'Hotel',        emoji:'🏨', totalValue:180000,  hourlyYield:7.8,  rating:4.4, ratingCount:339},
-  {id:'b10', name:'Restaurace Sole',        lat:49.1496900, lng:17.0042500, category:'Restaurace',   emoji:'🍽️', totalValue:110000,  hourlyYield:4.8,  rating:4.7, ratingCount:125},
-  {id:'b11', name:'Restaurace Kaťák',       lat:49.1513915, lng:17.0028319, category:'Restaurace',   emoji:'🍽️', totalValue:96000,  hourlyYield:4.2,  rating:3.8, ratingCount:368},
-  {id:'b12', name:'COOP družstvo HB',       lat:49.1495963, lng:17.0071369, category:'Obchod',       emoji:'🛒', totalValue:100000,  hourlyYield:4.3,  rating:3.9, ratingCount:264},
-  {id:'b13', name:'Black Bakery',           lat:49.1550872, lng:16.9954613, category:'Kavárna',      emoji:'☕', totalValue:90000,  hourlyYield:3.9,  rating:4.9, ratingCount:197},
-  {id:'b14', name:'Restaurace Arkáda',      lat:49.1504887, lng:17.0023996, category:'Restaurace',   emoji:'🍽️', totalValue:80000,  hourlyYield:3.5,  rating:3.8, ratingCount:92},
-  {id:'b15', name:'Restaurace Kometa',      lat:49.1491051, lng:17.0036159, category:'Restaurace',   emoji:'🍽️', totalValue:84000,  hourlyYield:3.6,  rating:3.9, ratingCount:136},
-  {id:'b16', name:'Kavárna na zámku',       lat:49.1491978, lng:17.0015366, category:'Kavárna',      emoji:'☕', totalValue:100000,  hourlyYield:4.3,  rating:4.7, ratingCount:94},
-  {id:'b17', name:'Cukrárna',               lat:49.1515524, lng:17.0022450, category:'Kavárna',      emoji:'☕', totalValue:76000,  hourlyYield:3.3,  rating:4.3, ratingCount:81},
-  {id:'b18', name:'Kavárna na radnici',     lat:49.1502862, lng:17.0029903, category:'Kavárna',      emoji:'☕', totalValue:70000,  hourlyYield:3.0,  rating:4.8, ratingCount:10},
-  {id:'b19', name:'Enapo (potraviny)',      lat:49.1513107, lng:17.0039031, category:'Obchod',       emoji:'🛒', totalValue:70000,  hourlyYield:3.0,  rating:4.2, ratingCount:72},
-  {id:'b20', name:'MAKOVEC (řeznictví)',    lat:49.1475022, lng:17.0024643, category:'Obchod',       emoji:'🛒', totalValue:60000,  hourlyYield:2.6,  rating:4.5, ratingCount:8},
+  {id:'b1',  name:'Castle Bučovice',        lat:49.1496409, lng:17.0014607, category:'Památka',     emoji:'🏰', totalValue:700000, hourlyYield:388.9, rating:4.4, ratingCount:1425},
+  {id:'b2',  name:'Lidl',                   lat:49.14798,   lng:17.0024100, category:'Supermarket',  emoji:'🏬', totalValue:440000, hourlyYield:244.4, rating:4.3, ratingCount:823},
+  {id:'b3',  name:'Penny Market',           lat:49.1474805, lng:17.0024289, category:'Supermarket',  emoji:'🏬', totalValue:360000, hourlyYield:200.0, rating:3.4, ratingCount:681},
+  {id:'b4',  name:'VENA-TRADE (benzinka)',  lat:49.1464777, lng:17.0068654, category:'Benzinka',     emoji:'⛽', totalValue:320000, hourlyYield:177.8, rating:4.1, ratingCount:197},
+  {id:'b5',  name:'Hotel Arkáda',           lat:49.1505661, lng:17.0025120, category:'Hotel',        emoji:'🏨', totalValue:300000, hourlyYield:166.7, rating:4.1, ratingCount:657},
+  {id:'b6',  name:'Penzion Rustico',        lat:49.1520241, lng:17.0011680, category:'Hotel',        emoji:'🏨', totalValue:260000, hourlyYield:144.4, rating:4.9, ratingCount:54},
+  {id:'b7',  name:'Vinárna U Šembery',      lat:49.1524681, lng:17.0035346, category:'Restaurace',   emoji:'🍽️', totalValue:140000,  hourlyYield:77.8,  rating:4.5, ratingCount:512},
+  {id:'b8',  name:'Restaurace Litovel',     lat:49.1516310, lng:17.0104640, category:'Restaurace',   emoji:'🍽️', totalValue:130000,  hourlyYield:72.2,  rating:4.5, ratingCount:537},
+  {id:'b9',  name:'Penzion Sole',           lat:49.1496072, lng:17.0041136, category:'Hotel',        emoji:'🏨', totalValue:180000,  hourlyYield:100.0,  rating:4.4, ratingCount:339},
+  {id:'b10', name:'Restaurace Sole',        lat:49.1496900, lng:17.0042500, category:'Restaurace',   emoji:'🍽️', totalValue:110000,  hourlyYield:61.1,  rating:4.7, ratingCount:125},
+  {id:'b11', name:'Restaurace Kaťák',       lat:49.1513915, lng:17.0028319, category:'Restaurace',   emoji:'🍽️', totalValue:96000,  hourlyYield:53.3,  rating:3.8, ratingCount:368},
+  {id:'b12', name:'COOP družstvo HB',       lat:49.1495963, lng:17.0071369, category:'Obchod',       emoji:'🛒', totalValue:100000,  hourlyYield:55.6,  rating:3.9, ratingCount:264},
+  {id:'b13', name:'Black Bakery',           lat:49.1550872, lng:16.9954613, category:'Kavárna',      emoji:'☕', totalValue:90000,  hourlyYield:50.0,  rating:4.9, ratingCount:197},
+  {id:'b14', name:'Restaurace Arkáda',      lat:49.1504887, lng:17.0023996, category:'Restaurace',   emoji:'🍽️', totalValue:80000,  hourlyYield:44.4,  rating:3.8, ratingCount:92},
+  {id:'b15', name:'Restaurace Kometa',      lat:49.1491051, lng:17.0036159, category:'Restaurace',   emoji:'🍽️', totalValue:84000,  hourlyYield:46.7,  rating:3.9, ratingCount:136},
+  {id:'b16', name:'Kavárna na zámku',       lat:49.1491978, lng:17.0015366, category:'Kavárna',      emoji:'☕', totalValue:100000,  hourlyYield:55.6,  rating:4.7, ratingCount:94},
+  {id:'b17', name:'Cukrárna',               lat:49.1515524, lng:17.0022450, category:'Kavárna',      emoji:'☕', totalValue:76000,  hourlyYield:42.2,  rating:4.3, ratingCount:81},
+  {id:'b18', name:'Kavárna na radnici',     lat:49.1502862, lng:17.0029903, category:'Kavárna',      emoji:'☕', totalValue:70000,  hourlyYield:38.9,  rating:4.8, ratingCount:10},
+  {id:'b19', name:'Enapo (potraviny)',      lat:49.1513107, lng:17.0039031, category:'Obchod',       emoji:'🛒', totalValue:70000,  hourlyYield:38.9,  rating:4.2, ratingCount:72},
+  {id:'b20', name:'MAKOVEC (řeznictví)',    lat:49.1475022, lng:17.0024643, category:'Obchod',       emoji:'🛒', totalValue:60000,  hourlyYield:33.3,  rating:4.5, ratingCount:8},
 ];
 const BUSINESS_SELL_RATIO = 0.7; // kolik % ceny dostaneš zpět při prodeji podílu
 
@@ -474,7 +474,8 @@ const MORTGAGE_DOWNPAYMENT_RATIO = 0.2;  // 20 % vlastních peněz, zbytek na hy
 const MORTGAGE_ANNUAL_RATE = 0.06;       // 6 % p.a. — jištěno domem
 const LOAN_ANNUAL_RATE = 0.18;           // 18 % p.a. — nezajištěná půjčka
 const DAYS_PER_YEAR = 365;
-const LOAN_LIMIT_RATIO = 0.5;            // max půjčka = 50 % odhadovaného jmění
+const LOAN_LIMIT_RATIO = 0.8;            // max půjčka = 80 % odhadovaného jmění (nad rámec základního stropu)
+const LOAN_BASE_LIMIT = 15000;          // každý si může půjčit aspoň tolik (nastartování na začátku)
 const MORTGAGE_REPO_MULTIPLIER = 1.5;    // banka zabaví dům, když dluh přesáhne 150 % ceny domu
 
 const LOAN_MIN_PAYMENT_RATIO = 0.03;     // nezajištěná půjčka: banka si sama strhne 3 % jistiny/den, pokud máš na účtu dost
@@ -1401,12 +1402,12 @@ function onNewDay(catchUp){
 
 function startGeoTracking(){
   if(!window.isSecureContext){
-    document.getElementById('gpsWarning').innerHTML = '📍 GPS nejde povolit — appka je otevřená lokálně (soubor / content://), prohlížeč polohu na nezabezpečeném spojení blokuje. Nahraj appku na hosting (HTTPS, např. GitHub Pages), nebo klepni na mapu pro testovací pozici.';
+    document.getElementById('gpsWarning').innerHTML = '📍 GPS nejde povolit — appka je otevřená lokálně (soubor / content://), prohlížeč polohu na nezabezpečeném spojení blokuje. Otevři appku přes HTTPS (např. GitHub Pages).';
     document.getElementById('gpsWarning').style.display = 'block';
     return;
   }
   if(!navigator.geolocation){
-    document.getElementById('gpsWarning').textContent = '📍 Tento prohlížeč nepodporuje GPS — klepni na mapu pro testovací pozici.';
+    document.getElementById('gpsWarning').textContent = '📍 Tento prohlížeč nepodporuje GPS. Zkus jiný prohlížeč.';
     document.getElementById('gpsWarning').style.display = 'block';
     return;
   }
@@ -1450,11 +1451,11 @@ function onGeoError(err){
   if(geoAvailable) return; // pozici už máme, dočasný výpadek neřešíme
   const el = document.getElementById('gpsWarning');
   if(err.code === 1){ // PERMISSION_DENIED
-    el.innerHTML = '📍 Poloha zamítnuta — v nastavení prohlížeče/appky povol přístup k poloze pro tuto stránku, nebo klepni na mapu pro testovací pozici.';
+    el.innerHTML = '📍 Poloha zamítnuta — v nastavení prohlížeče/appky povol přístup k poloze pro tuto stránku.';
   } else if(err.code === 2){
-    el.textContent = '📍 Polohu se nepodařilo zjistit (slabý signál) — zkusím to dál na pozadí, nebo klepni na mapu.';
+    el.textContent = '📍 Polohu se nepodařilo zjistit (slabý signál) — zkouším to dál na pozadí.';
   } else {
-    el.textContent = '📍 Zjišťování polohy vypršelo — zkusím to dál na pozadí, nebo klepni na mapu.';
+    el.textContent = '📍 Zjišťování polohy vypršelo — zkouším to dál na pozadí.';
   }
   el.style.display = 'block';
 }
@@ -1526,19 +1527,6 @@ function updateReachHighlight(force){
   });
 }
 
-// Testovací režim bez GPS: klik na mapu nastaví "kde jsem"
-function setManualPosition(latlng){
-  playerPos = {lat: latlng.lat, lng: latlng.lng};
-  if(currentUser && world.users[currentUser.name]){
-    world.users[currentUser.name].lastPos = {lat:latlng.lat, lng:latlng.lng, at: Date.now()};
-  }
-  updatePlayerMarker(playerPos, 15);
-  renderOtherPlayers();
-  if(selectedParcelId) renderSelected(selectedParcelId);
-  renderJobs();
-  saveWorld();
-}
-
 function creditWalking(dist){
   if(!currentUser) return;
   const u = world.users[currentUser.name];
@@ -1605,9 +1593,8 @@ function initMap(){
   });
   window.__bizMarkers = bizMarkers;
 
-  // Klik na volnou plochu mapy: v testovacím režimu nastaví pozici, vždy zavře spodní panel
+  // Klik na volnou plochu mapy zavře spodní panel (pohyb jen přes reálné GPS)
   map.on('click', (e) => {
-    if(!geoAvailable) setManualPosition(e.latlng);
     closeSheet();
   });
 
@@ -1633,8 +1620,11 @@ function refreshAll(){
 function updateHeaderStats(){
   document.getElementById('dayVal').textContent = world.day;
   const msLeft = Math.max(0, Math.round((1 - world.dayProgress) * GAME_DAY_MS));
-  const mm = Math.floor(msLeft/60000), ss = Math.floor((msLeft%60000)/1000);
-  document.getElementById('dayTimeLeft').textContent = `${mm}:${ss.toString().padStart(2,'0')}`;
+  const totalSec = Math.floor(msLeft/1000);
+  const hh = Math.floor(totalSec/3600);
+  const mm = Math.floor((totalSec%3600)/60);
+  const ss = totalSec%60;
+  document.getElementById('dayTimeLeft').textContent = `${hh}:${mm.toString().padStart(2,'0')}:${ss.toString().padStart(2,'0')}`;
   const cycle = marketCycleLabel();
   document.getElementById('marketCycleVal').textContent = cycle.label;
   document.getElementById('marketCyclePill').style.color = cycle.color;
@@ -1672,7 +1662,7 @@ function badgeFor(p){
 }
 
 function distanceNoteHtml(lat, lng, radius){
-  if(!geoAvailable && !playerPos) return `<p class="distNote ok">📍 GPS vypnuto, pozice nenastavena — klepni na mapu, nebo hraj bez omezení.</p>`;
+  if(!geoAvailable && !playerPos) return `<p class="distNote ok">📍 Čekám na GPS polohu — povol prosím přístup k poloze.</p>`;
   const d = distanceToPlayer(lat, lng);
   if(d === null) return `<p class="distNote">📍 Zjišťuji tvou polohu…</p>`;
   const ok = d <= radius;
@@ -1680,7 +1670,7 @@ function distanceNoteHtml(lat, lng, radius){
 }
 
 function canInteract(lat, lng, radius){
-  if(!geoAvailable && !playerPos) return true; // GPS vypnuto a pozice nikdy nenastavena → bez omezení
+  if(!playerPos) return false; // bez známé polohy (GPS) nelze interagovat — hra vyžaduje reálný pohyb
   const d = distanceToPlayer(lat, lng);
   return d !== null && d <= radius;
 }
@@ -2154,6 +2144,9 @@ function resolveAuctions(){
 
 // ===== BANKA: půjčky =====
 
+function totalDebt(name){
+  return (world.users[name]?.loans || []).reduce((s,l)=>s+l.balance, 0);
+}
 function netWorthEstimate(name){
   let worth = Math.max(0, world.users[name].balance);
   worth += Math.max(0, world.users[name].savings || 0); // spoření se počítá do jmění
@@ -2255,8 +2248,9 @@ function financeBreakdown(name){
 }
 
 async function takeLoan(){
-  const limit = Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO) + 500;
-  const amount = parseInt(await showPrompt(`Kolik si chceš půjčit? (banka ti dá max ${limit} Kč, úrok ${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)`, Math.min(2000, limit)), 10);
+  const limit = Math.max(0, Math.max(LOAN_BASE_LIMIT, Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO)) - totalDebt(currentUser.name));
+  if(limit <= 0){ showAlert('Máš už moc velký dluh — nejdřív část splať, pak si můžeš půjčit znovu.'); return; }
+  const amount = parseInt(await showPrompt(`Kolik si chceš půjčit? (banka ti dá max ${limit} Kč, úrok ${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)`, Math.min(5000, limit)), 10);
   if(isNaN(amount) || amount <= 0) return;
   if(amount > limit){ showAlert(`Banka ti tolik nepůjčí — max ${limit} Kč podle tvého majetku.`); return; }
   const me = world.users[currentUser.name];
@@ -2660,7 +2654,7 @@ function renderGuide(){
   html += guideSection('📈','Investice do firem', `
     <p>Ve městě jsou skutečné podniky (obchody, hotely...). Můžeš si koupit <b>podíl</b> ve firmě, stejně jako u domu.</p>
     <p>Firma vydělává peníze každou hodinu a dělí je mezi všechny, kdo v ní mají podíl — podle velikosti podílu.</p>
-    <p>Na rozdíl od pronájmu se o firmu <b>nemusíš starat</b> (žádné opravy) — je to pasivní, ale obvykle vydělává o něco méně než dobře spravovaný pronájem.</p>
+    <p>Na rozdíl od pronájmu se o firmu <b>nemusíš starat</b> (žádné opravy) — je to čistě pasivní příjem. U každého podniku vidíš, <b>za kolik dní se ti investice vrátí</b> (obvykle kolem 2-3 měsíců hraní), pak už jen vydělává.</p>
   `);
 
   html += guideSection('🏷️','Tržiště — prodej a aukce', `
@@ -2861,7 +2855,7 @@ function renderBank(){
   const me = world.users[currentUser.name];
   if(!me.loans) me.loans = [];
   const totalDebt = me.loans.reduce((s,l)=>s+l.balance,0);
-  const limit = Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO) + 500;
+  const limit = Math.max(0, Math.max(LOAN_BASE_LIMIT, Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO)) - totalDebt(currentUser.name));
   let html = `<div class="card">
     <h3>🏦 Městská banka</h3>
     <p>Odhad tvého čistého jmění: <b style="color:var(--gold)">${Math.round(netWorthEstimate(currentUser.name))} Kč</b></p>
@@ -3124,12 +3118,12 @@ function renderBusinesses(){
     const near = canInteract(biz.lat, biz.lng, INTERACTION_RADIUS);
     const per1Cost = Math.round(pricePerPercent(biz));
     const per1Day = biz.hourlyYield * inflationMult() * 24 / 100; // co nese 1 % za den
-    const yearlyPct = Math.round(biz.hourlyYield*24*365 / biz.totalValue * 100); // roční návratnost
+    const paybackDays = per1Day > 0 ? Math.round(per1Cost / per1Day) : 0; // za kolik dní se vrátí
     return `<div class="card">
       <h3>${biz.emoji} ${biz.name} ${myPct>0 ? '<span class="badge badge-res">tvůj podíl</span>':''}</h3>
       <p>${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount} recenzí)</p>
       <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
-      <p style="font-size:0.85em;color:var(--muted)">Návratnost ≈ <b style="color:var(--gold)">${yearlyPct} % ročně</b> · prodáno ${sold.toFixed(0)} %</p>
+      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> · prodáno ${sold.toFixed(0)} %</p>
       ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → vydělává ti <b style="color:var(--accent)">${(biz.hourlyYield*inflationMult()*myPct/100*24).toFixed(1)} Kč/den</b></p>` : ''}
       ${distanceNoteHtml(biz.lat, biz.lng, INTERACTION_RADIUS)}
       <div class="row">
@@ -3255,7 +3249,7 @@ document.getElementById('retryGpsBtn').addEventListener('click', (e) => { e.stop
 // ===== TUTORIÁL PRO NOVÉ HRÁČE =====
 const TUTORIAL_STEPS = [
   {icon:'👋', title:'Vítej ve městě!', text:'Bučovice zůstaly bez majitelů. Tvůj úkol: zbohatnout a nasbírat co nejvíc nemovitostí. Ukážu ti to ve třech krocích.'},
-  {icon:'🚶', title:'1. Choď po městě', text:'Hra se hraje naživo — za nachozené metry dostáváš peníze. K domům a k práci se musíš fyzicky přiblížit. Nemáš GPS? Klepni na mapu, kam se chceš „postavit".'},
+  {icon:'🚶', title:'1. Choď po městě', text:'Hra se hraje naživo — za nachozené metry dostáváš peníze. K domům a k práci se musíš fyzicky přiblížit. Je potřeba povolit GPS a chodit s telefonem.'},
   {icon:'💼', title:'2. Vydělej první peníze', text:'Dojdi k radnici a nastup do práce (třeba úklid). Každý den si odpracuj směnu a dostaneš plat. To je tvůj jistý příjem na začátek.'},
   {icon:'🏠', title:'3. Kup si bydlení', text:'Dojdi k nějakému domu a kup si podíl (stačí pár %). Vlastní bydlení je nejlevnější — ušetříš na denních nákladech. Pak můžeš dům pronajímat a vydělávat.'},
   {icon:'📖', title:'Kdykoliv poradím', text:'Nevíš si rady? Vpravo je tlačítko 📖 „Jak to funguje" — vysvětlí všechno o penězích, nájmu i půjčkách. Hodně štěstí!'},
