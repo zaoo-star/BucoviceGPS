@@ -2988,7 +2988,26 @@ function renderProfile(){
   });
   html += `</div></div>`;
 
+  if(isOwn){
+    html += `<div class="card">
+      <h3>👤 Účet</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Na tomhle zařízení se přihlašuješ automaticky jako <b>${escapeHtml(u.name)}</b>. Můžeš se odhlásit a hrát pod jinou přezdívkou.</p>
+      <div class="row"><button class="secondary" onclick="logout()">Odhlásit se / změnit hráče</button></div>
+    </div>`;
+  }
+
   el.innerHTML = html;
+}
+
+// Odhlásí hráče a zapomene uloženou přezdívku (vypne auto-login)
+function logout(){
+  try { localStorage.removeItem('bucovice_lastuser'); } catch(e){}
+  currentUser = null;
+  closeSheet();
+  document.getElementById('app').style.display = 'none';
+  const inp = document.getElementById('nameInput');
+  if(inp) inp.value = '';
+  document.getElementById('loginOverlay').style.display = 'block';
 }
 
 let leaderboardMode = 'worth'; // 'worth' | 'houses' | 'distance'
@@ -3040,12 +3059,12 @@ function renderBank(){
   if(!currentUser){ el.innerHTML = '<div class="empty-state"></div>'; return; }
   const me = world.users[currentUser.name];
   if(!me.loans) me.loans = [];
-  const totalDebt = me.loans.reduce((s,l)=>s+l.balance,0);
-  const limit = Math.max(0, Math.max(LOAN_BASE_LIMIT, Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO)) - totalDebt(currentUser.name));
+  const debtTotal = me.loans.reduce((s,l)=>s+l.balance,0);
+  const limit = Math.max(0, Math.max(LOAN_BASE_LIMIT, Math.round(netWorthEstimate(currentUser.name) * LOAN_LIMIT_RATIO)) - debtTotal);
   let html = `<div class="card">
     <h3>🏦 Městská banka</h3>
     <p>Odhad tvého čistého jmění: <b style="color:var(--gold)">${Math.round(netWorthEstimate(currentUser.name))} Kč</b></p>
-    <p>Celkový dluh: <b style="color:${totalDebt>0?'var(--danger)':'var(--muted)'}">${Math.round(totalDebt)} Kč</b></p>
+    <p>Celkový dluh: <b style="color:${debtTotal>0?'var(--danger)':'var(--muted)'}">${Math.round(debtTotal)} Kč</b></p>
     <p>Limit pro novou půjčku: ${limit} Kč</p>
     <div class="row"><button onclick="takeLoan()">Vzít půjčku (${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)</button></div>
     <p style="font-size:0.85em;margin-top:8px;">Půjčku využiješ na nákup podílů v domech a podnicích. Banka strhává splátky automaticky — když je dlouho neplatíš, zabaví ti majetek.</p>
@@ -3393,6 +3412,12 @@ function sanitizeName(raw){
 
 function login(){
   const name = sanitizeName(document.getElementById('nameInput').value) || 'Host' + Math.floor(Math.random()*9999);
+  try { localStorage.setItem('bucovice_lastuser', name); } catch(e){} // zapamatovat pro příště
+  doLogin(name);
+}
+
+// Vlastní přihlášení (sdílené ručním loginem i automatickým)
+function doLogin(name){
   if(!world.users[name]){
     world.users[name] = {name, balance: START_BALANCE, lastWorkedDay: -1, walkEarnedToday: 0, distanceToday: 0, totalDistance: 0, loans: [], totalShifts: 0, jobBanUntil: 0,
       joinedRealDate: Date.now(), joinedGameDay: world.day, peakWorth: START_BALANCE, avatar: '🧑', savings: 0};
@@ -3408,6 +3433,16 @@ function login(){
   setTimeout(() => { map.invalidateSize(); refreshAll(); }, 200);
   startGeoTracking();
   setTimeout(maybeShowTutorial, 400);
+}
+
+// Automatické přihlášení, pokud si hráč přezdívku už uložil na tomhle zařízení
+function tryAutoLogin(){
+  let name = null;
+  try { name = localStorage.getItem('bucovice_lastuser'); } catch(e){}
+  if(name && world.users[name]){ doLogin(name); return true; }
+  // předvyplnit pole, i když auto-login neproběhne (třeba nová hra bez uloženého světa)
+  if(name){ const inp = document.getElementById('nameInput'); if(inp) inp.value = name; }
+  return false;
 }
 
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
@@ -3500,6 +3535,7 @@ window.onload = () => {
   setInterval(updateHeaderStats, 1000);
   registerServiceWorker();
   setupInstallPrompt();
+  tryAutoLogin();
 };
 
 // ===== PWA: instalace na plochu =====
