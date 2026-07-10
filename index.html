@@ -16,6 +16,11 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+<!-- Firebase: sdílený svět mezi hráči (multiplayer) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <style>
   :root{
     --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --accent:#4ade80;
@@ -413,6 +418,21 @@ function modalConfirmCancel(){
 }
 
 const STORAGE_KEY = 'bucovice_landlord_v9';
+
+// ===== FIREBASE: sdílený svět mezi hráči =====
+// Tvá konfigurace z Firebase konzole (Project settings → Your apps).
+const firebaseConfig = {
+  apiKey: "AIzaSyCCuv0q2SkLcRrx9bvzCLjSjJaqPS_guec",
+  authDomain: "bucovicegps.firebaseapp.com",
+  databaseURL: "https://bucovicegps-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "bucovicegps",
+  storageBucket: "bucovicegps.firebasestorage.app",
+  messagingSenderId: "1078601545424",
+  appId: "1:1078601545424:web:396313df62fbeda94490d5"
+};
+let fbDb = null, fbAuth = null, fbUser = null;
+let firebaseSyncEnabled = false;   // true, jakmile jsme přihlášeni a napojení na cloud
+let suppressNextWorldEcho = false; // krátké potlačení ozvěny vlastního zápisu z listeneru
 let world = null;
 let currentUser = null;
 let map, markers = {}, selectedParcelId = null;
@@ -421,6 +441,7 @@ let hasCenteredOnPlayer = false; // ať appka zoomne na hráče jen při prvním
 let reachCircle = null;
 let playerMarker = null, accuracyCircle = null;
 let lastGeoPos = null;      // pro výpočet ušlé vzdálenosti mezi updaty
+let lastGeoTime = 0;        // čas poslední polohy (pro rychlostní kontrolu po znovuzapnutí)
 let geoAvailable = false;
 
 const CITY_CENTER = [49.1503, 17.0035]; // náměstí Svobody, Bučovice — reálný střed města
@@ -484,8 +505,12 @@ const HOUSE_VISIBLE_RADIUS = 130;     // metrů — domy dál od hráče se vůb
 const JOB_RADIUS = 90;                // metrů — okolo radnice
 const WALK_REWARD_PER_METER = 0.05;   // Kč/m (5 Kč/100m)
 const WALK_DAILY_CAP = 400;           // Kč max z chůze za herní den
-const GPS_JUMP_IGNORE = 150;          // m — ignoruj skoky větší než tohle (GPS chyba/teleport)
-const GPS_NOISE_IGNORE = 2;           // m — ignoruj drobné chvění
+const GPS_JUMP_IGNORE = 200;          // m — ignoruj skoky větší než tohle (GPS chyba/teleport)
+const GPS_NOISE_IGNORE = 1;           // m — ignoruj jen úplně drobné chvění (menší kroky se sčítají)
+const GPS_MAX_ACCURACY = 40;          // m — když je poloha méně přesná než tohle, pohyb nepočítáme (byl by to šum)
+const MAX_WALK_SPEED_MS = 2.2;        // m/s (~8 km/h) — nejvyšší rychlost, co bereme jako chůzi/běh.
+                                      // Po znovuzapnutí appky: pokud posun / uplynulý čas ≤ tohle, byla to reálná chůze
+                                      // a započítá se. Rychlejší = jel jsi dopravou → nepočítá se (anti-cheat).
 
 // Reálné podniky v Bučovicích (Google Places) — cena a výnos odhadnuty z hodnocení a počtu recenzí (popularita)
 const BUSINESS_DEFS = [
@@ -1125,6 +1150,20 @@ function loadWorld(){
   if(raw){
     try{
       world = JSON.parse(raw);
+      migrateWorld();
+      return;
+    }catch(e){ console.warn('Poškozená data, generuji nové město.'); }
+  }
+  const jobs = {};
+  JOB_DEFS.forEach(j => jobs[j.id] = {...j, holders:[]});
+  world = {day:1, dayProgress:0, lastTick: Date.now(), users:{}, parcels: generateHouses(), businesses: generateBusinesses(), jobs, listings:{}, marketCycle:{mult:1}, inflation:1, news:[]};
+  saveWorld();
+}
+
+// Doplní/opraví strukturu `world` (nová pole, přejmenování, výchozí hodnoty).
+// Volá se jak po načtení z localStorage, tak po každém stažení sdíleného světa z Firebase —
+// aby appka fungovala i se starším uloženým stavem nebo stavem z jiného zařízení.
+function migrateWorld(){
       const fresh = generateHouses();
       Object.keys(fresh).forEach(id => { if(!world.parcels[id]) world.parcels[id] = fresh[id]; });
       if(!world.jobs) world.jobs = {};
@@ -1136,6 +1175,7 @@ function loadWorld(){
           if(!wj.holders){ wj.holders = wj.holder ? [wj.holder] : []; delete wj.holder; } // migrace jednoho holdera na pole
         }
       });
+      if(!world.users) world.users = {};
       Object.values(world.users).forEach(u => {
         if(u.totalShifts === undefined) u.totalShifts = 0;
         if(u.jobBanUntil === undefined) u.jobBanUntil = 0;
@@ -1147,6 +1187,7 @@ function loadWorld(){
         if(u.savings === undefined) u.savings = 0;
         if(u.achievements === undefined) u.achievements = [];
         if(u.missedInRow === undefined) u.missedInRow = 0;
+        if(!u.loans) u.loans = [];
       });
       Object.values(world.parcels).forEach(p => {
         if(p.useType === 'shop') p.useType = 'residence';
@@ -1162,30 +1203,75 @@ function loadWorld(){
       });
       if(!world.businesses) world.businesses = generateBusinesses();
       if(!world.listings) world.listings = {};
+      if(!world.news) world.news = [];
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
       BUSINESS_DEFS.forEach(def => {
         if(!world.businesses[def.id]) world.businesses[def.id] = {...def, owners:{}};
-        else { // aktualizovat ceny/výnos z definice (mohly se změnit kvůli ladění), vlastníky zachovat
+        else {
           const owners = world.businesses[def.id].owners || {};
           world.businesses[def.id] = {...def, owners};
         }
       });
-      Object.values(world.users).forEach(u => { if(!u.loans) u.loans = []; });
       if(typeof world.day !== 'number') world.day = 1;
       if(typeof world.dayProgress !== 'number') world.dayProgress = 0;
       if(typeof world.lastTick !== 'number') world.lastTick = Date.now();
-      return;
-    }catch(e){ console.warn('Poškozená data, generuji nové město.'); }
-  }
-  const jobs = {};
-  JOB_DEFS.forEach(j => jobs[j.id] = {...j, holders:[]});
-  world = {day:1, dayProgress:0, lastTick: Date.now(), users:{}, parcels: generateHouses(), businesses: generateBusinesses(), jobs, listings:{}, marketCycle:{mult:1}, inflation:1};
-  saveWorld();
 }
 
-function saveWorld(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(world)); }
+// Připojení k Firebase: anonymní přihlášení + stažení sdíleného světa + živé naslouchání změnám.
+// Appka funguje i bez tohoto (offline, jen localStorage) — Firebase je bonus navrch.
+function initFirebaseSync(){
+  if(typeof firebase === 'undefined'){
+    console.warn('Firebase SDK se nenačetlo (výpadek sítě?) — appka poběží jen lokálně.');
+    return;
+  }
+  try{
+    firebase.initializeApp(firebaseConfig);
+    fbAuth = firebase.auth();
+    fbDb = firebase.database();
+  } catch(e){
+    console.warn('Firebase se nepodařilo inicializovat — appka poběží jen lokálně.', e);
+    return;
+  }
+
+  fbAuth.signInAnonymously().catch(e => console.warn('Anonymní přihlášení do Firebase selhalo:', e));
+
+  fbAuth.onAuthStateChanged((user) => {
+    if(!user) return;
+    fbUser = user;
+    firebaseSyncEnabled = true;
+
+    fbDb.ref('world').get().then((snap) => {
+      if(snap.exists()){
+        world = snap.val();
+        migrateWorld();
+        refreshAll();
+      } else {
+        // cloud je zatím prázdný → nahrát tam náš lokální svět jako počáteční sdílený stav
+        fbDb.ref('world').set(world);
+      }
+      // živé naslouchání: jakmile někdo jiný (nebo my z jiného zařízení) svět změní, promítne se to hned
+      fbDb.ref('world').on('value', (snap2) => {
+        if(suppressNextWorldEcho) return; // ignorovat krátkou ozvěnu vlastního zápisu
+        if(!snap2.exists()) return;
+        world = snap2.val();
+        migrateWorld();
+        if(currentUser) refreshAll();
+      });
+    }).catch(e => console.warn('Nepodařilo se stáhnout sdílený svět z Firebase — appka poběží lokálně.', e));
+  });
+}
+
+function saveWorld(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(world));
+  if(firebaseSyncEnabled && fbDb){
+    suppressNextWorldEcho = true;
+    fbDb.ref('world').set(world)
+      .catch(e => console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e))
+      .finally(() => { setTimeout(() => { suppressNextWorldEcho = false; }, 600); });
+  }
+}
 
 // ===== NOVINY / KRONIKA UDÁLOSTÍ =====
 // Zaznamená událost do herních novin. type určuje ikonu/barvu, text je hláška.
@@ -1484,11 +1570,31 @@ function onPosition(pos){
 
   if(lastGeoPos){
     const dist = haversine(lastGeoPos, newPos);
-    if(dist > GPS_NOISE_IGNORE && dist < GPS_JUMP_IGNORE){
+    const now = Date.now();
+    const elapsedSec = lastGeoTime ? (now - lastGeoTime) / 1000 : 0;
+
+    if(accuracy > GPS_MAX_ACCURACY){
+      // nepřesná poloha → nepočítat (byl by to šum), jen přesuň referenci
+      lastGeoPos = newPos; lastGeoTime = now;
+    } else if(dist > GPS_NOISE_IGNORE && dist < GPS_JUMP_IGNORE){
+      // běžný živý pohyb za appky zapnuté
       creditWalking(dist);
+      lastGeoPos = newPos; lastGeoTime = now;
+    } else if(dist >= GPS_JUMP_IGNORE){
+      // velký skok — typicky appka byla mezitím vypnutá / na pozadí.
+      // Započítáme ho JEN pokud odpovídá rychlosti chůze (ušel bys to pěšky za ten čas).
+      const speed = elapsedSec > 0 ? dist / elapsedSec : Infinity;
+      if(speed <= MAX_WALK_SPEED_MS){
+        creditWalking(dist); // reálná chůze s vypnutou appkou → připíše se (do denního stropu)
+      }
+      // jinak: moc rychle = jel jsi dopravou → nepočítá se
+      lastGeoPos = newPos; lastGeoTime = now;
     }
+    // drobné chvění (< NOISE) → referenci NEMĚNÍME, malé kroky se sčítají
+  } else {
+    lastGeoPos = newPos;
+    lastGeoTime = Date.now();
   }
-  lastGeoPos = newPos;
   playerPos = newPos;
   // uložit pozici ke hráči (pro zobrazení ostatních; s Firebase se to synchronizuje mezi zařízeními)
   if(currentUser && world.users[currentUser.name]){
@@ -2611,7 +2717,7 @@ function renderStatDetail(which){
     </div>`;
     html += `<div class="card"><h3>👟 Celkem</h3>
       <p>Za celou hru nachozeno: <b>${totalKm} km</b></p>
-      <p style="font-size:0.9em;color:var(--muted)">Chůze je jádro hry — čím víc chodíš, tím víc vyděláš a tím víc domů a práce máš v dosahu.</p>
+      <p style="font-size:0.9em;color:var(--muted)">Chůze je jádro hry — čím víc chodíš, tím víc vyděláš a tím víc domů a práce máš v dosahu. Nemusíš appku mít pořád zapnutou: po procházce ji zapni a cesta, kterou jsi ušel pěšky, se ti připíše (jízda autem ne — pozná se podle rychlosti).</p>
     </div>`;
   }
 
@@ -2770,7 +2876,7 @@ function renderGuide(){
   html += guideSection('💰','Jak vydělat peníze', `
     <p>Ve hře máš víc způsobů, jak si vydělat:</p>
     <p>• <b>Práce</b> — odpracuješ směnu u radnice a dostaneš plat. Čím déle na jednom místě pracuješ, tím víc si přivyděláš navíc (příplatek za praxi).</p>
-    <p>• <b>Chůze</b> — když se opravdu projdeš po městě, appka ti za nachozené metry přidá peníze.</p>
+    <p>• <b>Chůze</b> — když se opravdu projdeš po městě, appka ti za nachozené metry přidá peníze. Nemusíš ji mít pořád zapnutou — když ji zapneš po procházce, započítá se i cesta, kterou jsi zvládl pěšky (ne autem — to appka pozná podle rychlosti).</p>
     <p>• <b>Pronájem</b> — když vlastníš byt a někdo si ho pronajme, každý den ti chodí nájem.</p>
     <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
   `);
@@ -3431,6 +3537,12 @@ function doLogin(name){
   document.getElementById('loginOverlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
   setTimeout(() => { map.invalidateSize(); refreshAll(); }, 200);
+  // Obnovit poslední známou pozici + čas (pro započítání chůze, když appka byla vypnutá)
+  const savedPos = world.users[name].lastPos;
+  if(savedPos && savedPos.lat){
+    lastGeoPos = {lat: savedPos.lat, lng: savedPos.lng};
+    lastGeoTime = savedPos.at || 0;
+  }
   startGeoTracking();
   setTimeout(maybeShowTutorial, 400);
 }
@@ -3529,12 +3641,13 @@ function maybeShowTutorial(){
 window.onload = () => {
   loadFontScale();
   loadSoundPref();
-  loadWorld();
+  loadWorld();          // nejdřív rychle lokálně (funguje okamžitě, i offline)
   initMap();
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
   registerServiceWorker();
   setupInstallPrompt();
+  initFirebaseSync();   // pak se na pozadí připojí ke sdílenému světu (multiplayer)
   tryAutoLogin();
 };
 
