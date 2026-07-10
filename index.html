@@ -2,8 +2,18 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Bučovice bez majitelů</title>
+
+<!-- PWA: instalace na plochu (Android i iPhone) -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f1115">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- iOS specifické (Apple nečte manifest úplně) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bučovice">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
@@ -262,11 +272,12 @@
       <button id="retryGpsBtn" class="secondary" style="margin-left:8px;padding:4px 10px;font-size:0.85em;">Zkusit povolit GPS znovu</button>
     </div>
     <div class="statsRow">
-      <div class="statPill" id="dayPill">📅 Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
-      <div class="statPill" id="balance">💰 <span id="balanceVal">0</span> Kč</div>
-      <div class="statPill" id="walkPill">🚶 <span id="walkVal">0</span> m dnes</div>
-      <div class="statPill" id="housingPill">🏠 <span id="housingVal">bez bydlení</span></div>
-      <div class="statPill" id="marketCyclePill">📊 <span id="marketCycleVal">Stabilní trh</span></div>
+      <div class="statPill" id="dayPill" onclick="showStatDetail('day')" style="cursor:pointer;">📅 Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
+      <div class="statPill" id="balance" onclick="showStatDetail('money')" style="cursor:pointer;">💰 <span id="balanceVal">0</span> Kč</div>
+      <div class="statPill" id="walkPill" onclick="showStatDetail('walk')" style="cursor:pointer;">🚶 <span id="walkVal">0</span> m dnes</div>
+      <div class="statPill" id="housingPill" onclick="showStatDetail('housing')" style="cursor:pointer;">🏠 <span id="housingVal">bez bydlení</span></div>
+      <div class="statPill" id="marketCyclePill" onclick="showStatDetail('market')" style="cursor:pointer;">📊 <span id="marketCycleVal">Stabilní trh</span></div>
+      <button id="installBtn" class="statPill" onclick="installApp()" style="display:none;cursor:pointer;color:var(--accent);border-color:var(--accent);">📲 Nainstalovat appku</button>
     </div>
     <div id="userInfo"></div>
   </div>
@@ -321,6 +332,9 @@
       </div>
       <div class="panelContent" id="tab-guide">
         <div id="guideContent" class="empty-state">Načítám nápovědu...</div>
+      </div>
+      <div class="panelContent" id="tab-statdetail">
+        <div id="statDetailContent" class="empty-state">Načítám...</div>
       </div>
     </div>
   </div>
@@ -410,7 +424,7 @@ let lastGeoPos = null;      // pro výpočet ušlé vzdálenosti mezi updaty
 let geoAvailable = false;
 
 const CITY_CENTER = [49.1503, 17.0035]; // náměstí Svobody, Bučovice — reálný střed města
-const START_BALANCE = 4000;
+const START_BALANCE = 10000;
 
 const GAME_DAY_MS = 24 * 60 * 60 * 1000; // 1 herní den = skutečných 24 hodin
 const LIVING_COST = 90;               // Kč/herní den — plné náklady bezdomovce (nejdražší)
@@ -431,6 +445,34 @@ const EVENT_CHANCE_PER_DAY = 0.15;    // 15% šance na náhodnou životní udál
 const RENT_DECAY = 1;                 // úbytek stavu bytu/herní den (100→0 za 100 dní), jen u obsazeného bytu
 const REPAIR_COST_PER_POINT = 15;
 const RENTAL_SETUP_RATIO = 0.15;  // zařízení bytu k pronájmu = 15 % ceny domu
+
+// ===== VYLEPŠENÍ DOMŮ =====
+// Každé vylepšení je jednorázová investice (% z hodnoty domu), která TRVALE zlepší jeho ekonomiku.
+// Každé má JINÝ efekt, ať se vyplatí kombinovat. Cíl: návratnost kolem 2-3 měsíců u pronajímaného domu.
+const HOUSE_UPGRADES = {
+  insulation: { icon:'🌡️', name:'Zateplení',       costRatio:0.06,
+    desc:'Nižší účty za energie — nájemníci raději zůstávají. Zvýší obsazenost bytů.' },
+  ac:         { icon:'❄️', name:'Klimatizace',      costRatio:0.08,
+    desc:'Komfort navíc — dům snese vyšší nájem, aniž by se vyprázdnil.' },
+  renovation: { icon:'🔧', name:'Rekonstrukce',     costRatio:0.10,
+    desc:'Kvalitní materiály — byty chátrají o polovinu pomaleji, míň platíš za opravy.' },
+  solar:      { icon:'☀️', name:'Solární panely',   costRatio:0.08,
+    desc:'Vlastní elektřina — každý byt ti nese něco navíc každý den, i když je prázdný.' },
+};
+const INSULATION_OCC_BONUS = 0.18;  // +18 % obsazenost
+const AC_RENT_BONUS = 1.20;         // snese o 20 % vyšší férový nájem
+const RENOVATION_DECAY_MULT = 0.25; // chátrání na čtvrtinu (výrazná úspora za opravy)
+const RENOVATION_OCC_BONUS = 0.10;  // opravený dům je i o něco atraktivnější
+const SOLAR_RENT_RATIO = 0.30;      // solár nese 30 % férového nájmu/byt/den navíc
+
+function hasUpgrade(p, key){ return !!(p.upgrades && p.upgrades[key]); }
+function houseUpgradeCost(p, key){ return Math.round(effectiveHousePrice(p) * HOUSE_UPGRADES[key].costRatio); }
+// Solární bonus za celý dům/den (nezávisí na obsazenosti)
+function solarBonusForHouse(p){
+  if(!hasUpgrade(p, 'solar') || !p.units) return 0;
+  return fairRentForHouse(p) * SOLAR_RENT_RATIO * p.units.length;
+}
+
 // Férové (tržní) nájemné bytu ~0,26 % hodnoty domu. Vyladěno tak, aby pronájem dával rozumný výnos
 // (~30-50 % ročně, rychlá hra) a zároveň nájemník ušetřil vs bezdomovec. Vlastník 45 < nájemník < bezdomovec 90.
 const FAIR_RENT_RATIO = 0.0026;   // ~0,26 % hodnoty domu/den za byt (min. 30 Kč)
@@ -1021,7 +1063,9 @@ function fairRentForHouse(p){
   const numUnits = (p.units && p.units.length) || p.levels || 1;
   // podlaha 35 Kč zajišťuje, že nájemník (35 + TENANT_LIVING_COST) vždy platí víc než vlastník bydlení,
   // i u vícepatrových domů, kde by se jinak nájem na byt propadl moc nízko
-  return Math.max(35, Math.round(effectiveHousePrice(p) * FAIR_RENT_RATIO / Math.max(1, numUnits/1)) );
+  let fair = Math.max(35, Math.round(effectiveHousePrice(p) * FAIR_RENT_RATIO / Math.max(1, numUnits/1)) );
+  if(hasUpgrade(p, 'ac')) fair = Math.round(fair * AC_RENT_BONUS); // klimatizace zvedne snesitelný nájem
+  return fair;
 }
 // Odhadované rozpětí nájmu pro hráče — realita: přesnou "správnou cenu" nikdo nezná, jen odhaduješ.
 // Vrací text typu "40–55 Kč" (±18 % kolem férové ceny).
@@ -1035,9 +1079,14 @@ function rentEstimateRange(p){
 // nájem ≤ férový → plno (1.0), férový×1 → ~0.9, férový×2 → ~0.2, výš → k nule.
 function unitOccupancy(p, unit){
   const fair = fairRentForHouse(p);
-  if(unit.rentPrice <= fair) return 1;
-  const ratio = unit.rentPrice / fair; // >1
-  const occ = Math.max(0, 1.2 - 0.7 * ratio); // lineární pokles
+  let occ;
+  if(unit.rentPrice <= fair) occ = 1;
+  else {
+    const ratio = unit.rentPrice / fair; // >1
+    occ = Math.max(0, 1.2 - 0.7 * ratio); // lineární pokles
+  }
+  if(hasUpgrade(p, 'insulation')) occ += INSULATION_OCC_BONUS; // zateplení = atraktivnější bydlení
+  if(hasUpgrade(p, 'renovation')) occ += RENOVATION_OCC_BONUS; // opravený dům = atraktivnější
   return Math.max(0, Math.min(1, occ));
 }
 
@@ -1260,10 +1309,19 @@ function tick(){
           });
         }
         // obsazený byt (hráč nebo NPC) se opotřebovává; prázdný chátrá pomaleji
+        // rekonstrukce chátrání zpomaluje na polovinu
         const occNow = u.tenant ? 1 : (u.condition>0 ? unitOccupancy(p,u) : 0);
-        const decayRate = RENT_DECAY * (occNow > 0 ? occNow : EMPTY_DECAY_FACTOR);
+        let decayRate = RENT_DECAY * (occNow > 0 ? occNow : EMPTY_DECAY_FACTOR);
+        if(hasUpgrade(p, 'renovation')) decayRate *= RENOVATION_DECAY_MULT;
         u.condition = Math.max(0, u.condition - decayRate * dayFraction);
       });
+      // solární panely: příjem navíc za celý dům, nezávisle na obsazenosti
+      const solar = solarBonusForHouse(p);
+      if(solar > 0){
+        Object.entries(p.owners||{}).forEach(([owner, pct]) => {
+          if(world.users[owner]) world.users[owner].balance += solar * (pct/100) * dayFraction;
+        });
+      }
     }
   });
 
@@ -1793,6 +1851,25 @@ function renderSelected(id){
       <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
       ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
     </div>`;
+
+    // --- Vylepšení domu ---
+    const upKeys = Object.keys(HOUSE_UPGRADES);
+    const ownedUps = upKeys.filter(k => hasUpgrade(p, k));
+    if(iDecide || ownedUps.length){
+      html += `<div class="card"><h3>🛠️ Vylepšení domu</h3>
+        <p style="font-size:0.9em;color:var(--muted)">Jednorázová investice, která dům trvale zlepší. Vrátí se ti kolem 2-3 měsíců.</p>`;
+      upKeys.forEach(k => {
+        const up = HOUSE_UPGRADES[k];
+        const has = hasUpgrade(p, k);
+        const cost = houseUpgradeCost(p, k);
+        html += `<div style="border:1px solid ${has?'var(--accent)':'var(--border)'};border-radius:8px;padding:8px;margin-top:6px;">
+          <p style="margin:0;font-weight:600;color:${has?'var(--accent)':'var(--text)'}">${up.icon} ${up.name} ${has?'✓ máš':''}</p>
+          <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${up.desc}</p>
+          ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
+        </div>`;
+      });
+      html += `</div>`;
+    }
     p.units.forEach((u, idx) => {
       const occ = u.condition>0 ? unitOccupancy(p, u) : 0;
       const occPct = Math.round(occ*100);
@@ -2167,8 +2244,8 @@ function financeBreakdown(name){
   const expense = [];
 
   // PŘÍJMY
-  // nájem z domů (reálný výběr po obsazenosti × podíl)
-  let rentIncome = 0;
+  // nájem z domů (reálný výběr po obsazenosti × podíl) + solární bonus
+  let rentIncome = 0, solarIncome = 0;
   Object.values(world.parcels).forEach(p => {
     if(p.useType==='rental' && p.units){
       const collected = p.units.reduce((s,un)=>{
@@ -2176,9 +2253,11 @@ function financeBreakdown(name){
         return s + un.rentPrice*occ;
       },0);
       rentIncome += collected * ((p.owners?.[name]||0)/100);
+      solarIncome += solarBonusForHouse(p) * ((p.owners?.[name]||0)/100);
     }
   });
   if(rentIncome>0) income.push({label:'🏘️ Nájem z bytů', amount: rentIncome});
+  if(solarIncome>0) income.push({label:'☀️ Solární panely', amount: solarIncome});
   // podniky
   let bizIncome = 0;
   Object.values(world.businesses).forEach(b => {
@@ -2477,6 +2556,98 @@ const NEWS_STYLE = {
   achievement:{color:'var(--gold)'},
   event:      {color:'var(--orange)'},
 };
+// ===== DETAIL STATISTIKY (po klepnutí na pilulku v horní liště) =====
+function showStatDetail(which){
+  openSheet('statdetail');
+  renderStatDetail(which);
+}
+function renderStatDetail(which){
+  const el = document.getElementById('statDetailContent');
+  if(!currentUser){ el.innerHTML = '<div class="empty-state"></div>'; return; }
+  const u = world.users[currentUser.name];
+  let html = '';
+
+  if(which === 'day'){
+    const msLeft = Math.max(0, Math.round((1 - world.dayProgress) * GAME_DAY_MS));
+    const hrsLeft = (msLeft/3600000).toFixed(1);
+    html += `<div class="card"><h3>📅 Herní den</h3>
+      <p>Právě je <b>den ${world.day}</b>.</p>
+      <p>Do dalšího dne zbývá <b>${hrsLeft} hodin</b>.</p>
+      <p style="font-size:0.9em;color:var(--muted)">1 herní den = 24 skutečných hodin. Každý nový den se strhnou náklady na bydlení, připíšou úroky, vyřeší aukce a může se stát nečekaná událost. Hra běží pořád — i když ji zavřeš, čas plyne dál.</p>
+    </div>`;
+    html += `<div class="card"><h3>📊 Tržní cyklus</h3>
+      <p>Teď: <b style="color:${marketCycleLabel().color}">${marketCycleLabel().label}</b> (ceny ×${marketMultiplier().toFixed(2)})</p>
+      <p style="font-size:0.9em;color:var(--muted)">Město prochází obdobími růstu a poklesu. Podrobnosti v pilulce „trh".</p>
+    </div>`;
+  }
+
+  else if(which === 'money'){
+    const worth = netWorthEstimate(u.name);
+    const f = financeBreakdown(u.name);
+    html += `<div class="card"><h3>💰 Peníze</h3>
+      <p>Hotovost: <b style="color:var(--gold)">${Math.round(u.balance).toLocaleString('cs-CZ')} Kč</b></p>
+      <p>Na spoření: ${Math.round(u.savings||0).toLocaleString('cs-CZ')} Kč</p>
+      <p>Čisté jmění: <b>${worth.toLocaleString('cs-CZ')} Kč</b></p>
+    </div>`;
+    const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
+    html += `<div class="card"><h3>📈 Denní tok</h3>
+      <p>Příjmy: <b style="color:var(--accent)">+${Math.round(f.totalIncome)} Kč/den</b></p>
+      <p>Výdaje: <b style="color:var(--danger)">−${Math.round(f.totalExpense)} Kč/den</b></p>
+      <p>Bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>
+      ${f.net<0 && f.daysUntilBroke!==null ? `<p style="color:var(--danger);font-size:0.9em">⚠️ Při tomto tempu ti peníze dojdou za ${f.daysUntilBroke} dní.</p>` : ''}
+      <div class="row"><button class="secondary" onclick="openSheet('finance')">Celý finanční přehled</button></div>
+    </div>`;
+  }
+
+  else if(which === 'walk'){
+    const earnedToday = Math.round(u.walkEarnedToday || 0);
+    const cap = Math.round(WALK_DAILY_CAP * inflationMult());
+    const distToday = Math.round(u.distanceToday || 0);
+    const totalKm = ((u.totalDistance||0)/1000).toFixed(2).replace('.',',');
+    html += `<div class="card"><h3>🚶 Chůze dnes</h3>
+      <p>Dnes nachozeno: <b>${distToday} m</b></p>
+      <p>Vyděláno chůzí: <b style="color:var(--gold)">${earnedToday} / ${cap} Kč</b></p>
+      <p style="font-size:0.9em;color:var(--muted)">Za každých 100 metrů dostaneš ${Math.round(WALK_REWARD_PER_METER*100*inflationMult())} Kč, denně max ${cap} Kč. Zítra se limit obnoví.</p>
+    </div>`;
+    html += `<div class="card"><h3>👟 Celkem</h3>
+      <p>Za celou hru nachozeno: <b>${totalKm} km</b></p>
+      <p style="font-size:0.9em;color:var(--muted)">Chůze je jádro hry — čím víc chodíš, tím víc vyděláš a tím víc domů a práce máš v dosahu.</p>
+    </div>`;
+  }
+
+  else if(which === 'housing'){
+    const status = housingStatus(u.name);
+    const label = {owner:'🏠 vlastní bydlení', tenant:'🔑 nájem', homeless:'🚶 bez bydlení'}[status];
+    const cost = status==='owner' ? LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT) : (status==='tenant'?TENANT_LIVING_COST:LIVING_COST);
+    let rentPart = 0;
+    if(status==='tenant'){ Object.values(world.parcels).forEach(p=>(p.units||[]).forEach(un=>{ if(un.tenant===u.name) rentPart += un.rentPrice; })); }
+    html += `<div class="card"><h3>${label}</h3>
+      <p>Denní náklad na bydlení: <b style="color:var(--gold)">${Math.round(cost+rentPart)} Kč/den</b></p>
+      ${status==='homeless' ? `<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc (${LIVING_COST} Kč/den). Kup si podíl v domě určeném na bydlení, nebo si najmi byt — ušetříš.</p>` : ''}
+      ${status==='tenant' ? `<p style="font-size:0.9em;color:var(--muted)">Platíš životní náklady (${TENANT_LIVING_COST}) + nájem majiteli (${Math.round(rentPart)}). Kdybys měl vlastní bydlení, platil bys jen ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.</p>` : ''}
+      ${status==='owner' ? `<p style="font-size:0.9em;color:var(--accent)">Máš nejlevnější možné bydlení — vlastní podíl v domě. Dobrá práce!</p>` : ''}
+    </div>`;
+    html += `<div class="card"><h3>💡 Jak to funguje</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Vlastník (${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč) < nájemník < bezdomovec (${LIVING_COST} Kč). Vlastní bydlení se vždycky vyplatí.</p>
+    </div>`;
+  }
+
+  else if(which === 'market'){
+    const cyc = marketCycleLabel();
+    html += `<div class="card"><h3>📊 Tržní cyklus</h3>
+      <p>Teď: <b style="color:${cyc.color}">${cyc.label}</b></p>
+      <p>Ceny nemovitostí jsou momentálně <b>×${marketMultiplier().toFixed(2)}</b> oproti základu.</p>
+      <p style="font-size:0.9em;color:var(--muted)">${marketMultiplier()>=1 ? 'Ceny jsou nad průměrem — dobrá doba na prodej.' : 'Ceny jsou pod průměrem — výhodná doba na nákup.'}</p>
+    </div>`;
+    html += `<div class="card"><h3>💡 Jak to funguje</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Celé město prochází obdobími růstu (📈 konjunktura, 🔥 boom) a poklesu (📉 recese). V recesi kupuj levně, v boomu prodávej draho — přesně jako na skutečném trhu.</p>
+      <p style="font-size:0.9em;color:var(--muted)">Inflace navíc pomalu zvedá všechny ceny i mzdy (teď ×${inflationMult().toFixed(3)}).</p>
+    </div>`;
+  }
+
+  el.innerHTML = html;
+}
+
 function renderNews(){
   const el = document.getElementById('newsContent');
   const news = world.news || [];
@@ -2625,6 +2796,15 @@ function renderGuide(){
     <p>Byty <b>postupně chátrají</b> (víc, když jsou obydlené) — musíš je čas od času opravit, jinak přestanou vydělávat.</p>
   `);
 
+  html += guideSection('🛠️','Vylepšení domu', `
+    <p>U domu určeného k pronájmu si můžeš pořídit <b>vylepšení</b> — jednorázová investice, která ho trvale zlepší. Každé pomáhá jinak:</p>
+    <p>🌡️ <b>Zateplení</b> — byt je atraktivnější, drží se obsazený i za vyšší nájem.</p>
+    <p>❄️ <b>Klimatizace</b> — dům snese vyšší nájem, aniž by se vyprázdnil.</p>
+    <p>🔧 <b>Rekonstrukce</b> — byty chátrají mnohem pomaleji, ušetříš za opravy.</p>
+    <p>☀️ <b>Solární panely</b> — každý byt ti nese něco navíc každý den, i když je prázdný.</p>
+    <p style="color:var(--muted)">💡 Ponaučení: modernizace stojí peníze teď, ale vrátí se ti (kolem 2-3 měsíců). Přesně jako v reálu, kdy se ptáš „vyplatí se mi zateplit?". Zateplení a klima se nejvíc vyplatí, když chceš nastavit vyšší nájem.</p>
+  `);
+
   html += guideSection('💵','Půjčky a úrok', `
     <p>Banka ti může půjčit peníze, ale <b>ne zadarmo</b>. Za to, že ti peníze půjčila, platíš navíc <b>úrok</b> — ${Math.round(LOAN_ANNUAL_RATE*100)} % z půjčené částky za rok.</p>
     <p>Příklad: půjčíš si 1000 Kč. Za rok bys bance dlužil o ${Math.round(LOAN_ANNUAL_RATE*100)} % víc, kdybys nic nesplácel — tedy ${Math.round(1000*LOAN_ANNUAL_RATE)} Kč navíc.</p>
@@ -2690,6 +2870,12 @@ function renderGuide(){
   html += guideSection('📰','Městské noviny', `
     <p>V liště je tlačítko 📰 <b>Noviny</b> — kronika všeho, co se ve městě děje: kdo koupil nebo prodal dům, kdo otevřel pronájem, kdo se přidal, kdo si vzal půjčku nebo získal odznak.</p>
     <p>Je to skvělý způsob, jak sledovat soupeře — co kupují, kam investují — a učit se z toho.</p>
+  `);
+
+  html += guideSection('📲','Nainstaluj appku na plochu', `
+    <p>Tuhle hru si můžeš dát na plochu telefonu jako opravdovou appku — otevřeš ji pak jedním klepnutím, bez adresního řádku prohlížeče.</p>
+    <p><b>Android (Chrome):</b> nahoře se ti objeví tlačítko "📲 Nainstalovat appku" — stačí klepnout. Pokud se neobjeví, jdi do nabídky prohlížeče (⋮) a vyber "Přidat na plochu" / "Nainstalovat aplikaci".</p>
+    <p><b>iPhone (Safari):</b> klepni na tlačítko sdílení (čtvereček se šipkou nahoru) dole na obrazovce, pak vyber "Přidat na plochu".</p>
   `);
 
   html += guideSection('💡','Finanční přehled — tvůj nejlepší pomocník', `
@@ -2957,6 +3143,27 @@ async function setUnitRentPrice(id, idx){
   saveWorld(); refreshAll();
 }
 
+async function installUpgrade(id, key){
+  const p = world.parcels[id];
+  const up = HOUSE_UPGRADES[key];
+  if(!up) return;
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iAmDecider(p)){ showAlert('Vylepšení hradí a řídí jen největší podílník.'); return; }
+  if(p.useType !== 'rental'){ showAlert('Vylepšit jde jen dům určený k pronájmu.'); return; }
+  if(hasUpgrade(p, key)){ showAlert('Tohle vylepšení už dům má.'); return; }
+  const cost = houseUpgradeCost(p, key);
+  if(!(await showConfirm(`${up.icon} ${up.name} za ${cost.toLocaleString('cs-CZ')} Kč?\n\n${up.desc}`))) return;
+  const me = world.users[currentUser.name];
+  if(me.balance < cost){ showAlert('Nemáš dost peněz na vylepšení.'); return; }
+  me.balance -= cost;
+  if(!p.upgrades) p.upgrades = {};
+  p.upgrades[key] = true;
+  addNews('rental', `${up.icon} ${currentUser.name} vylepšil dům ${p.id.replace('h_','#')} — ${up.name}.`);
+  playSound('success');
+  saveWorld(); refreshAll();
+  showAlert(`${up.name} nainstalováno. Investice se ti postupně vrátí.`);
+}
+
 async function repairUnit(id, idx){
   const p = world.parcels[id];
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
@@ -3206,7 +3413,7 @@ function login(){
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
 const SHEET_TITLES = {
   selected:'Vybraný dům', mine:'Moje nemovitosti',
-  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', finance:'Finanční přehled', guide:'Jak to funguje'
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail'
 };
 
 function openSheet(tabName){
@@ -3291,7 +3498,42 @@ window.onload = () => {
   initMap();
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
+  registerServiceWorker();
+  setupInstallPrompt();
 };
+
+// ===== PWA: instalace na plochu =====
+function registerServiceWorker(){
+  if(!('serviceWorker' in navigator)) return;
+  navigator.serviceWorker.register('./service-worker.js').catch(()=>{
+    // appka funguje i bez service workeru, jen bez offline cache — nic neblokujeme
+  });
+}
+
+let deferredInstallPrompt = null;
+function setupInstallPrompt(){
+  // Android/Chrome nabídne appce možnost vyvolat instalační dialog vlastním tlačítkem
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    const btn = document.getElementById('installBtn');
+    if(btn) btn.style.display = 'flex';
+  });
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+    const btn = document.getElementById('installBtn');
+    if(btn) btn.style.display = 'none';
+  });
+}
+async function installApp(){
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  const btn = document.getElementById('installBtn');
+  if(btn) btn.style.display = 'none';
+}
+
 </script>
 </body>
 </html>
