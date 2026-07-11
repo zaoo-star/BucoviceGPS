@@ -3185,14 +3185,14 @@ function initFirebaseSync(){
       localStorage.setItem(STORAGE_KEY, JSON.stringify(world));
       doCloudWrite(); // sesouhlasí cloud s naším aktuálním stavem hned (bez throttle prodlevy)
 
-      // Živé naslouchání: přijmeme jen změny, které jsou novější než náš stav
-      // (a ne ozvěnu vlastního zápisu). Tím se nikdy neztratí čerstvá akce.
+      // Živé naslouchání: každou cizí změnu SLOUČÍME (adoptWorld chrání náš postup a přebere
+      // nové hráče / noviny / chat). Neodmítáme "starší" verze úplně — jinak by se nový hráč,
+      // který zapsal o chlup dřív než my, nikdy neobjevil v žebříčku ani nikde jinde.
       fbDb.ref('world').on('value', (snap2) => {
         if(!snap2.exists()) return;
         const incoming = snap2.val();
         const incomingRev = incoming.rev || 0;
         if(incomingRev === lastWrittenRev) return;      // naše vlastní ozvěna → ignorovat
-        if(incomingRev < (world.rev || 0)) return;      // starší než náš stav → ignorovat (neztratit postup)
         adoptWorld(incoming);
       });
     }).catch(e => console.warn('Nepodařilo se stáhnout sdílený svět z Firebase — appka poběží lokálně.', e));
@@ -3206,11 +3206,16 @@ function initFirebaseSync(){
 function adoptWorld(incoming){
   const myName = currentUser && currentUser.name;
 
-  // 1) záloha mého účtu a mých podílů PŘED převzetím cloudu
+  // 1) záloha mého účtu, mých podílů, ale i NOVIN/CHATU před převzetím cloudu.
+  // Noviny a chat jsou "append-only" logy — víc zařízení do nich může přidávat současně,
+  // takže na rozdíl od majetku (kde vlastníkem pravdy je vždy hráč sám) je tady potřeba
+  // SLOUČIT obě verze, ne jednu zahodit — jinak zpráva zapsaná jinde może zmizet.
   let myUser = null;
   const myHouseShares = {};   // parcelId -> pct
   const myBizShares = {};     // bizId -> pct
   const myTenancies = [];     // {parcelId, unitIdx}
+  const myNews = world.news || [];
+  const myChat = world.chat || [];
   if(myName && world.users){
     myUser = world.users[myName];
     Object.entries(world.parcels || {}).forEach(([id, p]) => {
@@ -3225,6 +3230,10 @@ function adoptWorld(incoming){
   // 2) převzít cloud
   world = incoming;
   migrateWorld();
+
+  // 2b) sloučit noviny a chat (podle ts+text, ať se stejná zpráva neduplikuje), seřadit, oříznout
+  world.news = mergeLogs(myNews, world.news || [], NEWS_MAX);
+  world.chat = mergeLogs(myChat, world.chat || [], CHAT_MAX, true);
 
   // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal)
   if(myName && myUser){
@@ -3262,6 +3271,20 @@ function worldForCloud(){
 }
 
 let lastFbWrite = 0, fbWriteTimer = null;
+// Sloučí dva seznamy záznamů (noviny/chat z různých zařízení) do jednoho, bez ztráty a bez duplicit.
+// Klíč jedinečnosti: čas + text (+ jméno u chatu, kdyby dva lidé napsali stejnou větu ve stejnou ms).
+// Výsledek je seřazený od nejnovějšího a oříznutý na limit.
+function mergeLogs(a, b, limit, isChat){
+  const map = new Map();
+  [...a, ...b].forEach(item => {
+    const key = (isChat ? (item.name||'')+'|' : '') + (item.ts||0) + '|' + (item.text||'');
+    map.set(key, item);
+  });
+  const merged = Array.from(map.values());
+  merged.sort((x, y) => (y.ts||0) - (x.ts||0));
+  return merged.slice(0, limit);
+}
+
 function saveWorld(){
   // Verze světa: rostoucí číslo, aby šlo poznat, který stav je novější (proti přepsání postupu).
   world.rev = Math.max((world.rev || 0) + 1, Date.now());
