@@ -561,8 +561,13 @@ const JOB_RADIUS = 90;                // metrů — okolo radnice
 const WALK_REWARD_PER_METER = 0.05;   // Kč/m (5 Kč/100m)
 const WALK_DAILY_CAP = 400;           // Kč max z chůze za herní den
 const GPS_JUMP_IGNORE = 200;          // m — ignoruj skoky větší než tohle (GPS chyba/teleport)
-const GPS_NOISE_IGNORE = 1;           // m — ignoruj jen úplně drobné chvění (menší kroky se sčítají)
-const GPS_MAX_ACCURACY = 40;          // m — když je poloha méně přesná než tohle, pohyb nepočítáme (byl by to šum)
+const GPS_NOISE_IGNORE = 6;           // m — ignoruj chvění do 6 m (GPS drift vestoje bývá 3-8 m).
+                                      // Menší kroky se sčítají, takže pomalá chůze se stejně započítá,
+                                      // jakmile souhrnný posun tenhle práh překročí.
+const GPS_MAX_ACCURACY = 25;          // m — když je poloha méně přesná než tohle, pohyb nepočítáme (šum).
+                                      // Přísnější než dřív (40) — nepřesné údaje bývají příčinou falešných metrů.
+const GPS_MIN_STEP = 4;               // m — jednotlivý posun menší než tohle se ještě nezapočítá hned
+                                      // (drží referenci, čeká na nasčítání) — brání "cukání" na místě.
 const MAX_WALK_SPEED_MS = 2.2;        // m/s (~8 km/h) — nejvyšší rychlost, co bereme jako chůzi/běh.
                                       // Po znovuzapnutí appky: pokud posun / uplynulý čas ≤ tohle, byla to reálná chůze
                                       // a započítá se. Rychlejší = jel jsi dopravou → nepočítá se (anti-cheat).
@@ -3595,25 +3600,28 @@ function onPosition(pos){
     const dist = haversine(lastGeoPos, newPos);
     const now = Date.now();
     const elapsedSec = lastGeoTime ? (now - lastGeoTime) / 1000 : 0;
+    const speed = elapsedSec > 0 ? dist / elapsedSec : 0; // m/s mezi dvěma měřeními
 
     if(accuracy > GPS_MAX_ACCURACY){
       // nepřesná poloha → nepočítat (byl by to šum), jen přesuň referenci
       lastGeoPos = newPos; lastGeoTime = now;
     } else if(dist > GPS_NOISE_IGNORE && dist < GPS_JUMP_IGNORE){
-      // běžný živý pohyb za appky zapnuté
-      creditWalking(dist);
+      // Vypadá to jako pohyb — ale ověříme rychlost. Reálná chůze má rozumnou rychlost;
+      // náhlý "skok" o pár metrů za zlomek sekundy je GPS drift, ne krok.
+      if(elapsedSec > 0 && speed <= MAX_WALK_SPEED_MS){
+        creditWalking(dist);       // reálná chůze → započítat
+      }
+      // jinak (moc rychlý skok = drift/chyba) → nepočítat, jen posunout referenci
       lastGeoPos = newPos; lastGeoTime = now;
     } else if(dist >= GPS_JUMP_IGNORE){
       // velký skok — typicky appka byla mezitím vypnutá / na pozadí.
       // Započítáme ho JEN pokud odpovídá rychlosti chůze (ušel bys to pěšky za ten čas).
-      const speed = elapsedSec > 0 ? dist / elapsedSec : Infinity;
-      if(speed <= MAX_WALK_SPEED_MS){
+      if(elapsedSec > 0 && speed <= MAX_WALK_SPEED_MS){
         creditWalking(dist); // reálná chůze s vypnutou appkou → připíše se
       }
-      // jinak: moc rychle = jel jsi dopravou → nepočítá se
       lastGeoPos = newPos; lastGeoTime = now;
     }
-    // drobné chvění (< NOISE) → referenci NEMĚNÍME, malé kroky se sčítají
+    // drobné chvění (< NOISE_IGNORE) → referenci NEMĚNÍME, malé skutečné kroky se tak nasčítají
   } else {
     lastGeoPos = newPos;
     lastGeoTime = Date.now();
