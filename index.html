@@ -3171,7 +3171,10 @@ function initFirebaseSync(){
         // jinak: náš lokální stav je novější → necháme ho a níž ho nahrajeme zpět
       }
       firebaseSyncEnabled = true;
-      saveWorld(); // sesouhlasí cloud s naším aktuálním (možná novějším) stavem
+      world.rev = Math.max((world.rev || 0) + 1, Date.now());
+      lastWrittenRev = world.rev;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(world));
+      doCloudWrite(); // sesouhlasí cloud s naším aktuálním stavem hned (bez throttle prodlevy)
 
       // Živé naslouchání: přijmeme jen změny, které jsou novější než náš stav
       // (a ne ozvěnu vlastního zápisu). Tím se nikdy neztratí čerstvá akce.
@@ -3233,15 +3236,49 @@ function adoptWorld(incoming){
   if(currentUser) refreshAll();
 }
 
+// Připraví "štíhlou" verzi světa pro Firebase: obsahuje JEN domy, které někdo vlastní nebo přestavěl.
+// Zbylých 2000+ nedotčených domů se na každém zařízení dopočítá lokálně z REAL_HOUSES (jsou všude stejné),
+// takže je zbytečné (a pomalé) je posílat přes síť. Tím se objem dat zmenší z megabajtů na kilobajty.
+function worldForCloud(){
+  const slim = {};
+  const src = world.parcels || {};
+  for(const id in src){
+    const p = src[id];
+    const owned = p.owners && Object.keys(p.owners).length > 0;
+    const modified = owned || p.useType || (p.units && p.units.length) || p.upgrades ||
+                     (p.gentrifyMult && p.gentrifyMult !== 1) || p.popularity || p.salesHistory;
+    if(modified) slim[id] = p;
+  }
+  return { ...world, parcels: slim };
+}
+
+let lastFbWrite = 0, fbWriteTimer = null;
 function saveWorld(){
   // Verze světa: rostoucí číslo, aby šlo poznat, který stav je novější (proti přepsání postupu).
   world.rev = Math.max((world.rev || 0) + 1, Date.now());
   lastWrittenRev = world.rev;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(world));
-  if(firebaseSyncEnabled && fbDb){
-    fbDb.ref('world').set(world)
-      .catch(e => console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(world)); // lokálně vždy hned (rychlé)
+  scheduleCloudWrite();
+}
+// Zápis do Firebase se posílá nejvýš jednou za CLOUD_WRITE_MIN_MS — aby chůze (časté ukládání)
+// nezahltila síť. Poslední stav se vždy nakonec uloží.
+const CLOUD_WRITE_MIN_MS = 2500;
+function scheduleCloudWrite(){
+  if(!(firebaseSyncEnabled && fbDb)) return;
+  const now = Date.now();
+  const elapsed = now - lastFbWrite;
+  if(elapsed >= CLOUD_WRITE_MIN_MS){
+    doCloudWrite();
+  } else if(!fbWriteTimer){
+    fbWriteTimer = setTimeout(() => { fbWriteTimer = null; doCloudWrite(); }, CLOUD_WRITE_MIN_MS - elapsed);
   }
+}
+function doCloudWrite(){
+  if(!(firebaseSyncEnabled && fbDb)) return;
+  lastFbWrite = Date.now();
+  lastWrittenRev = world.rev; // ať sedí s tím, co reálně posíláme (rozpoznání vlastní ozvěny)
+  fbDb.ref('world').set(worldForCloud())
+    .catch(e => console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e));
 }
 
 // ===== NOVINY / KRONIKA UDÁLOSTÍ =====
