@@ -306,6 +306,7 @@
     <button class="railBtn" data-tab="chat" title="Chat">💬</button>
     <button class="railBtn" data-tab="finance" title="Finanční přehled">💡</button>
     <button class="railBtn" data-tab="guide" title="Jak to funguje">📖</button>
+    <button class="railBtn" data-tab="admin" title="Admin" id="adminRailBtn" style="display:none;">🔧</button>
   </div>
 
   <div id="bottomSheet">
@@ -356,6 +357,9 @@
       </div>
       <div class="panelContent" id="tab-statdetail">
         <div id="statDetailContent" class="empty-state">Načítám...</div>
+      </div>
+      <div class="panelContent" id="tab-admin">
+        <div id="adminContent" class="empty-state">Načítám admin panel...</div>
       </div>
     </div>
   </div>
@@ -3054,7 +3058,7 @@ function loadWorld(){
   }
   const jobs = {};
   JOB_DEFS.forEach(j => jobs[j.id] = {...j, holders:[]});
-  world = {day:1, dayProgress:0, startCalDay: calendarDay(), lastProcessedDay:1, lastTick: Date.now(), users:{}, parcels: generateHouses(), businesses: generateBusinesses(), jobs, listings:{}, marketCycle:{mult:1}, inflation:1, news:[]};
+  world = {day:1, dayProgress:0, startCalDay: calendarDay(), lastProcessedDay:1, lastTick: Date.now(), users:{}, parcels: generateHouses(), businesses: generateBusinesses(), jobs, listings:{}, marketCycle:{mult:1}, inflation:1, news:[], chat:[]};
   saveWorld();
 }
 
@@ -3802,11 +3806,11 @@ function refreshAll(){
 function updateHeaderStats(){
   const clock = gameClock();
   document.getElementById('dayVal').textContent = clock.day;
-  const msLeft = Math.max(0, Math.round((1 - clock.dayProgress) * GAME_DAY_MS));
-  const totalSec = Math.floor(msLeft/1000);
-  const hh = Math.floor(totalSec/3600);
-  const mm = Math.floor((totalSec%3600)/60);
-  const ss = totalSec%60;
+  // Ukazujeme SKUTEČNÝ aktuální čas (shoduje se s hodinami na telefonu). Nový den je o půlnoci.
+  const now = new Date();
+  const hh = now.getHours();
+  const mm = now.getMinutes();
+  const ss = now.getSeconds();
   document.getElementById('dayTimeLeft').textContent = `${hh}:${mm.toString().padStart(2,'0')}:${ss.toString().padStart(2,'0')}`;
   const cycle = marketCycleLabel();
   document.getElementById('marketCycleVal').textContent = cycle.label;
@@ -4726,6 +4730,192 @@ async function changePin(){
   showAlert('PIN nastaven. Bez něj se k tvé přezdívce nikdo nepřihlásí.');
 }
 
+// ===== ADMIN PANEL =====
+// POZOR: admin běží na klientovi, heslo je v kódu — pro komunitní hru stačí (běžný hráč do zdrojáku nekouká),
+// ale není to skutečné zabezpečení. Změň si ADMIN_PASS na vlastní tajné heslo.
+const ADMIN_PASS = 'bucpoly2026';
+let isAdmin = false;
+function loadAdminFlag(){
+  try { isAdmin = localStorage.getItem('bucovice_admin') === '1'; } catch(e){}
+  const btn = document.getElementById('adminRailBtn');
+  if(btn) btn.style.display = isAdmin ? 'flex' : 'none';
+}
+// Odemčení: zadá se heslo. Volá se ze skrytého místa (klepnutí na verzi v profilu).
+async function unlockAdmin(){
+  if(isAdmin){ openSheet('admin'); return; }
+  const pass = await showPrompt('Admin heslo:', '');
+  if(pass === null) return;
+  if(pass === ADMIN_PASS){
+    isAdmin = true;
+    try { localStorage.setItem('bucovice_admin', '1'); } catch(e){}
+    loadAdminFlag();
+    openSheet('admin');
+    showAlert('Admin režim odemčen.');
+  } else {
+    showAlert('Špatné heslo.');
+  }
+}
+function lockAdmin(){
+  isAdmin = false;
+  try { localStorage.removeItem('bucovice_admin'); } catch(e){}
+  loadAdminFlag();
+  closeSheet();
+}
+
+function renderAdmin(){
+  const el = document.getElementById('adminContent');
+  if(!isAdmin){ el.innerHTML = '<div class="empty-state">Nemáš admin oprávnění.</div>'; return; }
+  const players = Object.values(world.users);
+  players.sort((a,b) => netWorthEstimate(b.name) - netWorthEstimate(a.name));
+
+  let html = `<div class="card">
+    <h3>🐞 Mobilní konzole (ladění)</h3>
+    <p style="font-size:0.85em;color:var(--muted)">Zobrazí vývojářskou konzoli přímo na displeji — chyby, requesty, síť. Užitečné, když nemáš PC po ruce.</p>
+    <div class="row"><button class="secondary" onclick="adminToggleConsole()">${window.eruda ? 'Skrýt/zobrazit konzoli' : '🐞 Zapnout mobilní konzoli'}</button></div>
+  </div>`;
+
+  html += `<div class="card">
+    <h3>📢 Poslat oznámení</h3>
+    <p style="font-size:0.85em;color:var(--muted)">Objeví se v novinách i v chatu jako zpráva od vedení města.</p>
+    <div class="row" style="gap:6px;">
+      <input id="adminBroadcastInput" type="text" maxlength="200" placeholder="Text oznámení..." style="flex:1;">
+      <button onclick="adminBroadcast()">Odeslat</button>
+    </div>
+  </div>`;
+
+  html += `<div class="card">
+    <h3>⚙️ Ekonomika</h3>
+    <div class="row"><button class="secondary" onclick="adminResetMarket()">Resetovat trh (na stabilní)</button></div>
+    <div class="row"><button class="secondary" onclick="adminResetInflation()">Resetovat inflaci (na 1,0)</button></div>
+    <p style="font-size:0.85em;color:var(--muted)">Trh teď: ${marketCycleLabel().label} (×${marketMultiplier().toFixed(2)}) · inflace ×${inflationMult().toFixed(3)}</p>
+  </div>`;
+
+  html += `<div class="card">
+    <h3>👥 Hráči (${players.length})</h3>`;
+  if(!players.length) html += '<p style="color:var(--muted)">Zatím žádní hráči.</p>';
+  players.forEach(u => {
+    const worth = Math.round(netWorthEstimate(u.name));
+    const houses = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0).length;
+    const bizs = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0).length;
+    const nm = escapeHtml(u.name).replace(/'/g, "\\'");
+    html += `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
+      <p style="margin:0;font-weight:600;">${escapeHtml(u.avatar||'🧑')} ${escapeHtml(u.name)}${u.pinHash?' 🔒':''}</p>
+      <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">Hotovost ${Math.round(u.balance).toLocaleString('cs-CZ')} · spoření ${Math.round(u.savings||0).toLocaleString('cs-CZ')} · jmění ${worth.toLocaleString('cs-CZ')} Kč · 🏠${houses} 📈${bizs}</p>
+      <div class="row" style="gap:4px;flex-wrap:wrap;">
+        <button class="secondary" style="font-size:0.85em;" onclick="adminSetMoney('${nm}')">💰 Peníze</button>
+        <button class="secondary" style="font-size:0.85em;" onclick="adminClearProps('${nm}')">🏚️ Zabavit majetek</button>
+        <button class="danger" style="font-size:0.85em;" onclick="adminDeletePlayer('${nm}')">🗑️ Smazat</button>
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  html += `<div class="card">
+    <h3 style="color:var(--danger)">☢️ Nebezpečná zóna</h3>
+    <div class="row"><button class="danger" onclick="adminResetWorld()">Smazat a resetovat CELÝ svět</button></div>
+    <p style="font-size:0.85em;color:var(--muted)">Smaže všechny hráče, domy, podniky — start od nuly. Nevratné!</p>
+    <div class="row" style="margin-top:8px;"><button class="secondary" onclick="lockAdmin()">Zamknout admin režim</button></div>
+  </div>`;
+
+  el.innerHTML = html;
+}
+
+let _erudaVisible = false;
+function adminToggleConsole(){
+  if(window.eruda){
+    // už načtená → jen přepnout viditelnost (sledujeme si to sami, ať to nezávisí na interních detailech knihovny)
+    if(_erudaVisible){ eruda.hide(); _erudaVisible = false; }
+    else { eruda.show(); _erudaVisible = true; }
+    return;
+  }
+  const script = document.createElement('script');
+  script.src = 'https://cdn.jsdelivr.net/npm/eruda';
+  script.onload = () => {
+    try {
+      eruda.init();
+      eruda.show();
+      _erudaVisible = true;
+      showAlert('Mobilní konzole zapnuta — malá ikonka dole na displeji. Klepnutím na ni ji otevřeš/zavřeš.');
+    } catch(e){ showAlert('Konzole se nepodařilo spustit: ' + e.message); }
+  };
+  script.onerror = () => showAlert('Nepodařilo se stáhnout konzoli — zkontroluj internetové připojení.');
+  document.body.appendChild(script);
+}
+
+function adminBroadcast(){
+  const inp = document.getElementById('adminBroadcastInput');
+  let text = (inp.value || '').trim();
+  if(!text) return;
+  text = text.slice(0, 200);
+  addNews('event', `📢 Vedení města: ${text}`);
+  if(!world.chat) world.chat = [];
+  world.chat.push({ name: '📢 Vedení města', avatar: '🏛️', text, ts: Date.now() });
+  if(world.chat.length > CHAT_MAX) world.chat = world.chat.slice(-CHAT_MAX);
+  inp.value = '';
+  saveWorld(); renderAdmin();
+  showAlert('Oznámení odesláno.');
+}
+async function adminSetMoney(name){
+  const u = world.users[name];
+  if(!u) return;
+  const val = await showPrompt(`Nastav hotovost pro „${name}" (teď ${Math.round(u.balance)} Kč):`, String(Math.round(u.balance)));
+  if(val === null) return;
+  const n = parseInt(val, 10);
+  if(isNaN(n)){ showAlert('Zadej číslo.'); return; }
+  u.balance = n;
+  saveWorld(); renderAdmin();
+  showAlert(`Hotovost hráče ${name} nastavena na ${n} Kč.`);
+}
+async function adminClearProps(name){
+  if(!(await showConfirm(`Zabavit VŠECHEN majetek hráče „${name}"? (domy, podíly, nájmy) Peníze zůstanou.`))) return;
+  Object.values(world.parcels).forEach(p => {
+    if(p.owners && p.owners[name] !== undefined) delete p.owners[name];
+    if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+    (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
+  });
+  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined) delete b.owners[name]; });
+  Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) delete world.listings[id]; });
+  addNews('event', `🏚️ Vedení města zabavilo majetek hráče ${name}.`);
+  saveWorld(); renderAdmin();
+  showAlert(`Majetek hráče ${name} zabaven.`);
+}
+async function adminDeletePlayer(name){
+  if(!(await showConfirm(`SMAZAT hráče „${name}" úplně? Zmizí i všechen jeho majetek. Nevratné!`))) return;
+  // uvolnit majetek
+  Object.values(world.parcels).forEach(p => {
+    if(p.owners && p.owners[name] !== undefined) delete p.owners[name];
+    if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+    (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
+  });
+  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined) delete b.owners[name]; });
+  Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) delete world.listings[id]; });
+  Object.values(world.jobs || {}).forEach(j => { if(j.holders) j.holders = j.holders.filter(h => h !== name); });
+  delete world.users[name];
+  addNews('event', `🗑️ Hráč ${name} byl odstraněn z města.`);
+  saveWorld(); renderAdmin();
+  showAlert(`Hráč ${name} smazán.`);
+}
+function adminResetMarket(){
+  world.marketCycle = { mult: 1, vel: 0 };
+  saveWorld(); renderAdmin();
+  showAlert('Trh resetován na stabilní.');
+}
+function adminResetInflation(){
+  world.inflation = 1;
+  saveWorld(); renderAdmin();
+  showAlert('Inflace resetována na 1,0.');
+}
+async function adminResetWorld(){
+  if(!(await showConfirm('Opravdu SMAZAT CELÝ SVĚT? Všichni hráči, domy, podniky — vše se resetuje. NEVRATNÉ!'))) return;
+  if(!(await showConfirm('Fakt úplně jistě? Tohle nejde vzít zpět.'))) return;
+  try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+  world = null;
+  loadWorld();
+  saveWorld();
+  showAlert('Svět byl resetován. Appka se teď načte znovu.');
+  setTimeout(() => location.reload(), 1500);
+}
+
 // Přepíše jméno hráče VŠUDE, kde se používá jako klíč nebo hodnota (majetek, podíly, nájmy, práce, chat...).
 // Jméno je ve hře primární klíč, takže přejmenování musí projít všechna místa, jinak by hráč přišel o majetek.
 function renameUserEverywhere(oldName, newName){
@@ -4814,8 +5004,8 @@ function renderStatDetail(which){
     const hrsLeft = (msLeft/3600000).toFixed(1);
     html += `<div class="card"><h3>📅 Herní den</h3>
       <p>Právě je <b>den ${clock.day}</b>.</p>
-      <p>Do dalšího dne zbývá <b>${hrsLeft} hodin</b>.</p>
-      <p style="font-size:0.9em;color:var(--muted)">1 herní den = 24 skutečných hodin. Každý nový den se strhnou náklady na bydlení, připíšou úroky, vyřeší aukce a může se stát nečekaná událost. Hra běží pořád — i když ji zavřeš, čas plyne dál.</p>
+      <p>Nový den začíná <b>o půlnoci</b> — do té zbývá <b>${hrsLeft} hodin</b>.</p>
+      <p style="font-size:0.9em;color:var(--muted)">Herní den = skutečný kalendářní den. Čas nahoře v liště ukazuje aktuální hodiny (stejné jako na telefonu). O půlnoci se strhnou náklady na bydlení, připíšou úroky, vyřeší aukce a může se stát nečekaná událost. Hra běží pořád — i když ji zavřeš, čas plyne dál.</p>
     </div>`;
     html += `<div class="card"><h3>📊 Tržní cyklus</h3>
       <p>Teď: <b style="color:${marketCycleLabel().color}">${marketCycleLabel().label}</b> (ceny ×${marketMultiplier().toFixed(2)})</p>
@@ -4900,7 +5090,7 @@ function renderChat(){
   }
   el.innerHTML = msgs.map(m => {
     const mine = currentUser && m.name === currentUser.name;
-    return `<div style="margin-bottom:8px;padding:6px 10px;border-radius:8px;background:${mine?'rgba(74,222,128,0.12)':'var(--card)'};">
+    return `<div style="margin-bottom:8px;padding:6px 10px;border-radius:8px;background:${mine?'rgba(74,222,128,0.12)':'var(--panel2)'};">
       <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" onclick="viewProfile('${escapeHtml(m.name).replace(/'/g,'')}')">${escapeHtml(m.avatar||'🧑')} ${escapeHtml(m.name)}</span>
       <span style="font-size:0.72em;color:var(--muted)"> ${timeAgo(m.ts)}</span>
       <div style="font-size:0.95em;margin-top:2px;">${escapeHtml(m.text)}</div>
@@ -5271,10 +5461,20 @@ function renderProfile(){
       <h3>👤 Účet</h3>
       <p style="font-size:0.9em;color:var(--muted)">Na tomhle zařízení se přihlašuješ automaticky jako <b>${escapeHtml(u.name)}</b>. Můžeš se odhlásit a hrát pod jinou přezdívkou.</p>
       <div class="row"><button class="secondary" onclick="logout()">Odhlásit se / změnit hráče</button></div>
+      <p style="font-size:0.75em;color:var(--muted);text-align:center;margin-top:14px;cursor:default;" onclick="adminTapCount()">Bučpoly · verze 1.0</p>
     </div>`;
   }
 
   el.innerHTML = html;
+}
+
+// Skrytý vstup do admin režimu: 5× klepnutí na „verzi" v profilu → dotaz na heslo.
+let _adminTaps = 0, _adminTapTimer = null;
+function adminTapCount(){
+  _adminTaps++;
+  clearTimeout(_adminTapTimer);
+  _adminTapTimer = setTimeout(() => { _adminTaps = 0; }, 1500);
+  if(_adminTaps >= 5){ _adminTaps = 0; unlockAdmin(); }
 }
 
 // Odhlásí hráče a zapomene uloženou přezdívku (vypne auto-login)
@@ -5766,7 +5966,7 @@ function tryAutoLogin(){
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
 const SHEET_TITLES = {
   selected:'Vybraný dům', mine:'Moje nemovitosti',
-  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail'
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel'
 };
 
 function openSheet(tabName){
@@ -5787,6 +5987,7 @@ function openSheet(tabName){
   if(tabName === 'chat') renderChat();
   if(tabName === 'finance') renderFinance();
   if(tabName === 'guide') renderGuide();
+  if(tabName === 'admin') renderAdmin();
 }
 
 function closeSheet(){
@@ -5870,6 +6071,7 @@ window.onload = () => {
   setInterval(updateHeaderStats, 1000);
   registerServiceWorker();
   setupInstallPrompt();
+  loadAdminFlag();
   initFirebaseSync();   // pak se na pozadí připojí ke sdílenému světu (multiplayer)
   tryAutoLogin();
 };
