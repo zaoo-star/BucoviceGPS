@@ -569,6 +569,8 @@ const GPS_MAX_ACCURACY = 25;          // m — když je poloha méně přesná n
 const GPS_MIN_STEP = 4;               // m — jednotlivý posun menší než tohle se ještě nezapočítá hned
                                       // (drží referenci, čeká na nasčítání) — brání "cukání" na místě.
 const MAX_WALK_SPEED_MS = 2.2;        // m/s (~8 km/h) — nejvyšší rychlost, co bereme jako chůzi/běh.
+const PLAY_AREA_RADIUS = 250;         // m — chůze se počítá jen když jsi do 250 m od nějakého domu.
+                                      // Mimo herní oblast (za městem, kde nejsou domy) se peníze nepřipisují.
                                       // Po znovuzapnutí appky: pokud posun / uplynulý čas ≤ tohle, byla to reálná chůze
                                       // a započítá se. Rychlejší = jel jsi dopravou → nepočítá se (anti-cheat).
 
@@ -3747,6 +3749,7 @@ function updateReachHighlight(force){
 
 function creditWalking(dist){
   if(!currentUser) return;
+  if(!isInPlayArea()) return; // mimo herní oblast (za městem) se chůze nepočítá
   const u = world.users[currentUser.name];
   if(u.walkEarnedToday === undefined) u.walkEarnedToday = 0;
   const reward = dist * WALK_REWARD_PER_METER * inflationMult();
@@ -3756,6 +3759,23 @@ function creditWalking(dist){
   u.totalDistance = (u.totalDistance || 0) + dist;
   saveWorld();
   updateHeaderStats();
+}
+
+// Je hráč v herní oblasti? = do PLAY_AREA_RADIUS metrů od nějakého domu.
+// Za městem, kde žádné domy nejsou, vrátí false → chůze se nepočítá.
+function isInPlayArea(){
+  if(!playerPos) return false;
+  const R = PLAY_AREA_RADIUS;
+  // rychlá předfiltrace přes hrubý obdélník (± ~R v stupních), pak přesná vzdálenost
+  const dLat = R / 111000;
+  const dLng = R / (111000 * Math.cos(playerPos.lat * Math.PI / 180));
+  for(const id in world.parcels){
+    const p = world.parcels[id];
+    if(Math.abs(p.lat - playerPos.lat) > dLat) continue;
+    if(Math.abs(p.lng - playerPos.lng) > dLng) continue;
+    if(haversine(playerPos, {lat:p.lat, lng:p.lng}) <= R) return true;
+  }
+  return false;
 }
 
 function distanceToPlayer(lat, lng){
