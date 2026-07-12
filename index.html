@@ -3073,6 +3073,14 @@ function loadWorld(){
 // Volá se jak po načtení z localStorage, tak po každém stažení sdíleného světa z Firebase —
 // aby appka fungovala i se starším uloženým stavem nebo stavem z jiného zařízení.
 function migrateWorld(){
+      // TVRDÁ NORMALIZACE: cokoliv z Firebase (chybějící pole, objekty místo polí, null) opravíme,
+      // aby se dál nepracovalo s rozbitou strukturou (to je příčina visících "Načítám" obrazovek).
+      if(!world || typeof world !== 'object') world = {};
+      if(!world.users || typeof world.users !== 'object' || Array.isArray(world.users)) world.users = {};
+      if(!world.parcels || typeof world.parcels !== 'object' || Array.isArray(world.parcels)) world.parcels = {};
+      if(!world.businesses || typeof world.businesses !== 'object' || Array.isArray(world.businesses)) world.businesses = {};
+      if(!world.jobs || typeof world.jobs !== 'object' || Array.isArray(world.jobs)) world.jobs = {};
+      if(!world.listings || typeof world.listings !== 'object' || Array.isArray(world.listings)) world.listings = {};
       const fresh = generateHouses();
       Object.keys(fresh).forEach(id => {
         if(!world.parcels[id]){
@@ -3269,6 +3277,13 @@ function adoptWorld(incoming){
       const p = world.parcels[id];
       if(p && p.units && p.units[idx] && !p.units[idx].tenant) p.units[idx].tenant = myName;
     });
+  }
+  // POJISTKA: přihlášený hráč nesmí po sloučení chybět (jinak "Profil nenalezen" a nic nejede).
+  // Když v přijatém světě není a máme jeho zálohu, vrátíme ji; když ani to ne, vytvoříme základní účet.
+  if(myName && !world.users[myName]){
+    world.users[myName] = myUser || { name: myName, balance: START_BALANCE, savings: 0, loans: [], achievements: [],
+      avatar: '🧑', totalShifts: 0, totalDistance: 0, walkEarnedToday: 0, distanceToday: 0, jobBanUntil: 0,
+      lastWorkedCalDay: -1, joinedGameDay: (world.day||1), joinedRealDate: Date.now(), peakWorth: START_BALANCE };
   }
   if(currentUser) refreshAll();
 }
@@ -3867,21 +3882,21 @@ function initMap(){
 }
 
 function refreshAll(){
-  updateReachHighlight();
-  if(selectedParcelId) renderSelected(selectedParcelId);
-  renderMine();
-  updateHeaderStats();
-  const jobsTab = document.getElementById('tab-jobs');
-  if(jobsTab && jobsTab.classList.contains('active')) renderJobs();
-  const marketTab = document.getElementById('tab-market');
-  if(marketTab && marketTab.classList.contains('active')) renderMarket();
-  const financeTab = document.getElementById('tab-finance');
-  if(financeTab && financeTab.classList.contains('active')) renderFinance();
-  const newsTab = document.getElementById('tab-news');
-  if(newsTab && newsTab.classList.contains('active')) renderNews();
-  const chatTab = document.getElementById('tab-chat');
-  if(chatTab && chatTab.classList.contains('active')) renderChat();
-  checkAchievements();
+  // Každý blok zvlášť v try-catch: když jeden render selže (např. na poškozených datech z Firebase),
+  // nezastaví to ostatní — appka nezůstane viset na "Načítám".
+  const safe = (fn) => { try { fn(); } catch(e){ console.warn('render chyba:', e && e.message); } };
+  safe(() => updateReachHighlight());
+  safe(() => { if(selectedParcelId) renderSelected(selectedParcelId); });
+  safe(() => renderMine());
+  safe(() => updateHeaderStats());
+  safe(() => { const t=document.getElementById('tab-jobs'); if(t && t.classList.contains('active')) renderJobs(); });
+  safe(() => { const t=document.getElementById('tab-market'); if(t && t.classList.contains('active')) renderMarket(); });
+  safe(() => { const t=document.getElementById('tab-finance'); if(t && t.classList.contains('active')) renderFinance(); });
+  safe(() => { const t=document.getElementById('tab-news'); if(t && t.classList.contains('active')) renderNews(); });
+  safe(() => { const t=document.getElementById('tab-chat'); if(t && t.classList.contains('active')) renderChat(); });
+  safe(() => { const t=document.getElementById('tab-leaderboard'); if(t && t.classList.contains('active')) renderLeaderboard(); });
+  safe(() => { const t=document.getElementById('tab-profile'); if(t && t.classList.contains('active') && currentUser) viewProfile(currentUser.name); });
+  safe(() => checkAchievements());
 }
 
 function updateHeaderStats(){
@@ -3898,6 +3913,7 @@ function updateHeaderStats(){
   document.getElementById('marketCyclePill').style.color = cycle.color;
   if(currentUser){
     const u = world.users[currentUser.name];
+    if(!u) return; // hráč ještě není načtený (pojistka proti pádu)
     document.getElementById('balanceVal').textContent = Math.round(u.balance);
     document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
     const status = housingStatus(currentUser.name);
