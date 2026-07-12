@@ -3113,6 +3113,12 @@ function migrateWorld(){
         if(u.achievements === undefined) u.achievements = [];
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
+        // Normalizace půjček: vadný/ořezaný záznam (chybějící balance) by rozbil výpočet jmění (NaN).
+        u.loans = u.loans.filter(l => l && typeof l === 'object');
+        u.loans.forEach(l => {
+          if(typeof l.balance !== 'number' || isNaN(l.balance)) l.balance = (typeof l.principal === 'number' ? l.principal : 0);
+          if(typeof l.dailyRate !== 'number') l.dailyRate = LOAN_ANNUAL_RATE / DAYS_PER_YEAR;
+        });
       });
       Object.values(world.parcels).forEach(p => {
         if(p.useType === 'shop') p.useType = 'residence';
@@ -3170,22 +3176,20 @@ function initFirebaseSync(){
     if(!user) return;
     fbUser = user;
 
-    // Počáteční sesynchronizování: stáhneme cloud a porovnáme VERZE (world.rev).
-    // Přijmeme cloud jen když je novější/stejný než náš lokální stav — nikdy nepřepíšeme
-    // svůj rozehraný postup starším cloudem. Teprve pak povolíme zápisy do cloudu.
+    // Počáteční sesynchronizování: cloud VŽDY SLOUČÍME (adoptWorld chrání náš postup a přebere
+    // hráče/noviny/chat, o kterých nevíme). Dřívější porovnání verzí tu dělalo vážnou chybu:
+    // appka po startu hned tikala a ukládala (rev = aktuální čas), takže její verze byla vždy
+    // "novější" než cloud → cloud se nepřevzal a vzápětí se PŘEPSAL lokálním stavem.
+    // Tím mizely zprávy v chatu, noviny i noví hráči zapsaní jinými zařízeními.
     fbDb.ref('world').get().then((snap) => {
       if(snap.exists()){
-        const cloud = snap.val();
-        if((cloud.rev || 0) >= (world.rev || 0)){
-          adoptWorld(cloud); // cloud je novější → převezmeme ho
-        }
-        // jinak: náš lokální stav je novější → necháme ho a níž ho nahrajeme zpět
+        adoptWorld(snap.val()); // sloučit: jejich novinky + můj postup, nic se neztratí
       }
       firebaseSyncEnabled = true;
       world.rev = Math.max((world.rev || 0) + 1, Date.now());
       lastWrittenRev = world.rev;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(world));
-      doCloudWrite(); // sesouhlasí cloud s naším aktuálním stavem hned (bez throttle prodlevy)
+      doCloudWrite(); // nahrát SLOUČENÝ stav (ne přepsat cloud tím naším starým)
 
       // Živé naslouchání: každou cizí změnu SLOUČÍME (adoptWorld chrání náš postup a přebere
       // nové hráče / noviny / chat). Neodmítáme "starší" verze úplně — jinak by se nový hráč,
@@ -3237,9 +3241,15 @@ function adoptWorld(incoming){
   world.news = mergeLogs(myNews, world.news || [], NEWS_MAX);
   world.chat = mergeLogs(myChat, world.chat || [], CHAT_MAX, true);
 
-  // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal)
+  // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal).
+  // U samotného účtu porovnáme AKTIVITU: když jsem naposledy hrál na jiném zařízení (cloud má
+  // novější verzi mého hráče), vezme se ta — jinak by staré zařízení vrátilo starší peníze/postup.
   if(myName && myUser){
-    world.users[myName] = myUser; // můj účet a peníze jsou moje pravda
+    const cloudMe = world.users[myName];
+    const localNewer = (myUser.lastActive || 0) >= ((cloudMe && cloudMe.lastActive) || 0);
+    if(!cloudMe || localNewer){
+      world.users[myName] = myUser; // moje lokální verze je novější (nebo cloud mě nezná)
+    } // jinak: nechat verzi z cloudu (hrál jsem naposledy jinde)
     Object.entries(myHouseShares).forEach(([id, pct]) => {
       const p = world.parcels[id];
       if(p){ if(!p.owners) p.owners = {}; if(!p.owners[myName]) p.owners[myName] = pct; }
@@ -3288,6 +3298,10 @@ function mergeLogs(a, b, limit, isChat){
 }
 
 function saveWorld(){
+  // Značka poslední aktivity hráče — při sloučení světů z více zařízení vyhraje NOVĚJŠÍ verze hráče.
+  if(currentUser && world.users && world.users[currentUser.name]){
+    world.users[currentUser.name].lastActive = Date.now();
+  }
   // Verze světa: rostoucí číslo, aby šlo poznat, který stav je novější (proti přepsání postupu).
   world.rev = Math.max((world.rev || 0) + 1, Date.now());
   lastWrittenRev = world.rev;
@@ -4442,7 +4456,7 @@ function netWorthEstimate(name){
     const pct = biz.owners[name] || 0;
     worth += pricePerPercent(biz) * pct * 0.7;
   });
-  const debt = (world.users[name].loans || []).reduce((s,l)=>s+l.balance, 0);
+  const debt = (world.users[name].loans || []).reduce((s,l)=>s+(l && typeof l.balance==='number' ? l.balance : 0), 0);
   return Math.max(0, worth - debt);
 }
 
