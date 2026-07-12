@@ -3098,6 +3098,7 @@ function migrateWorld(){
           const wj = world.jobs[j.id];
           wj.name=j.name; wj.salary=j.salary; wj.desc=j.desc; wj.tier=j.tier; wj.reqShifts=j.reqShifts; wj.slots=j.slots;
           if(!wj.holders){ wj.holders = wj.holder ? [wj.holder] : []; delete wj.holder; } // migrace jednoho holdera na pole
+          wj.holders = asArray(wj.holders);
         }
       });
       if(!world.users) world.users = {};
@@ -3111,8 +3112,10 @@ function migrateWorld(){
         if(u.currentJobShifts === undefined) u.currentJobShifts = 0;
         if(u.savings === undefined) u.savings = 0;
         if(u.achievements === undefined) u.achievements = [];
+        u.achievements = asArray(u.achievements);
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
+        u.loans = asArray(u.loans);
         // Normalizace půjček: vadný/ořezaný záznam (chybějící balance) by rozbil výpočet jmění (NaN).
         u.loans = u.loans.filter(l => l && typeof l === 'object');
         u.loans.forEach(l => {
@@ -3131,11 +3134,15 @@ function migrateWorld(){
           delete p.ownerName;
         }
         delete p.condition; delete p.rentPrice; // přesunuto do units
+        if(p.units) p.units = asArray(p.units);
+        if(p.salesHistory) p.salesHistory = asArray(p.salesHistory);
       });
       if(!world.businesses) world.businesses = generateBusinesses();
       if(!world.listings) world.listings = {};
       if(!world.news) world.news = [];
+      world.news = asArray(world.news);
       if(!world.chat) world.chat = [];
+      world.chat = asArray(world.chat);
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
@@ -3283,12 +3290,21 @@ function worldForCloud(){
 }
 
 let lastFbWrite = 0, fbWriteTimer = null;
+// Firebase někdy vrací seznamy jako OBJEKTY ({0:..., 1:...}) místo polí — tohle je převede zpět.
+// Bez toho spadne slučování (spread), push do chatu, map při vykreslení atd.
+function asArray(x){
+  if(Array.isArray(x)) return x;
+  if(x && typeof x === 'object') return Object.values(x);
+  return [];
+}
+
 // Sloučí dva seznamy záznamů (noviny/chat z různých zařízení) do jednoho, bez ztráty a bez duplicit.
 // Klíč jedinečnosti: čas + text (+ jméno u chatu, kdyby dva lidé napsali stejnou větu ve stejnou ms).
 // Výsledek je seřazený od nejnovějšího a oříznutý na limit.
 function mergeLogs(a, b, limit, isChat){
   const map = new Map();
-  [...a, ...b].forEach(item => {
+  [...asArray(a), ...asArray(b)].forEach(item => {
+    if(!item || typeof item !== 'object') return;
     const key = (isChat ? (item.name||'')+'|' : '') + (item.ts||0) + '|' + (item.text||'');
     map.set(key, item);
   });
