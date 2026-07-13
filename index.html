@@ -3633,6 +3633,7 @@ function onNewDay(catchUp){
   }
   Object.values(world.users).forEach(u => {
     u.walkEarnedToday = 0;
+    u.distanceToday = 0; // nový den → dnešní metry se nulují (celkové zůstávají v totalDistance)
     const w = netWorthEstimate(u.name);
     if(w > (u.peakWorth || 0)) u.peakWorth = w;
   });
