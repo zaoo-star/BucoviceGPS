@@ -3908,10 +3908,25 @@ function updateReachHighlight(force){
   });
 }
 
+// Zajistí, že "dnešní" metry a výdělek z chůze patří ke DNEŠNÍMU kalendářnímu dni.
+// Nezávisí na tom, jestli přechod dne stihlo zpracovat zrovna tohle zařízení (u sdíleného světa
+// ho může zpracovat jiné) — každý hráč si nese den, ke kterému jeho dnešní čísla patří.
+function ensureWalkDay(u){
+  if(!u) return u;
+  const today = calendarDay();
+  if(u.walkCalDay !== today){
+    u.walkCalDay = today;
+    u.distanceToday = 0;
+    u.walkEarnedToday = 0;
+  }
+  return u;
+}
+
 function creditWalking(dist){
   if(!currentUser) return;
   if(!isInPlayArea()) return; // mimo herní oblast (za městem) se chůze nepočítá
-  const u = world.users[currentUser.name];
+  const u = ensureWalkDay(world.users[currentUser.name]);
+  if(!u) return;
   if(u.walkEarnedToday === undefined) u.walkEarnedToday = 0;
   const reward = dist * WALK_REWARD_PER_METER * inflationMult();
   u.balance += reward;
@@ -4028,7 +4043,7 @@ function updateHeaderStats(){
   document.getElementById('marketCycleVal').textContent = cycle.label;
   document.getElementById('marketCyclePill').style.color = cycle.color;
   if(currentUser){
-    const u = world.users[currentUser.name];
+    const u = ensureWalkDay(world.users[currentUser.name]);
     if(!u) return; // hráč ještě není načtený (pojistka proti pádu)
     document.getElementById('balanceVal').textContent = Math.round(u.balance);
     document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
@@ -5249,6 +5264,7 @@ function renderStatDetail(which){
   }
 
   else if(which === 'walk'){
+    ensureWalkDay(u); // dnešní čísla musí patřit dnešnímu dni (reset o půlnoci)
     const earnedToday = Math.round(u.walkEarnedToday || 0);
     const distToday = Math.round(u.distanceToday || 0);
     const totalKm = ((u.totalDistance||0)/1000).toFixed(2).replace('.',',');
