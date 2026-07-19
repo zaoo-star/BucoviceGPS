@@ -124,6 +124,13 @@
     justify-content:center;font-size:16px;background:rgba(192,132,252,0.9);
     border:2px solid #fff8;box-shadow:0 0 8px 2px rgba(192,132,252,0.5);cursor:pointer;
   }
+  .pickupMarker{
+    width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;font-size:18px;background:rgba(250,204,21,0.95);
+    border:2px solid #fff;box-shadow:0 0 10px 3px rgba(250,204,21,0.6);
+    animation:pickupPulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pickupPulse{ 0%,100%{transform:scale(1);} 50%{transform:scale(1.18);} }
   .p-empty{background:#4b5563;}
   .p-residence{background:#4ade80;}
   .p-rental{background:#38bdf8;}
@@ -676,6 +683,67 @@ const GPS_MIN_STEP = 4;               // m — jednotlivý posun menší než to
 const MAX_WALK_SPEED_MS = 2.2;        // m/s (~8 km/h) — nejvyšší rychlost, co bereme jako chůzi/běh.
 const PLAY_AREA_RADIUS = 250;         // m — chůze se počítá jen když jsi do 250 m od nějakého domu.
                                       // Mimo herní oblast (za městem, kde nejsou domy) se peníze nepřipisují.
+
+// ===== SBĚRATELSKÉ BODY NA MAPĚ (balíky peněz) =====
+// Po městě se rozmístí body. Když k nim dojdeš (fyzicky), automaticky je sebereš a dostaneš peníze.
+// Každý hráč může každý bod sebrat 1× za den; o půlnoci se body obnoví na nových místech.
+const PICKUP_COUNT = 10;              // kolik bodů je na mapě
+const PICKUP_COLLECT_RADIUS = 30;    // m — jak blízko musíš být, aby se bod sebral
+const PICKUP_MIN = 40, PICKUP_MAX = 130;   // rozsah běžné odměny (Kč)
+const PICKUP_BONUS_MIN = 220, PICKUP_BONUS_MAX = 380; // bonusový balík
+const PICKUP_BONUS_CHANCE = 0.2;     // pravděpodobnost, že bod je bonusový
+
+// Vygeneruje/obnoví body na dnešní den (sdílí se přes Firebase, aby je viděli všichni stejně).
+function ensurePickups(){
+  const today = calendarDay();
+  if(world.pickups && world.pickups.day === today && Array.isArray(world.pickups.list) && world.pickups.list.length) return;
+  const houses = Object.values(world.parcels);
+  if(!houses.length){ world.pickups = { day: today, list: [] }; return; }
+  // deterministický generátor podle dne, aby všechna zařízení vygenerovala STEJNÉ body
+  let seed = today;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const list = [];
+  for(let i=0;i<PICKUP_COUNT;i++){
+    const h = houses[Math.floor(rnd() * houses.length)];
+    const bonus = rnd() < PICKUP_BONUS_CHANCE;
+    const reward = bonus
+      ? Math.round(PICKUP_BONUS_MIN + rnd()*(PICKUP_BONUS_MAX-PICKUP_BONUS_MIN))
+      : Math.round(PICKUP_MIN + rnd()*(PICKUP_MAX-PICKUP_MIN));
+    list.push({ id: 'pk_'+today+'_'+i, lat: h.lat, lng: h.lng, reward, bonus });
+  }
+  world.pickups = { day: today, list };
+}
+
+// Které body už dnes hráč sebral (reset o půlnoci).
+function myCollectedToday(){
+  const u = currentUser && world.users[currentUser.name];
+  if(!u) return [];
+  const today = calendarDay();
+  if(u.pickupDay !== today){ u.pickupDay = today; u.pickupGot = []; }
+  if(!Array.isArray(u.pickupGot)) u.pickupGot = [];
+  return u.pickupGot;
+}
+
+// Zkontroluje, jestli hráč nestojí u nějakého nesebraného bodu — pokud ano, sebere ho.
+function checkPickups(){
+  if(!currentUser || !playerPos) return;
+  ensurePickups();
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  const got = myCollectedToday();
+  let collectedAny = false;
+  (world.pickups.list || []).forEach(pk => {
+    if(got.includes(pk.id)) return;
+    if(haversine(playerPos, {lat:pk.lat, lng:pk.lng}) <= PICKUP_COLLECT_RADIUS){
+      u.balance += pk.reward * inflationMult();
+      got.push(pk.id);
+      collectedAny = true;
+      playSound('coin');
+      showAlert(`${pk.bonus?'🎁 Bonusový balík!':'💰 Balík peněz!'} Sebral jsi ${Math.round(pk.reward*inflationMult())} Kč.`);
+    }
+  });
+  if(collectedAny){ saveWorld(); updateHeaderStats(); renderPickupMarkers(); }
+}
                                       // Po znovuzapnutí appky: pokud posun / uplynulý čas ≤ tohle, byla to reálná chůze
                                       // a započítá se. Rychlejší = jel jsi dopravou → nepočítá se (anti-cheat).
 
@@ -3258,6 +3326,8 @@ function migrateWorld(){
       world.chat = asArray(world.chat);
       if(!world.npcTenants || typeof world.npcTenants !== 'object') world.npcTenants = { list:[], refreshedTs:0 };
       world.npcTenants.list = asArray(world.npcTenants.list);
+      if(!world.pickups || typeof world.pickups !== 'object') world.pickups = { day:0, list:[] };
+      world.pickups.list = asArray(world.pickups.list);
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
@@ -3823,6 +3893,7 @@ function onPosition(pos){
     map.setView([newPos.lat, newPos.lng], 18);
   }
   renderOtherPlayers();
+  renderPickupMarkers();
   if(selectedParcelId) renderSelected(selectedParcelId);
   renderJobs();
 }
@@ -3855,6 +3926,7 @@ function updatePlayerMarker(pos, accuracy){
     reachCircle.setLatLng([pos.lat, pos.lng]);
   }
   updateReachHighlight();
+  checkPickups(); // sebrat balík, pokud u něj stojíš
 }
 
 // Markery ostatních hráčů. Čte pozice z world.users[*].lastPos.
@@ -3887,6 +3959,28 @@ function renderOtherPlayers(){
   });
 }
 
+
+let pickupMarkers = {};
+function renderPickupMarkers(){
+  if(!map || !currentUser) return;
+  ensurePickups();
+  const got = myCollectedToday();
+  const seen = {};
+  (world.pickups.list || []).forEach(pk => {
+    if(got.includes(pk.id)) return; // už sebráno dnes → neukazovat
+    seen[pk.id] = true;
+    const emoji = pk.bonus ? '🎁' : '💰';
+    if(!pickupMarkers[pk.id]){
+      pickupMarkers[pk.id] = L.marker([pk.lat, pk.lng], {
+        icon: L.divIcon({ html:`<div class="pickupMarker">${emoji}</div>`, className:'', iconSize:[30,30] })
+      }).addTo(map).bindTooltip(pk.bonus ? 'Bonusový balík — dojdi pro odměnu!' : 'Balík peněz — dojdi pro odměnu!');
+    }
+  });
+  // odstranit markery bodů, které už neexistují nebo jsou sebrané
+  Object.keys(pickupMarkers).forEach(id => {
+    if(!seen[id]){ if(map.hasLayer(pickupMarkers[id])) map.removeLayer(pickupMarkers[id]); delete pickupMarkers[id]; }
+  });
+}
 
 let lastReachHighlightAt = 0;
 function updateReachHighlight(force){
@@ -4010,6 +4104,7 @@ function initMap(){
   });
 
   renderOtherPlayers();
+  renderPickupMarkers();
 }
 
 function refreshAll(){
