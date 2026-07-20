@@ -33,7 +33,7 @@
   #map{position:absolute;inset:0;z-index:1;}
 
   #topBar{
-    position:absolute;top:0;left:0;right:0;z-index:400;
+    position:absolute;top:0;left:0;right:0;z-index:350;
     padding:10px 10px 0 10px;display:flex;flex-direction:column;gap:6px;
     pointer-events:none;
   }
@@ -53,6 +53,7 @@
   #gpsWarning{
     background:#3f2d0acc;border:1px solid #7c5a10;color:#fbbf24;backdrop-filter:blur(4px);
     padding:8px 12px;font-size:11px;display:none;border-radius:10px;pointer-events:auto;
+    max-width:calc(100% - 74px); align-self:flex-start;
   }
 
   #sideRail{
@@ -3828,22 +3829,63 @@ function onNewDay(catchUp){
 
 // ===== GPS =====
 
+// Pozná vestavěný prohlížeč (Messenger, Facebook, Instagram...), kde GPS obvykle nefunguje.
+function isInAppBrowser(){
+  const ua = (navigator.userAgent || '').toLowerCase();
+  return /fban|fbav|fb_iab|messenger|instagram|line\/|micromessenger|twitter/.test(ua);
+}
+
 function startGeoTracking(){
+  const el = document.getElementById('gpsWarning');
   if(!window.isSecureContext){
-    document.getElementById('gpsWarning').innerHTML = '📍 GPS nejde povolit — appka je otevřená lokálně (soubor / content://), prohlížeč polohu na nezabezpečeném spojení blokuje. Otevři appku přes HTTPS (např. GitHub Pages).';
-    document.getElementById('gpsWarning').style.display = 'block';
+    el.innerHTML = '📍 GPS nejde povolit — appka je otevřená lokálně. Otevři ji přes HTTPS (GitHub Pages).';
+    el.style.display = 'block';
     return;
   }
   if(!navigator.geolocation){
-    document.getElementById('gpsWarning').textContent = '📍 Tento prohlížeč nepodporuje GPS. Zkus jiný prohlížeč.';
-    document.getElementById('gpsWarning').style.display = 'block';
+    el.textContent = '📍 Tento prohlížeč nepodporuje GPS. Zkus jiný prohlížeč.';
+    el.style.display = 'block';
     return;
   }
-  // getCurrentPosition vyvolá systémový dialog o povolení okamžitě; watchPosition pak sleduje pohyb
+  // Vestavěný prohlížeč (Messenger/FB) — GPS tam většinou nejde. Poradit otevřít v Chromu.
+  if(isInAppBrowser()){
+    el.innerHTML = `📍 <b>Otevři hru v běžném prohlížeči</b> (Chrome/Safari), ne v Messengeru/Facebooku — tady GPS nefunguje.<br>
+      Klepni nahoře na <b>⋮</b> (tři tečky) a zvol <b>„Otevřít v prohlížeči / v Chrome"</b>.`;
+    el.style.display = 'block';
+    // i tak to zkusíme — kdyby to náhodou šlo
+  }
+  // Před dotazem zjistíme stav oprávnění (když je zamítnuté, rovnou ukážeme návod, ať uživatel nečeká)
+  if(navigator.permissions && navigator.permissions.query){
+    navigator.permissions.query({name:'geolocation'}).then(res => {
+      if(res.state === 'denied') showLocationDeniedHelp();
+    }).catch(()=>{});
+  }
   navigator.geolocation.getCurrentPosition(onPosition, onGeoError, {enableHighAccuracy:true, timeout:15000});
   navigator.geolocation.watchPosition(onPosition, onGeoError, {
     enableHighAccuracy:true, maximumAge:5000, timeout:15000
   });
+}
+
+// Návod krok za krokem, jak znovu povolit polohu (když ji uživatel dřív zamítl).
+// Prohlížeč sám znovu dialog nevyvolá — musí se povolit ručně přes ikonu u adresního řádku.
+function showLocationDeniedHelp(){
+  const el = document.getElementById('gpsWarning');
+  if(!el) return;
+  el.innerHTML = `<div style="text-align:left;line-height:1.5;">
+    📍 <b>Poloha je zablokovaná</b> — hra bez ní neví, kde jsi. Zapneš ji takhle:<br>
+    1. Nahoře vedle webové adresy klepni na <b>🔒 zámeček</b> (nebo ikonu ⚙️/„Aa").<br>
+    2. Najdi <b>„Poloha"</b> a přepni na <b>Povolit</b>.<br>
+    3. Klepni na <b>„Zkusit znovu"</b> níž (nebo obnov stránku).<br>
+    <button onclick="retryGeo()" style="margin-top:8px;">🔄 Zkusit znovu</button>
+  </div>`;
+  el.style.display = 'block';
+}
+// Zkusí polohu znovu (po tom, co ji uživatel v nastavení povolil).
+function retryGeo(){
+  const el = document.getElementById('gpsWarning');
+  if(el) el.innerHTML = '📍 Zkouším najít polohu…';
+  geoAvailable = false;
+  startGeoTracking();
 }
 
 function onPosition(pos){
@@ -3903,7 +3945,8 @@ function onGeoError(err){
   if(geoAvailable) return; // pozici už máme, dočasný výpadek neřešíme
   const el = document.getElementById('gpsWarning');
   if(err.code === 1){ // PERMISSION_DENIED
-    el.innerHTML = '📍 Poloha zamítnuta — v nastavení prohlížeče/appky povol přístup k poloze pro tuto stránku.';
+    showLocationDeniedHelp(); // podrobný návod krok za krokem + tlačítko Zkusit znovu
+    return;
   } else if(err.code === 2){
     el.textContent = '📍 Polohu se nepodařilo zjistit (slabý signál) — zkouším to dál na pozadí.';
   } else {
