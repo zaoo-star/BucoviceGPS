@@ -30,7 +30,11 @@
   *{box-sizing:border-box;}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);}
   #app{position:relative;height:100vh;height:100dvh;overflow:hidden;}
-  #map{position:absolute;inset:0;z-index:1;}
+  /* Tažení prstem dolů nesmí obnovit stránku (jinak appka "spadne" zpět na úvodní obrazovku
+     uprostřed čtení nebo posouvání mapy). */
+  html, body{overscroll-behavior:none;overscroll-behavior-y:contain;}
+  #map{position:absolute;inset:0;z-index:1;overscroll-behavior:none;touch-action:pan-x pan-y;}
+  .panelContent, #bottomSheet, #sideRail{overscroll-behavior:contain;}
 
   #topBar{
     position:absolute;top:0;left:0;right:0;z-index:350;
@@ -125,6 +129,12 @@
     justify-content:center;font-size:16px;background:rgba(192,132,252,0.9);
     border:2px solid #fff8;box-shadow:0 0 8px 2px rgba(192,132,252,0.5);cursor:pointer;
   }
+  .landmarkMarker{
+    width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;font-size:17px;background:rgba(192,132,252,0.95);
+    border:2px solid #fff;box-shadow:0 0 10px 3px rgba(192,132,252,0.5);
+  }
+  .landmarkMarker.visited{background:rgba(120,120,130,0.55);box-shadow:none;opacity:0.6;}
   .pickupMarker{
     width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
     justify-content:center;font-size:18px;background:rgba(250,204,21,0.95);
@@ -231,7 +241,7 @@
 <div id="customModal">
   <div class="modalBox">
     <p id="modalMessage"></p>
-    <input id="modalInput" type="text" inputmode="decimal" />
+    <input id="modalInput" type="text" />
     <div class="modalBtnRow">
       <button id="modalCancelBtn" class="secondary">Zrušit</button>
       <button id="modalOkBtn">OK</button>
@@ -304,6 +314,7 @@
   </div>
 
   <div id="sideRail">
+    <button class="railBtn" data-tab="daily" title="Denní výzvy">🎯</button>
     <button class="railBtn" data-tab="mine" title="Nemovitosti">🏠</button>
     <button class="railBtn" data-tab="jobs" title="Zaměstnání">💼</button>
     <button class="railBtn" data-tab="businesses" title="Investice">📈</button>
@@ -367,6 +378,9 @@
       <div class="panelContent" id="tab-statdetail">
         <div id="statDetailContent" class="empty-state">Načítám...</div>
       </div>
+      <div class="panelContent" id="tab-daily">
+        <div id="dailyContent" class="empty-state">Načítám…</div>
+      </div>
       <div class="panelContent" id="tab-admin">
         <div id="adminContent" class="empty-state">Načítám admin panel...</div>
       </div>
@@ -386,11 +400,18 @@
 // ===== VLASTNÍ MODAL (náhrada za alert/confirm/prompt — ty jsou v embedded prohlížečích/webview často tiše blokované) =====
 let modalResolve = null;
 
-function showPrompt(message, defaultValue){
+// numeric=true → číselná klávesnice, jinak normální písmenková.
+// (Dřív tu byla natvrdo číselná, takže při psaní jména nabízel mobil jen číslice.)
+function showPrompt(message, defaultValue, numeric){
   return new Promise(resolve => {
     modalResolve = resolve;
     document.getElementById('modalMessage').textContent = message;
     const input = document.getElementById('modalInput');
+    // když se nic neurčí, odhadneme podle výchozí hodnoty (číslo → číselná klávesnice)
+    const isNum = (numeric === undefined)
+      ? (typeof defaultValue === 'number' || (typeof defaultValue === 'string' && defaultValue !== '' && !isNaN(Number(defaultValue))))
+      : !!numeric;
+    input.setAttribute('inputmode', isNum ? 'decimal' : 'text');
     input.style.display = 'block';
     input.value = (defaultValue === undefined || defaultValue === null) ? '' : defaultValue;
     document.getElementById('customModal').classList.add('open');
@@ -743,7 +764,219 @@ function checkPickups(){
       showAlert(`${pk.bonus?'🎁 Bonusový balík!':'💰 Balík peněz!'} Sebral jsi ${Math.round(pk.reward*inflationMult())} Kč.`);
     }
   });
-  if(collectedAny){ saveWorld(); updateHeaderStats(); renderPickupMarkers(); }
+  if(collectedAny){ saveWorld(); updateHeaderStats(); renderPickupMarkers(); checkQuests(); }
+}
+
+// ===== SÉRIE ZA PŘIHLÁŠENÍ (streak) =====
+// Za každý den v řadě, kdy hráč hru otevře, dostane odměnu. Roste do 7. dne, pak drží strop.
+// Vynechaný den sérii vynuluje. Odměna se dá jen 1× denně (hlídá u.streakDay).
+const STREAK_BASE = 60;        // Kč za 1. den
+const STREAK_STEP = 40;        // o kolik roste každý další den
+const STREAK_MAX_DAYS = 7;     // od 7. dne už odměna neroste
+function streakReward(streak){
+  const d = Math.min(streak || 1, STREAK_MAX_DAYS);
+  return STREAK_BASE + (d - 1) * STREAK_STEP;
+}
+function ensureStreak(u){
+  if(!u) return null;
+  const today = calendarDay();
+  if(u.streakDay === today) return null;         // dnes už započítáno
+  if(u.streakDay === today - 1) u.streak = (u.streak || 0) + 1;  // navazuje na včerejšek
+  else u.streak = 1;                             // nová série (první den nebo po pauze)
+  u.streakDay = today;
+  u.streakBest = Math.max(u.streakBest || 0, u.streak);
+  const reward = Math.round(streakReward(u.streak) * inflationMult());
+  u.balance += reward;
+  return { streak: u.streak, reward };
+}
+
+// ===== DENNÍ ÚKOLY =====
+// Každý den 3 úkoly. Postup se čte z počítadel, která se stejně už nulují o půlnoci,
+// takže není co rozbít. Splnění se odmění automaticky (bez klikání navíc).
+const QUEST_DEFS = [
+  {id:'walk1',  icon:'🚶', name:'Projdi se po městě',   goal:1200, unit:'m',      reward:120, prog:u => Math.round(u.distanceToday || 0)},
+  {id:'walk2',  icon:'👟', name:'Delší procházka',      goal:2500, unit:'m',      reward:230, prog:u => Math.round(u.distanceToday || 0)},
+  {id:'pick2',  icon:'💰', name:'Seber 2 balíky peněz', goal:2,    unit:'ks',     reward:130, prog:u => (asArray(u.pickupGot)).length},
+  {id:'pick4',  icon:'🎁', name:'Seber 4 balíky peněz', goal:4,    unit:'ks',     reward:260, prog:u => (asArray(u.pickupGot)).length},
+  {id:'land1',  icon:'📍', name:'Navštiv 1 místo zájmu',goal:1,    unit:'míst',   reward:120, prog:u => (asArray(u.lmGot)).length},
+  {id:'land2',  icon:'🗺️', name:'Navštiv 2 místa zájmu',goal:2,    unit:'míst',   reward:240, prog:u => (asArray(u.lmGot)).length},
+  {id:'work1',  icon:'💼', name:'Odpracuj směnu',       goal:1,    unit:'směna',  reward:150, prog:u => (u.lastWorkedCalDay === calendarDay() ? 1 : 0), workday:true},
+  {id:'fix1',   icon:'🔧', name:'Oprav byt v pronájmu', goal:1,    unit:'oprava', reward:140, prog:u => (u.repairDay === calendarDay() ? (u.repairsToday || 0) : 0)},
+];
+// Vybere 3 úkoly na dnešek — deterministicky podle dne, aby měli všichni hráči stejné zadání.
+function pickQuestsForDay(day){
+  let seed = day * 7919 + 13;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const weekend = isWeekend();
+  const pool = QUEST_DEFS.filter(q => !(q.workday && weekend)); // o víkendu se nepracuje
+  const picked = [];
+  const used = {};
+  // ať se nesejdou dva úkoly na totéž (např. obě varianty chůze)
+  const family = id => id.replace(/\d+$/, '');
+  let guard = 0;
+  while(picked.length < 3 && guard++ < 200){
+    const q = pool[Math.floor(rnd() * pool.length)];
+    if(!q || used[family(q.id)]) continue;
+    used[family(q.id)] = true;
+    picked.push(q.id);
+  }
+  return picked;
+}
+function ensureQuests(u){
+  if(!u) return;
+  const today = calendarDay();
+  if(u.questDay !== today){
+    u.questDay = today;
+    u.quests = pickQuestsForDay(today);
+    u.questDone = [];
+  }
+  u.quests = asArray(u.quests);
+  u.questDone = asArray(u.questDone);
+  if(!u.quests.length) u.quests = pickQuestsForDay(today);
+}
+function questById(id){ return QUEST_DEFS.find(q => q.id === id); }
+// Zkontroluje splnění úkolů a rovnou odmění. Volá se po akcích (chůze, sběr, práce, oprava).
+function checkQuests(){
+  if(!currentUser) return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  ensureQuests(u);
+  let awarded = false;
+  u.quests.forEach(qid => {
+    const q = questById(qid);
+    if(!q || u.questDone.includes(qid)) return;
+    if(q.prog(u) >= q.goal){
+      const reward = Math.round(q.reward * inflationMult());
+      u.balance += reward;
+      u.questDone.push(qid);
+      awarded = true;
+      showToast(`${q.icon} Úkol splněn: ${q.name} · +${reward} Kč`);
+      notifyPlayer('Úkol splněn!', `${q.name} — získáváš ${reward} Kč`);
+      playSound('coin');
+    }
+  });
+  if(awarded){
+    if(u.questDone.length >= u.quests.length && u.quests.length){
+      const bonus = Math.round(QUEST_ALL_BONUS * inflationMult());
+      u.balance += bonus;
+      showAlert(`🏅 Splnil jsi všechny dnešní úkoly! Bonus ${bonus} Kč.`);
+      notifyPlayer('Všechny úkoly hotové!', `Bonus ${bonus} Kč`);
+    }
+    saveWorld(); updateHeaderStats();
+  }
+}
+const QUEST_ALL_BONUS = 300;   // bonus za splnění všech tří úkolů dne
+
+// ===== MÍSTA ZÁJMU (reálná místa v Bučovicích) =====
+// Dojdi k místu → jednorázová denní odměna. Body jsou pevné (na rozdíl od balíků, co se stěhují).
+// Vlastní místa si můžeš přidat v admin panelu přímo tam, kde stojíš.
+const LANDMARK_VISIT_RADIUS = 45;   // m
+const LANDMARK_REWARD = 90;         // Kč za návštěvu (1× denně za místo)
+const LANDMARK_DEFS = [
+  {id:'lm_zamek',   name:'Zámek Bučovice',   emoji:'🏰', lat:49.1496409, lng:17.0014607, desc:'Renesanční perla města.'},
+  {id:'lm_namesti', name:'Náměstí Svobody',  emoji:'🏛️', lat:49.1503,    lng:17.0035,    desc:'Srdce Bučovic a radnice.'},
+];
+// Všechna místa = pevná + vlastní přidaná adminem (world.landmarks)
+function allLandmarks(){
+  const custom = asArray(world.landmarks).filter(l => l && l.lat && l.lng);
+  return LANDMARK_DEFS.concat(custom);
+}
+function myLandmarksToday(){
+  const u = currentUser && world.users[currentUser.name];
+  if(!u) return [];
+  const today = calendarDay();
+  if(u.lmDay !== today){ u.lmDay = today; u.lmGot = []; }
+  u.lmGot = asArray(u.lmGot);
+  return u.lmGot;
+}
+function checkLandmarks(){
+  if(!currentUser || !playerPos) return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  const got = myLandmarksToday();
+  let any = false;
+  allLandmarks().forEach(lm => {
+    if(got.includes(lm.id)) return;
+    if(haversine(playerPos, {lat:lm.lat, lng:lm.lng}) <= LANDMARK_VISIT_RADIUS){
+      const reward = Math.round(LANDMARK_REWARD * inflationMult());
+      u.balance += reward;
+      got.push(lm.id);
+      any = true;
+      playSound('coin');
+      showAlert(`${lm.emoji} Navštívil jsi: ${lm.name}\n+${reward} Kč`);
+    }
+  });
+  if(any){ saveWorld(); updateHeaderStats(); renderLandmarkMarkers(); checkQuests(); }
+}
+
+// ===== ANTI-CHEAT NA GPS =====
+// Nejde spolehlivě poznat "fake GPS" appku, ale dá se poznat NEMOŽNÝ pohyb.
+// Když se poloha opakovaně mění rychleji, než jde ujít, přestaneme za chůzi platit (do konce dne).
+const CHEAT_FLAG_LIMIT = 8;          // kolik nemožných skoků v řadě vede k pozastavení odměn
+const WALK_SANE_DAILY_MAX = 30000;   // m — přes 30 km/den už nejde o chůzi po městě
+function ensureCheatDay(u){
+  if(!u) return u;
+  const today = calendarDay();
+  if(u.cheatDay !== today){ u.cheatDay = today; u.gpsFlags = 0; u.walkBlocked = false; }
+  return u;
+}
+// Zaznamená podezřelý skok (moc rychlý pohyb). Po překročení limitu se odměny za chůzi zastaví.
+function flagSuspiciousMove(){
+  if(!currentUser) return;
+  const u = ensureCheatDay(world.users[currentUser.name]);
+  if(!u) return;
+  u.gpsFlags = (u.gpsFlags || 0) + 1;
+  if(u.gpsFlags >= CHEAT_FLAG_LIMIT && !u.walkBlocked){
+    u.walkBlocked = true;
+    saveWorld();
+    showAlert('⚠️ Poloha skáče nesmyslně rychle (doprava nebo falešná GPS). Odměny za chůzi jsou do konce dne pozastavené. Zítra se to samo obnoví.');
+  }
+}
+// Poctivý krok → počítadlo podezření pomalu klesá (aby chybu GPS neodnesl slušný hráč).
+function creditHonestMove(){
+  if(!currentUser) return;
+  const u = ensureCheatDay(world.users[currentUser.name]);
+  if(u && u.gpsFlags > 0 && !u.walkBlocked) u.gpsFlags -= 0.5;
+}
+
+// ===== PŘIPOMENUTÍ (notifikace) =====
+// Pozn.: appka umí upozornit jen když běží (i na pozadí). Bez vlastního serveru nejde poslat
+// notifikaci úplně zavřené appce — proto je to spíš "nepřehlédneš to" než klasické push.
+let notifyEnabled = false;
+function loadNotifyFlag(){
+  try { notifyEnabled = localStorage.getItem('bucovice_notify') === '1'; } catch(e){}
+  if(notifyEnabled && typeof Notification !== 'undefined' && Notification.permission !== 'granted') notifyEnabled = false;
+}
+async function enableNotifications(){
+  if(typeof Notification === 'undefined'){
+    showAlert('Tenhle prohlížeč/appka upozornění nepodporuje.');
+    return;
+  }
+  try {
+    const perm = await Notification.requestPermission();
+    if(perm === 'granted'){
+      notifyEnabled = true;
+      try { localStorage.setItem('bucovice_notify','1'); } catch(e){}
+      notifyPlayer('Upozornění zapnuta', 'Dám vědět, když splníš úkol nebo přijdou nové balíky.');
+      showAlert('🔔 Upozornění zapnuta.');
+    } else {
+      showAlert('Upozornění nebyla povolena. Povolit je můžeš v nastavení appky.');
+    }
+  } catch(e){ showAlert('Upozornění se nepodařilo zapnout.'); }
+  renderDaily();
+}
+function disableNotifications(){
+  notifyEnabled = false;
+  try { localStorage.removeItem('bucovice_notify'); } catch(e){}
+  renderDaily();
+}
+function notifyPlayer(title, body){
+  if(!notifyEnabled || typeof Notification === 'undefined') return;
+  try { new Notification(title, { body, icon: 'icon-192.png', badge: 'icon-192.png', tag: 'bucpoly' }); } catch(e){}
+}
+// Připomene nové balíky/úkoly po půlnoci (jen když appka běží).
+function notifyNewDay(){
+  notifyPlayer('Nový den v Bučpoly', 'Na mapě jsou nové balíky peněz a čekají tě nové denní úkoly.');
 }
                                       // Po znovuzapnutí appky: pokud posun / uplynulý čas ≤ tohle, byla to reálná chůze
                                       // a započítá se. Rychlejší = jel jsi dopravou → nepočítá se (anti-cheat).
@@ -3199,6 +3432,31 @@ function unitOccupancy(p, unit){
 }
 
 // Stav bydlení hráče: 'owner' (vlastní bydlení), 'tenant' (nájemník), 'homeless'
+// Vysvětlí konkrétně, proč hráč (ne)má bydlení a co má udělat.
+// Řeší nejčastější zmatek: "mám přece podíl v domě, tak proč jsem bez bydlení?"
+function housingHint(name){
+  const houses = Object.values(world.parcels).filter(p => (p.owners?.[name] || 0) > 0);
+  if(!houses.length){
+    return `Zatím nevlastníš podíl v žádném domě. Dojdi k volnému domu a kup si podíl — na bydlení potřebuješ <b>přes 50 %</b> domu.`;
+  }
+  // má podíl, ale ne většinový v žádném domě
+  const majority = houses.find(p => (p.owners[name] || 0) > 50);
+  if(!majority){
+    const best = houses.reduce((a,b) => (b.owners[name] > (a.owners[name]||0) ? b : a), houses[0]);
+    const mam = (best.owners[name] || 0);
+    const chybi = Math.max(0, 50.1 - mam);
+    const cena = Math.round(housePricePerPercent(best) * chybi);
+    return `Podíl v domě <b>máš</b> (${mam.toFixed(0)} % v domě ${best.id.replace('h_','#')}), ale na bydlení je potřeba <b>víc než 50 %</b>. ` +
+           `Chybí ti ${chybi.toFixed(0)} % (~${cena.toLocaleString('cs-CZ')} Kč) — dokup je u toho domu. Nebo si zatím <b>najmi byt</b>, i to je levnější než být bez bydlení.`;
+  }
+  // většinu má, ale dům není určený k bydlení
+  if(majority.useType !== 'residence'){
+    return `V domě ${majority.id.replace('h_','#')} máš většinu (${(majority.owners[name]||0).toFixed(0)} %), ale dům zatím <b>není určený k bydlení</b>. ` +
+           `Dojdi k němu a v jeho detailu ho přepni na <b>bydlení</b> — hned ti klesnou náklady.`;
+  }
+  return '';
+}
+
 function housingStatus(name){
   // vlastník bydlení: má podíl v domě, který je určený jako bydlení
   const ownsHome = Object.values(world.parcels).some(p => p.useType === 'residence' && (p.owners?.[name] || 0) > 0);
@@ -3295,6 +3553,10 @@ function migrateWorld(){
         if(u.savings === undefined) u.savings = 0;
         if(u.achievements === undefined) u.achievements = [];
         u.achievements = asArray(u.achievements);
+        u.pickupGot = asArray(u.pickupGot);
+        u.lmGot     = asArray(u.lmGot);
+        u.quests    = asArray(u.quests);
+        u.questDone = asArray(u.questDone);
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
         u.loans = asArray(u.loans);
@@ -3329,6 +3591,7 @@ function migrateWorld(){
       world.npcTenants.list = asArray(world.npcTenants.list);
       if(!world.pickups || typeof world.pickups !== 'object') world.pickups = { day:0, list:[] };
       world.pickups.list = asArray(world.pickups.list);
+      world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
@@ -3779,6 +4042,7 @@ function maybeRandomEvent(){
 }
 
 function onNewDay(catchUp){
+  if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
   tickMarketCycle(1);
   world.inflation = (world.inflation || 1) * (1 + INFLATION_ANNUAL / DAYS_PER_YEAR);
   resolveAuctions();
@@ -3872,10 +4136,11 @@ function showLocationDeniedHelp(){
   const el = document.getElementById('gpsWarning');
   if(!el) return;
   el.innerHTML = `<div style="text-align:left;line-height:1.5;">
-    📍 <b>Poloha je zablokovaná</b> — hra bez ní neví, kde jsi. Zapneš ji takhle:<br>
-    1. Nahoře vedle webové adresy klepni na <b>🔒 zámeček</b> (nebo ikonu ⚙️/„Aa").<br>
-    2. Najdi <b>„Poloha"</b> a přepni na <b>Povolit</b>.<br>
-    3. Klepni na <b>„Zkusit znovu"</b> níž (nebo obnov stránku).<br>
+    📍 <b>Poloha se nedaří získat.</b> Zkus po řadě:<br>
+    1. Vedle webové adresy klepni na <b>🔒 / ⚙️</b> → <b>Poloha</b> → <b>Povolit</b>.<br>
+    2. Zkontroluj, že máš <b>Umístění/GPS</b> zapnuté i v telefonu (rychlé menu shora).<br>
+    3. Klepni na <b>🔄 Zkusit znovu</b>.<br>
+    <span style="color:var(--muted);font-size:0.95em;">Máš <b>Huawei</b> nebo pořád nic? Zkus hru otevřít v jiném prohlížeči (<b>Firefox</b> nebo <b>Opera</b>) — na telefonech bez Google služeb tam poloha často funguje líp.</span><br>
     <button onclick="retryGeo()" style="margin-top:8px;">🔄 Zkusit znovu</button>
   </div>`;
   el.style.display = 'block';
@@ -3908,6 +4173,9 @@ function onPosition(pos){
       // náhlý "skok" o pár metrů za zlomek sekundy je GPS drift, ne krok.
       if(elapsedSec > 0 && speed <= MAX_WALK_SPEED_MS){
         creditWalking(dist);       // reálná chůze → započítat
+        creditHonestMove();
+      } else if(elapsedSec > 0 && speed > MAX_WALK_SPEED_MS){
+        flagSuspiciousMove();      // nemožně rychlý přesun → anti-cheat počítadlo
       }
       // jinak (moc rychlý skok = drift/chyba) → nepočítat, jen posunout referenci
       lastGeoPos = newPos; lastGeoTime = now;
@@ -3936,6 +4204,8 @@ function onPosition(pos){
   }
   renderOtherPlayers();
   renderPickupMarkers();
+  renderLandmarkMarkers();
+  checkLandmarks();   // došel jsi k místu zájmu? → odměna
   if(selectedParcelId) renderSelected(selectedParcelId);
   renderJobs();
 }
@@ -4025,6 +4295,29 @@ function renderPickupMarkers(){
   });
 }
 
+// Markery míst zájmu. Navštívené dnes zešednou (ať víš, kam ještě dojít).
+let landmarkMarkers = {};
+function renderLandmarkMarkers(){
+  if(!map || !currentUser) return;
+  const got = myLandmarksToday();
+  const seen = {};
+  allLandmarks().forEach(lm => {
+    seen[lm.id] = true;
+    const visited = got.includes(lm.id);
+    const cls = visited ? 'landmarkMarker visited' : 'landmarkMarker';
+    if(landmarkMarkers[lm.id]){
+      if(map.hasLayer(landmarkMarkers[lm.id])) map.removeLayer(landmarkMarkers[lm.id]);
+      delete landmarkMarkers[lm.id];
+    }
+    landmarkMarkers[lm.id] = L.marker([lm.lat, lm.lng], {
+      icon: L.divIcon({ html:`<div class="${cls}">${lm.emoji || '📍'}</div>`, className:'', iconSize:[30,30] })
+    }).addTo(map).bindTooltip(visited ? `${lm.name} — dnes navštíveno ✓` : `${lm.name} — dojdi pro odměnu`);
+  });
+  Object.keys(landmarkMarkers).forEach(id => {
+    if(!seen[id]){ if(map.hasLayer(landmarkMarkers[id])) map.removeLayer(landmarkMarkers[id]); delete landmarkMarkers[id]; }
+  });
+}
+
 let lastReachHighlightAt = 0;
 function updateReachHighlight(force){
   const now = Date.now();
@@ -4062,8 +4355,10 @@ function ensureWalkDay(u){
 function creditWalking(dist){
   if(!currentUser) return;
   if(!isInPlayArea()) return; // mimo herní oblast (za městem) se chůze nepočítá
-  const u = ensureWalkDay(world.users[currentUser.name]);
+  const u = ensureCheatDay(ensureWalkDay(world.users[currentUser.name]));
   if(!u) return;
+  if(u.walkBlocked) return;                                   // anti-cheat: dnes už se chůze neplatí
+  if((u.distanceToday || 0) >= WALK_SANE_DAILY_MAX) return;    // nesmyslně vysoký denní nájezd
   if(u.walkEarnedToday === undefined) u.walkEarnedToday = 0;
   const reward = dist * WALK_REWARD_PER_METER * inflationMult();
   u.balance += reward;
@@ -4072,6 +4367,7 @@ function creditWalking(dist){
   u.totalDistance = (u.totalDistance || 0) + dist;
   saveWorld();
   updateHeaderStats();
+  checkQuests();   // chůze může splnit denní úkol
 }
 
 // Je hráč v herní oblasti? = do PLAY_AREA_RADIUS metrů od nějakého domu.
@@ -4164,6 +4460,7 @@ function refreshAll(){
   safe(() => { const t=document.getElementById('tab-news'); if(t && t.classList.contains('active')) renderNews(); });
   safe(() => { const t=document.getElementById('tab-chat'); if(t && t.classList.contains('active')) renderChat(); });
   safe(() => { const t=document.getElementById('tab-leaderboard'); if(t && t.classList.contains('active')) renderLeaderboard(); });
+  safe(() => { const t=document.getElementById('tab-daily'); if(t && t.classList.contains('active')) renderDaily(); });
   safe(() => { const t=document.getElementById('tab-profile'); if(t && t.classList.contains('active') && currentUser) viewProfile(currentUser.name); });
   safe(() => checkAchievements());
 }
@@ -4195,7 +4492,10 @@ function updateHeaderStats(){
       housingEl.textContent = `v nájmu (${Math.round(dailyCost)} Kč/den)`;
       housingEl.parentElement.style.color = 'var(--accent2)';
     } else {
-      housingEl.textContent = `bez bydlení (${LIVING_COST} Kč/den)`;
+      const maPodil = Object.values(world.parcels).some(p => (p.owners?.[currentUser.name] || 0) > 0);
+      housingEl.textContent = maPodil
+        ? `podíl, ale bez bydlení (${LIVING_COST} Kč/den)`   // má nemovitost, jen v ní nemůže bydlet
+        : `bez bydlení (${LIVING_COST} Kč/den)`;
       housingEl.parentElement.style.color = 'var(--danger)';
     }
   }
@@ -4304,7 +4604,17 @@ function renderSelected(id){
   const meUser = currentUser ? world.users[currentUser.name] : null;
   const canClaimFree = meUser && meUser.starterHomeAvailable && free > 0 && (!houseHasOwner(p) || (p.owners[currentUser.name]||0) > 0);
   html += `<div class="row">`;
-  if(canClaimFree) html += `<button ${near?'':'disabled'} style="background:var(--gold);color:#1a1a1a;" onclick="claimStarterHome('${p.id}')">🎁 Vzít zdarma (první nemovitost)${near?'':' (musíš být u domu)'}</button>`;
+  if(canClaimFree){
+    // Předem spočítáme, kolik % dostane — ať hráč vidí, jestli mu to stačí na bydlení (>50 %).
+    const freePct = Math.min(free, Math.min(100, STARTER_HOME_VALUE / housePricePerPercent(p)));
+    const staciNaBydleni = freePct > 50;
+    html += `<button ${near?'':'disabled'} style="background:var(--gold);color:#1a1a1a;" onclick="claimStarterHome('${p.id}')">🎁 Vzít zdarma — ${freePct.toFixed(0)} %${near?'':' (musíš být u domu)'}</button>`;
+    html += `<p style="font-size:0.85em;margin:4px 0;color:${staciNaBydleni?'var(--accent)':'var(--orange)'}">${
+      staciNaBydleni
+        ? '✓ To je víc než polovina domu — budeš v něm rovnou <b>bydlet</b> a klesnou ti náklady.'
+        : `⚠️ To je jen menšinový podíl — <b>bydlet tu nebudeš</b> a dál platíš ${LIVING_COST} Kč/den. Na bydlení potřebuješ přes 50 % domu, tak zkus <b>levnější dům</b>.`
+    }</p>`;
+  }
   if(free > 0) html += `<button ${near?'':'disabled'} onclick="buyHouseStake('${p.id}')">Koupit podíl${near?'':' (musíš být u domu)'}</button>`;
   if(myPct > 0) html += `<button class="danger" onclick="sellHouseStake('${p.id}')">Prodat městu (${Math.round(HOUSE_SELL_RATIO*100)} %)</button>`;
   html += `</div>`;
@@ -4586,6 +4896,16 @@ async function claimStarterHome(id){
   const pricePer = housePricePerPercent(p);
   let pct = Math.min(free, STARTER_HOME_VALUE / pricePer);
   pct = Math.min(pct, 100);
+  // Nováčka nenecháme omylem utratit nárok na drahém domě, kde by získal jen menšinu
+  // a pořád platil plné náklady bez bydlení — nabídneme mu vycouvat.
+  if(pct <= 50){
+    const ok = await showConfirm(
+      `Pozor: tenhle dům je drahý, zdarma z něj dostaneš jen ${pct.toFixed(0)} %.\n\n` +
+      `Na vlastní bydlení potřebuješ VÍC než 50 % domu. S menšinovým podílem budeš dál platit ` +
+      `${LIVING_COST} Kč/den jako bez bydlení.\n\n` +
+      `Doporučuju vybrat levnější dům (nárok máš jen jednou). Chceš přesto tenhle?`);
+    if(!ok) return;
+  }
   p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
   me.starterHomeAvailable = false;
   if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; } // hned kde bydlet
@@ -4593,7 +4913,9 @@ async function claimStarterHome(id){
   addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} zdarma.`);
   saveWorld(); refreshAll();
   playSound('buy');
-  showAlert(`Gratuluju! Získal jsi ${pct.toFixed(0)} % domu zdarma${p.useType==='residence'?' a rovnou v něm bydlíš (nižší náklady)':''}. Další nemovitosti už se kupují za peníze.`);
+  showAlert(p.useType === 'residence'
+    ? `Gratuluju! Získal jsi ${pct.toFixed(0)} % domu zdarma a rovnou v něm bydlíš — klesly ti denní náklady. Další nemovitosti už se kupují za peníze.`
+    : `Získal jsi ${pct.toFixed(0)} % domu zdarma. Je to ale menšinový podíl, takže tu zatím nebydlíš — dokup podíl přes 50 %, nebo si zatím najmi byt. Podíl ti mezitím vydělává na hodnotě.`);
 }
 
 async function sellHouseStake(id){
@@ -5059,7 +5381,7 @@ async function changeAvatar(){
 async function changeName(){
   if(!currentUser) return;
   const oldName = currentUser.name;
-  const raw = await showPrompt('Nová přezdívka (max 20 znaků):', oldName);
+  const raw = await showPrompt('Nová přezdívka (max 20 znaků):', oldName, false);
   if(!raw) return;
   const newName = sanitizeName(raw);
   if(!newName){ showAlert('Neplatná přezdívka.'); return; }
@@ -5132,6 +5454,94 @@ function lockAdmin(){
   closeSheet();
 }
 
+// ===== PANEL: DENNÍ VÝZVY (série + úkoly + místa zájmu + upozornění) =====
+function renderDaily(){
+  const el = document.getElementById('dailyContent');
+  if(!el) return;
+  if(!currentUser || !world.users[currentUser.name]){ el.innerHTML = '<div class="empty-state">Nejdřív se přihlas.</div>'; return; }
+  const u = world.users[currentUser.name];
+  ensureQuests(u);
+  ensureWalkDay(u);
+  const got = myLandmarksToday();
+
+  // --- série ---
+  const streak = u.streak || 0;
+  const dots = [];
+  for(let i=1;i<=STREAK_MAX_DAYS;i++){
+    const on = i <= Math.min(streak, STREAK_MAX_DAYS);
+    dots.push(`<span style="font-size:1.1em;opacity:${on?1:0.25}">${on?'🔥':'○'}</span>`);
+  }
+  let html = `<div class="card">
+    <h3>🔥 Série přihlášení</h3>
+    <p style="margin:4px 0;font-size:1.4em;font-weight:700;color:var(--gold)">${streak} ${streak===1?'den':'dní'} v řadě</p>
+    <div style="display:flex;gap:6px;margin:6px 0;">${dots.join('')}</div>
+    <p style="font-size:0.85em;color:var(--muted)">Zítra dostaneš <b>${Math.round(streakReward(streak+1)*inflationMult())} Kč</b>, když hru zase otevřeš. Vynechaný den sérii vynuluje.${u.streakBest?` Nejdelší série: <b>${u.streakBest}</b>.`:''}</p>
+  </div>`;
+
+  // --- denní úkoly ---
+  const done = u.questDone.length, total = u.quests.length;
+  html += `<div class="card">
+    <h3>🎯 Dnešní úkoly <span class="badge">${done}/${total}</span></h3>`;
+  u.quests.forEach(qid => {
+    const q = questById(qid);
+    if(!q) return;
+    const prog = Math.min(q.prog(u), q.goal);
+    const hotovo = u.questDone.includes(qid);
+    const pct = Math.round(prog / q.goal * 100);
+    html += `<div style="border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:6px;${hotovo?'opacity:0.65;':''}">
+      <p style="margin:0;font-weight:600;">${q.icon} ${q.name} ${hotovo?'<span style="color:var(--accent)">✓ splněno</span>':''}</p>
+      <div style="background:var(--panel);border-radius:6px;height:8px;margin:6px 0;overflow:hidden;">
+        <div style="width:${pct}%;height:100%;background:${hotovo?'var(--accent)':'var(--accent2)'};"></div>
+      </div>
+      <p style="margin:0;font-size:0.82em;color:var(--muted)">${prog} / ${q.goal} ${q.unit} · odměna <b style="color:var(--gold)">${Math.round(q.reward*inflationMult())} Kč</b></p>
+    </div>`;
+  });
+  html += `<p style="font-size:0.85em;color:var(--muted);margin-top:8px;">Splníš všechny tři? Bonus <b>${Math.round(QUEST_ALL_BONUS*inflationMult())} Kč</b>. Úkoly se mění každý den o půlnoci.</p>
+  </div>`;
+
+  // --- místa zájmu ---
+  const lms = allLandmarks();
+  html += `<div class="card">
+    <h3>📍 Místa zájmu <span class="badge">${got.length}/${lms.length}</span></h3>
+    <p style="font-size:0.85em;color:var(--muted)">Dojdi k místu (do ${LANDMARK_VISIT_RADIUS} m) a dostaneš ${Math.round(LANDMARK_REWARD*inflationMult())} Kč. Každé místo 1× denně.</p>`;
+  if(!lms.length) html += `<p style="color:var(--muted)">Zatím tu žádná místa nejsou.</p>`;
+  lms.forEach(lm => {
+    const visited = got.includes(lm.id);
+    const dst = playerPos ? Math.round(haversine(playerPos, {lat:lm.lat, lng:lm.lng})) : null;
+    html += `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:10px;padding:7px;margin-top:6px;${visited?'opacity:0.6;':''}">
+      <span style="font-size:1.3em;">${lm.emoji||'📍'}</span>
+      <div style="flex:1;">
+        <p style="margin:0;font-weight:600;">${escapeHtml(lm.name)} ${visited?'<span style="color:var(--accent);font-size:0.85em;">✓ dnes hotovo</span>':''}</p>
+        <p style="margin:0;font-size:0.8em;color:var(--muted)">${lm.desc?escapeHtml(lm.desc)+' · ':''}${dst!==null?(dst<1000?dst+' m odtud':(dst/1000).toFixed(1).replace('.',',')+' km odtud'):'vzdálenost neznámá'}</p>
+      </div>
+    </div>`;
+  });
+  html += `</div>`;
+
+  // --- upozornění ---
+  const supported = (typeof Notification !== 'undefined');
+  html += `<div class="card">
+    <h3>🔔 Připomenutí</h3>`;
+  if(!supported){
+    html += `<p style="font-size:0.9em;color:var(--muted)">Tahle appka/prohlížeč upozornění nepodporuje.</p>`;
+  } else if(notifyEnabled){
+    html += `<p style="font-size:0.9em;">Upozornění jsou <b style="color:var(--accent)">zapnutá</b>. Dám vědět, když splníš úkol nebo začne nový den.</p>
+      <div class="row"><button class="secondary" onclick="disableNotifications()">Vypnout upozornění</button></div>`;
+  } else {
+    html += `<p style="font-size:0.9em;">Zapni si upozornění na splněné úkoly a nový den.</p>
+      <div class="row"><button onclick="enableNotifications()">🔔 Zapnout upozornění</button></div>`;
+  }
+  html += `<p style="font-size:0.8em;color:var(--muted);margin-top:6px;">Pozn.: upozornění chodí, jen když je hra spuštěná (i na pozadí). Úplně zavřené appce je poslat nejde.</p>
+  </div>`;
+
+  if(u.walkBlocked){
+    html += `<div class="card"><h3 style="color:var(--danger)">⚠️ Chůze pozastavena</h3>
+      <p style="font-size:0.9em;">Poloha skákala nesmyslně rychle (auto, vlak nebo falešná GPS), takže se dnes za chůzi neplatí. Zítra se to samo obnoví.</p></div>`;
+  }
+
+  el.innerHTML = html;
+}
+
 function renderAdmin(){
   const el = document.getElementById('adminContent');
   if(!isAdmin){ el.innerHTML = '<div class="empty-state">Nemáš admin oprávnění.</div>'; return; }
@@ -5152,6 +5562,27 @@ function renderAdmin(){
       <button onclick="adminBroadcast()">Odeslat</button>
     </div>
   </div>`;
+
+  const lmCustom = asArray(world.landmarks);
+  html += `<div class="card">
+    <h3>📍 Místa zájmu</h3>
+    <p style="font-size:0.85em;color:var(--muted)">Přidej místo tam, kde právě stojíš (dojdi k němu a klepni). Hráči za návštěvu dostanou odměnu.</p>
+    <div class="row" style="gap:6px;">
+      <input id="adminLmName" type="text" maxlength="40" placeholder="Název místa (např. Nádraží)" style="flex:1;">
+      <input id="adminLmEmoji" type="text" maxlength="3" placeholder="📍" style="width:56px;text-align:center;">
+    </div>
+    <div class="row"><button onclick="adminAddLandmarkHere()">📍 Přidat tady, kde stojím</button></div>`;
+  if(lmCustom.length){
+    lmCustom.forEach(lm => {
+      html += `<div style="display:flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:6px;margin-top:6px;">
+        <span>${lm.emoji||'📍'}</span><span style="flex:1;">${escapeHtml(lm.name||'?')}</span>
+        <button class="danger" style="font-size:0.8em;" onclick="adminDeleteLandmark('${lm.id}')">Smazat</button>
+      </div>`;
+    });
+  } else {
+    html += `<p style="font-size:0.85em;color:var(--muted);margin-top:6px;">Zatím žádná vlastní místa (kromě zámku a náměstí, které jsou v kódu).</p>`;
+  }
+  html += `</div>`;
 
   html += `<div class="card">
     <h3>⚙️ Ekonomika</h3>
@@ -5210,6 +5641,29 @@ function adminToggleConsole(){
   };
   script.onerror = () => showAlert('Nepodařilo se stáhnout konzoli — zkontroluj internetové připojení.');
   document.body.appendChild(script);
+}
+
+// Přidá místo zájmu na aktuální pozici hráče (admin musí fyzicky stát na místě).
+function adminAddLandmarkHere(){
+  if(!playerPos){ showAlert('Nemám tvoji polohu — počkej, až tě GPS najde.'); return; }
+  const nameEl = document.getElementById('adminLmName');
+  const emojiEl = document.getElementById('adminLmEmoji');
+  const name = sanitizeName((nameEl && nameEl.value || '').trim()) || 'Místo zájmu';
+  const emoji = (emojiEl && emojiEl.value || '').trim() || '📍';
+  world.landmarks = asArray(world.landmarks);
+  world.landmarks.push({
+    id: 'lm_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+    name, emoji, lat: playerPos.lat, lng: playerPos.lng, desc: ''
+  });
+  if(nameEl) nameEl.value = '';
+  addNews('event', `📍 Ve městě přibylo nové místo zájmu: ${name}.`);
+  saveWorld(); renderAdmin(); renderLandmarkMarkers();
+  showAlert(`Místo „${name}" přidáno na tvou aktuální polohu.`);
+}
+async function adminDeleteLandmark(id){
+  if(!(await showConfirm('Smazat tohle místo zájmu?'))) return;
+  world.landmarks = asArray(world.landmarks).filter(l => l.id !== id);
+  saveWorld(); renderAdmin(); renderLandmarkMarkers();
 }
 
 function adminBroadcast(){
@@ -5425,7 +5879,8 @@ function renderStatDetail(which){
     if(status==='tenant'){ Object.values(world.parcels).forEach(p=>(p.units||[]).forEach(un=>{ if(un.tenant===u.name) rentPart += un.rentPrice; })); }
     html += `<div class="card"><h3>${label}</h3>
       <p>Denní náklad na bydlení: <b style="color:var(--gold)">${Math.round(cost+rentPart)} Kč/den</b></p>
-      ${status==='homeless' ? `<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc (${LIVING_COST} Kč/den). Kup si podíl v domě určeném na bydlení, nebo si najmi byt — ušetříš.</p>` : ''}
+      ${status==='homeless' ? `<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc (${LIVING_COST} Kč/den).</p>
+        <p style="font-size:0.9em;color:var(--muted)">${housingHint(u.name)}</p>` : ''}
       ${status==='tenant' ? `<p style="font-size:0.9em;color:var(--muted)">Platíš životní náklady (${TENANT_LIVING_COST}) + nájem majiteli (${Math.round(rentPart)}). Kdybys měl vlastní bydlení, platil bys jen ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.</p>` : ''}
       ${status==='owner' ? `<p style="font-size:0.9em;color:var(--accent)">Máš nejlevnější možné bydlení — vlastní podíl v domě. Dobrá práce!</p>` : ''}
     </div>`;
@@ -5688,6 +6143,30 @@ function renderGuide(){
     <p>Byty <b>postupně chátrají</b> (víc, když jsou obydlené) — musíš je čas od času opravit, jinak přestanou vydělávat.</p>
   `);
 
+  html += guideSection('🎁','První nemovitost zdarma (a proč jen podíl)', `
+    <p>Na začátku máš nárok na nemovitost zdarma. Nedostaneš ale celý dům — dostaneš <b>podíl v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč</b>. Domy mají různou cenu, takže:</p>
+    <p>• u <b>levnějšího</b> domu ti to vyjde na většinu (přes 50 %) → hned v něm <b>bydlíš</b> a klesnou ti náklady,<br>
+       • u <b>drahého</b> domu dostaneš jen menšinu → nemovitost sice vlastníš, ale <b>bydlet v ní nemůžeš</b>.</p>
+    <p>Proč? Bydlet můžeš jen tam, kde máš <b>víc než 50 %</b> domu — jinak o domě rozhoduje někdo jiný. Před vzetím zdarma ti hra u tlačítka ukáže, kolik procent dostaneš.</p>
+    <p style="color:var(--muted)">Tip: na začátku ber radši levnější dům, ať máš kde bydlet. Drahé domy se vyplatí kupovat později jako investice.</p>
+  `);
+
+  html += guideSection('🎯','Denní výzvy, série a místa zájmu', `
+    <p><b>Série přihlášení:</b> za každý den v řadě, kdy hru otevřeš, dostaneš odměnu — a ta roste až do 7. dne. Když den vynecháš, série začíná od začátku.</p>
+    <p><b>Denní úkoly:</b> každý den dostaneš tři úkoly (třeba ujít kus cesty, sebrat balíky nebo navštívit místo). Odměna se připíše sama, jakmile úkol splníš. Za všechny tři je bonus navíc.</p>
+    <p><b>Místa zájmu:</b> na mapě jsou fialové body u skutečných míst v Bučovicích. Dojdi k nim (do ${LANDMARK_VISIT_RADIUS} m) a dostaneš odměnu — každé místo jednou denně.</p>
+    <p><b>Upozornění:</b> v panelu 🎯 si můžeš zapnout připomenutí na splněné úkoly a nový den. Chodí ale jen tehdy, když hra běží (i na pozadí) — úplně zavřené appce je poslat nejde.</p>
+    <p style="color:var(--muted)">Vše se obnovuje o půlnoci: nové úkoly, nové balíky, místa jde zase navštívit.</p>
+  `);
+
+  html += guideSection('🛡️','Poctivá hra (proti podvádění)', `
+    <p>Peníze za chůzi dostáváš jen za <b>skutečný pohyb po městě</b>. Hra proto nepočítá:</p>
+    <p>• jízdu autem, vlakem nebo kolem (na to je pohyb moc rychlý),<br>
+       • chvění GPS, když stojíš na místě,<br>
+       • pohyb mimo herní oblast (za městem, kde nejsou domy).</p>
+    <p>Když se poloha opakovaně mění nemožně rychle (typicky falešná GPS), odměny za chůzi se do konce dne <b>pozastaví</b> a druhý den se samy obnoví.</p>
+  `);
+
   html += guideSection('🧑‍🤝‍🧑','Nájemníci (zájemci o bydlení)', `
     <p>V detailu volného bytu se objeví <b>zájemci o bydlení</b> — postavičky, co si chtějí pronajmout byt. Každý má své <b>požadavky</b>: kolik nejvíc zaplatí za nájem, jaký chce mít byt ve stavu, a někdy i konkrétní vylepšení (třeba zateplení).</p>
     <p>Když tvůj byt požadavky <b>splňuje</b>, můžeš zájemce <b>nastěhovat</b>. Pak ti platí <b>spolehlivě plný nájem každý den</b> — na rozdíl od anonymních městských nájemníků, kde příjem kolísá podle ceny.</p>
@@ -5855,7 +6334,7 @@ function renderProfile(){
       ${LIVING_BREAKDOWN.map(c=>`<p>${c.label}: ~${Math.round(baseCost*c.ratio)} Kč/den</p>`).join('')}
       ${rentPart>0?`<p>🔑 Nájem majiteli: ${Math.round(rentPart)} Kč/den</p>`:''}
       <p style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">Celkem za bydlení a život: <b style="color:var(--gold)">~${Math.round(baseCost+rentPart)} Kč/den</b></p>
-      ${status==='homeless'?'<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc — pořiď si podíl v domě nebo si najmi byt.</p>':''}
+      ${status==='homeless'?`<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc.</p><p style="font-size:0.88em;color:var(--muted)">${housingHint(u.name)}</p>`:''}
     </div>`;
   }
 
@@ -6107,7 +6586,12 @@ async function repairUnit(id, idx){
   if(me.balance < cost){ showAlert('Nemáš dost peněz na stavebniny.'); return; }
   me.balance -= cost;
   unit.condition = 100;
+  // počítadlo oprav pro denní úkol (nuluje se s novým dnem)
+  const today = calendarDay();
+  if(me.repairDay !== today){ me.repairDay = today; me.repairsToday = 0; }
+  me.repairsToday = (me.repairsToday || 0) + 1;
   saveWorld(); refreshAll();
+  checkQuests();
 }
 
 // --- Nájem bytu hráčem ---
@@ -6212,6 +6696,7 @@ function workShift(jobId){
   me.currentJobShifts = (me.currentJobShifts || 0) + 1;
   me.missedInRow = 0;
   saveWorld(); refreshAll(); renderJobs();
+  checkQuests();   // směna může splnit denní úkol
 
   let msg = `Odpracováno: +${Math.round(job.salary*inflationMult())} Kč`;
   if(seniorityBonus >= 1) msg += ` · příplatek za stáž +${Math.round(seniorityBonus*inflationMult())} Kč`;
@@ -6384,6 +6869,17 @@ function doLogin(name, pinHash){
   }
   startGeoTracking();
   setTimeout(maybeShowTutorial, 400);
+
+  // Série za přihlášení + denní úkoly (obojí se řeší 1× denně)
+  ensureQuests(u);
+  const st = ensureStreak(u);
+  if(st){
+    saveWorld();
+    setTimeout(() => {
+      showAlert(`🔥 Série ${st.streak}. den v řadě!\nOdměna +${st.reward} Kč.\n\nPodívej se do 🎯 Denní výzvy, co tě dnes čeká.`);
+      playSound('coin');
+    }, 1200);
+  }
 }
 
 // Automatické přihlášení, pokud si hráč přezdívku už uložil na tomhle zařízení
@@ -6399,7 +6895,7 @@ function tryAutoLogin(){
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
 const SHEET_TITLES = {
   selected:'Vybraný dům', mine:'Moje nemovitosti',
-  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel'
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy'
 };
 
 function openSheet(tabName){
@@ -6421,6 +6917,7 @@ function openSheet(tabName){
   if(tabName === 'finance') renderFinance();
   if(tabName === 'guide') renderGuide();
   if(tabName === 'admin') renderAdmin();
+  if(tabName === 'daily') renderDaily();
 }
 
 function closeSheet(){
@@ -6505,6 +7002,7 @@ window.onload = () => {
   registerServiceWorker();
   setupInstallPrompt();
   loadAdminFlag();
+  loadNotifyFlag();
   initFirebaseSync();   // pak se na pozadí připojí ke sdílenému světu (multiplayer)
   tryAutoLogin();
 };
