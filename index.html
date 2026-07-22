@@ -3447,7 +3447,7 @@ function housingHint(name){
     const chybi = Math.max(0, 50.1 - mam);
     const cena = Math.round(housePricePerPercent(best) * chybi);
     return `Podíl v domě <b>máš</b> (${mam.toFixed(0)} % v domě ${best.id.replace('h_','#')}), ale na bydlení je potřeba <b>víc než 50 %</b>. ` +
-           `Chybí ti ${chybi.toFixed(0)} % (~${cena.toLocaleString('cs-CZ')} Kč) — dokup je u toho domu. Nebo si zatím <b>najmi byt</b>, i to je levnější než být bez bydlení.`;
+           `Chybí ti ${chybi.toFixed(0)} % (~${Math.round(cena).toLocaleString('cs-CZ')} Kč) — dokup je u toho domu. Nebo si zatím <b>najmi byt</b>, i to je levnější než být bez bydlení.`;
   }
   // většinu má, ale dům není určený k bydlení
   if(majority.useType !== 'residence'){
@@ -4562,7 +4562,7 @@ function renderSelected(id){
     html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
       <p style="font-size:0.92em;margin:0 0 4px;color:var(--accent2)">📜 Nedávné prodeje tohoto domu:</p>`;
     p.salesHistory.forEach(s => {
-      html += `<p style="font-size:0.85em;color:var(--muted);margin:1px 0;">den ${s.day}: ${s.pct} % za ${(s.pricePerPct*s.pct).toLocaleString('cs-CZ')} Kč <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span></p>`;
+      html += `<p style="font-size:0.85em;color:var(--muted);margin:1px 0;">den ${s.day}: ${s.pct} % za ${Math.round(s.pricePerPct*s.pct).toLocaleString('cs-CZ')} Kč <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span></p>`;
     });
     html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Skutečné prodeje ovlivňují cenu domu — tak vzniká tržní hodnota.</p></div>`;
   }
@@ -5356,10 +5356,12 @@ function checkAchievements(){
   }
 }
 
+// Hodnost podle jmění. POZOR: nesmí obsahovat slova o bydlení ("nájemník", "majitel"),
+// jinak si to hráč plete se svým stavem bydlení — přesně tahle záměna mátla testery.
 function titleForWorth(worth){
   if(worth < 5000) return 'Nováček';
-  if(worth < 20000) return 'Nájemník';
-  if(worth < 60000) return 'Majitel';
+  if(worth < 20000) return 'Střádal';
+  if(worth < 60000) return 'Podnikavec';
   if(worth < 150000) return 'Investor';
   if(worth < 400000) return 'Magnát';
   return 'Realitní král';
@@ -5843,7 +5845,7 @@ function renderStatDetail(which){
     html += `<div class="card"><h3>💰 Peníze</h3>
       <p>Hotovost: <b style="color:var(--gold)">${Math.round(u.balance).toLocaleString('cs-CZ')} Kč</b></p>
       <p>Na spoření: ${Math.round(u.savings||0).toLocaleString('cs-CZ')} Kč</p>
-      <p>Čisté jmění: <b>${worth.toLocaleString('cs-CZ')} Kč</b></p>
+      <p>Čisté jmění: <b>${Math.round(worth).toLocaleString('cs-CZ')} Kč</b></p>
     </div>`;
     const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
     html += `<div class="card"><h3>📈 Denní tok</h3>
@@ -6308,17 +6310,17 @@ function renderProfile(){
   html += `<div class="card" style="text-align:center;">
     <div style="font-size:48px;${isOwn?'cursor:pointer':''}" ${isOwn?'onclick="changeAvatar()"':''}>${escapeHtml(u.avatar||'🧑')}</div>
     <h3 style="margin:4px 0;">${escapeHtml(u.name)}${isOwn?' <span style="color:var(--accent);font-size:1em;">(ty)</span>':''}</h3>
-    <p style="color:var(--gold);font-weight:600;">${title}</p>
+    <p style="color:var(--gold);font-weight:600;">🏅 hodnost: ${title}</p>
     ${isOwn?'<p style="font-size:0.92em;color:var(--muted)">klepni na avatar pro změnu</p>':''}
     ${isOwn?'<div class="row" style="justify-content:center;margin-top:6px;"><button class="secondary" onclick="changeName()">✏️ Změnit jméno</button><button class="secondary" onclick="changePin()">🔒 '+(u.pinHash?'Změnit PIN':'Nastavit PIN')+'</button></div>':''}
   </div>`;
 
   html += `<div class="card">
     <h3>📊 Statistiky</h3>
-    <p>Čisté jmění: <b style="color:var(--gold)">${worth.toLocaleString('cs-CZ')} Kč</b> ${rank<=3?['🥇','🥈','🥉'][rank-1]:`(${rank}. místo)`}</p>
+    <p>Čisté jmění: <b style="color:var(--gold)">${Math.round(worth).toLocaleString('cs-CZ')} Kč</b> ${rank<=3?['🥇','🥈','🥉'][rank-1]:`(${rank}. místo)`}</p>
     <p>Hotovost: ${Math.round(u.balance).toLocaleString('cs-CZ')} Kč</p>
     <p>Na spoření: ${Math.round(u.savings||0).toLocaleString('cs-CZ')} Kč</p>
-    <p>Bydlení: ${statusLabel}</p>
+    <p>Bydlení: ${statusLabel}${status==='homeless' && houses.length ? ' <span style="font-size:0.85em;color:var(--muted)">(podíl máš, ale menšinový)</span>' : ''}</p>
     <p>Domů s podílem: <b>${houses.length}</b>${rentalUnits?` (${rentalUnits} bytů k pronájmu)`:''}</p>
     <p>Podílů v podnicích: <b>${bizCount}</b></p>
     <p>Zaměstnání: ${job ? `<b>${job.job.name}</b> (${job.job.salary} Kč/směna)` : 'nezaměstnaný'}</p>
@@ -6416,7 +6418,7 @@ function renderLeaderboard(){
   if(!players.length){ el.innerHTML = '<div class="empty-state">Zatím žádní hráči.</div>'; return; }
 
   const modes = {
-    worth:    {label:'💰 Jmění',      key:'worth',    fmt:v=>v.toLocaleString('cs-CZ')+' Kč', note:'Řazeno podle čistého jmění (hotovost + hodnota podílů − dluhy).'},
+    worth:    {label:'💰 Jmění',      key:'worth',    fmt:v=>Math.round(v).toLocaleString('cs-CZ')+' Kč', note:'Řazeno podle čistého jmění (hotovost + hodnota podílů − dluhy).'},
     houses:   {label:'🏠 Nemovitosti', key:'houses',   fmt:v=>v+' '+(v===1?'dům':(v>=2&&v<=4?'domy':'domů')), note:'Řazeno podle počtu domů, ve kterých máš podíl.'},
     distance: {label:'🚶 Nachozeno',   key:'distance', fmt:v=>(v/1000).toFixed(2).replace('.',',')+' km', note:'Řazeno podle celkové nachozené vzdálenosti.'}
   };
@@ -6437,7 +6439,7 @@ function renderLeaderboard(){
     return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':`onclick="viewProfile('${pl.name}')"`}>
       <h3>${rank} ${escapeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}</h3>
       <p><b style="color:var(--gold)">${m.fmt(pl[m.key])}</b></p>
-      <p style="font-size:0.92em;color:var(--muted)">Jmění ${pl.worth.toLocaleString('cs-CZ')} Kč · ${pl.houses} ${pl.houses===1?'dům':'domů'} · ${(pl.distance/1000).toFixed(1).replace('.',',')} km</p>
+      <p style="font-size:0.92em;color:var(--muted)">Jmění ${Math.round(pl.worth).toLocaleString('cs-CZ')} Kč · ${pl.houses} ${pl.houses===1?'dům':'domů'} · ${(pl.distance/1000).toFixed(1).replace('.',',')} km</p>
     </div>`;
   }).join('');
 
