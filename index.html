@@ -913,6 +913,8 @@ function checkLandmarks(){
 // Nejde spolehlivě poznat "fake GPS" appku, ale dá se poznat NEMOŽNÝ pohyb.
 // Když se poloha opakovaně mění rychleji, než jde ujít, přestaneme za chůzi platit (do konce dne).
 const CHEAT_FLAG_LIMIT = 8;          // kolik nemožných skoků v řadě vede k pozastavení odměn
+const CHEAT_SPEED_MS = 14;           // m/s (~50 km/h) — nad tím už nejde o chůzi ani o šum GPS
+const CHEAT_MIN_DIST = 120;          // m — a zároveň musí jít o pořádný skok, ne o chvění
 const WALK_SANE_DAILY_MAX = 30000;   // m — přes 30 km/den už nejde o chůzi po městě
 function ensureCheatDay(u){
   if(!u) return u;
@@ -4158,6 +4160,9 @@ function onPosition(pos){
   document.getElementById('gpsWarning').style.display = 'none';
   const newPos = {lat: pos.coords.latitude, lng: pos.coords.longitude};
   const accuracy = pos.coords.accuracy || 30;
+  playerPos = newPos;   // POZOR: musí být dřív než počítání chůze — kontrola herní oblasti
+                        // se ptá na aktuální polohu. Bez toho se první zaměření po zapnutí
+                        // appky (a s ním i cesta ušlá "offline") zahodilo.
 
   if(lastGeoPos){
     const dist = haversine(lastGeoPos, newPos);
@@ -4166,16 +4171,16 @@ function onPosition(pos){
     const speed = elapsedSec > 0 ? dist / elapsedSec : 0; // m/s mezi dvěma měřeními
 
     if(accuracy > GPS_MAX_ACCURACY){
-      // nepřesná poloha → nepočítat (byl by to šum), jen přesuň referenci
-      lastGeoPos = newPos; lastGeoTime = now;
+      // nepřesná poloha → ignorovat a NEHÝBAT referencí, ať se ušlá cesta neztratí
+      // (první zaměření po zapnutí appky bývá nepřesné; jinak by přišla o metry)
     } else if(dist > GPS_NOISE_IGNORE && dist < GPS_JUMP_IGNORE){
       // Vypadá to jako pohyb — ale ověříme rychlost. Reálná chůze má rozumnou rychlost;
       // náhlý "skok" o pár metrů za zlomek sekundy je GPS drift, ne krok.
       if(elapsedSec > 0 && speed <= MAX_WALK_SPEED_MS){
         creditWalking(dist);       // reálná chůze → započítat
         creditHonestMove();
-      } else if(elapsedSec > 0 && speed > MAX_WALK_SPEED_MS){
-        flagSuspiciousMove();      // nemožně rychlý přesun → anti-cheat počítadlo
+      } else if(elapsedSec > 0 && speed > CHEAT_SPEED_MS && dist > CHEAT_MIN_DIST){
+        flagSuspiciousMove();      // zjevný teleport (daleko + nemožně rychle) → anti-cheat
       }
       // jinak (moc rychlý skok = drift/chyba) → nepočítat, jen posunout referenci
       lastGeoPos = newPos; lastGeoTime = now;
@@ -4192,7 +4197,6 @@ function onPosition(pos){
     lastGeoPos = newPos;
     lastGeoTime = Date.now();
   }
-  playerPos = newPos;
   // uložit pozici ke hráči (pro zobrazení ostatních; s Firebase se to synchronizuje mezi zařízeními)
   if(currentUser && world.users[currentUser.name]){
     world.users[currentUser.name].lastPos = {lat:newPos.lat, lng:newPos.lng, at: Date.now()};
