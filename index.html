@@ -577,15 +577,17 @@ function hasUpgrade(p, key){ return !!(p.upgrades && p.upgrades[key]); }
 // NPC hledá byt k pronájmu. Když hráč má volný byt splňující POŽADAVKY (kombinace: max nájem,
 // min stav bytu, požadovaná vylepšení), může NPC nastěhovat — platí pak spolehlivý plný nájem
 // a zůstává TRVALE, dokud je spokojený (dokud byt nespadne pod jeho požadovaný stav).
-const NPC_TENANT_POOL = [
-  {name:'Paní Nováková',  avatar:'👵', maxRent:50,  minCondition:40, needs:[]},
-  {name:'Student Tomáš',  avatar:'🧑‍🎓', maxRent:40,  minCondition:20, needs:[]},
-  {name:'Rodina Dvořákových', avatar:'👨‍👩‍👧', maxRent:80, minCondition:70, needs:['insulation']},
-  {name:'Pan Ing. Svoboda', avatar:'🧑‍💼', maxRent:95, minCondition:75, needs:['insulation','ac']},
-  {name:'Důchodce Karel', avatar:'👴', maxRent:45,  minCondition:50, needs:['insulation']},
-  {name:'Mladý pár',      avatar:'💑', maxRent:70, minCondition:60, needs:['renovation']},
-  {name:'Programátor Petr', avatar:'🧑‍💻', maxRent:90, minCondition:65, needs:['ac']},
-  {name:'Umělkyně Klára', avatar:'🧑‍🎨', maxRent:60,  minCondition:55, needs:['renovation']},
+// Typy zájemců. Konkrétní jméno se skládá z "names" (různé varianty), takže se generují
+// unikátní jména jako "Student Tomáš" / "Studentka Petra" — ne pořád jeden a týž člověk.
+const NPC_TENANT_TYPES = [
+  {avatar:'👵', maxRent:50, minCondition:40, needs:[],                    names:['Paní Nováková','Paní Svobodová','Paní Horáková','Paní Marková','Paní Kučerová']},
+  {avatar:'🧑‍🎓', maxRent:40, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam']},
+  {avatar:'👨‍👩‍👧', maxRent:80, minCondition:70, needs:['insulation'],         names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových']},
+  {avatar:'🧑‍💼', maxRent:95, minCondition:75, needs:['insulation','ac'],    names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban']},
+  {avatar:'👴', maxRent:45, minCondition:50, needs:['insulation'],        names:['Důchodce Karel','Důchodkyně Marie','Pan Jaroslav','Paní Věra','Pan Bohumil']},
+  {avatar:'💑', maxRent:70, minCondition:60, needs:['renovation'],        names:['Novomanželé Malí','Mladý pár Novákovi','Snoubenci Veselí','Pár Dvořákovi']},
+  {avatar:'🧑‍💻', maxRent:90, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza']},
+  {avatar:'🧑‍🎨', maxRent:60, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela']},
 ];
 const NPC_REFRESH_HOURS = 12; // nabídka zájemců se obměňuje
 
@@ -598,19 +600,34 @@ function unitMeetsNpc(p, u, npc){
   return true;
 }
 // Vygeneruje/obnoví seznam zájemců (drží se ve world.npcTenants, sdílí se přes Firebase).
+// Vrátí jména nájemníků, kteří už někde bydlí (aby se nenabízeli podruhé).
+function occupiedTenantNames(){
+  const set = new Set();
+  Object.values(world.parcels || {}).forEach(p => {
+    (p.units || []).forEach(un => { if(un && un.npc && un.npc.name) set.add(un.npc.name); });
+  });
+  return set;
+}
 function refreshNpcTenants(force){
   if(!world.npcTenants) world.npcTenants = { list:[], refreshedTs:0 };
   const now = Date.now();
   if(!force && world.npcTenants.list && world.npcTenants.list.length &&
      (now - (world.npcTenants.refreshedTs||0)) < NPC_REFRESH_HOURS*3600*1000) return;
-  // vybrat 3-4 náhodné zájemce
-  const pool = [...NPC_TENANT_POOL];
+  const taken = occupiedTenantNames();          // jména, co už bydlí → nenabízet
+  const usedNames = new Set(taken);             // + hlídat unikátnost v rámci nabídky
+  const types = [...NPC_TENANT_TYPES];
   const pick = [];
   const count = 3 + Math.floor(Math.random()*2);
-  for(let i=0;i<count && pool.length;i++){
-    const idx = Math.floor(Math.random()*pool.length);
-    const npc = pool.splice(idx,1)[0];
-    pick.push({ id:'npc_'+now+'_'+i, name:npc.name, avatar:npc.avatar, maxRent:npc.maxRent, minCondition:npc.minCondition, needs:npc.needs });
+  let guard = 0;
+  while(pick.length < count && types.length && guard++ < 100){
+    const ti = Math.floor(Math.random()*types.length);
+    const t = types[ti];
+    // vybrat z typu jméno, které ještě není použité
+    const free = t.names.filter(n => !usedNames.has(n));
+    if(!free.length){ types.splice(ti,1); continue; }   // z tohoto typu došla jména
+    const name = free[Math.floor(Math.random()*free.length)];
+    usedNames.add(name);
+    pick.push({ id:'npc_'+now+'_'+pick.length, name, avatar:t.avatar, maxRent:t.maxRent, minCondition:t.minCondition, needs:t.needs });
   }
   world.npcTenants = { list: pick, refreshedTs: now };
 }
@@ -624,6 +641,11 @@ function moveInNpc(npcId, houseId, unitIdx){
   if(!iHaveMajority(p)){ showAlert('Nastěhovat nájemníka může jen správce domu (víc než 50 % podílu).'); return; }
   const u = p.units[unitIdx];
   if(!unitMeetsNpc(p, u, npc)){ showAlert('Tenhle byt nesplňuje požadavky zájemce (nájem, stav nebo vylepšení).'); return; }
+  if(occupiedTenantNames().has(npc.name)){   // to samé jméno už mezitím obsadilo jiný byt
+    world.npcTenants.list = world.npcTenants.list.filter(n => n.id !== npcId);
+    showAlert(`${npc.name} si mezitím našel bydlení jinde. Vyber jiného zájemce.`);
+    refreshAll(); return;
+  }
   u.npc = { name: npc.name, avatar: npc.avatar, minCondition: npc.minCondition };
   u.tenant = null;
   // odebrat zájemce z nabídky
@@ -3594,6 +3616,7 @@ function migrateWorld(){
       if(!world.pickups || typeof world.pickups !== 'object') world.pickups = { day:0, list:[] };
       world.pickups.list = asArray(world.pickups.list);
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
+      world.deletedMsgs = asArray(world.deletedMsgs); // id smazaných zpráv (moderace)
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
@@ -3675,7 +3698,8 @@ function adoptWorld(incoming){
   // takže na rozdíl od majetku (kde vlastníkem pravdy je vždy hráč sám) je tady potřeba
   // SLOUČIT obě verze, ne jednu zahodit — jinak zpráva zapsaná jinde może zmizet.
   let myUser = null;
-  const myHouseShares = {};   // parcelId -> pct
+  const myHouseShares = {};   // parcelId -> pct (podíly ve VŠECH domech, kde něco mám)
+  const myManagedHouses = {}; // parcelId -> celý stav domu, kde jsem SPRÁVCE (>50 %)
   const myBizShares = {};     // bizId -> pct
   const myTenancies = [];     // {parcelId, unitIdx}
   const myNews = world.news || [];
@@ -3684,6 +3708,12 @@ function adoptWorld(incoming){
     myUser = world.users[myName];
     Object.entries(world.parcels || {}).forEach(([id, p]) => {
       if(p.owners && p.owners[myName]) myHouseShares[id] = p.owners[myName];
+      // Kde mám většinu, jsem správce → moje verze domu je ta pravá (přestavba, byty,
+      // vylepšení, nájemníci). Zazálohujeme CELÝ dům, ať ho cizí zápis nevrátí do starého stavu.
+      // (Tohle řešilo bug: "přestavěl jsem na pronájem, ono se to vrátilo a peníze pryč".)
+      if((p.owners && p.owners[myName] || 0) > 50){
+        myManagedHouses[id] = JSON.parse(JSON.stringify(p));
+      }
       (p.units || []).forEach((u, idx) => { if(u.tenant === myName) myTenancies.push({id, idx}); });
     });
     Object.entries(world.businesses || {}).forEach(([id, b]) => {
@@ -3698,6 +3728,9 @@ function adoptWorld(incoming){
   // 2b) sloučit noviny a chat (podle ts+text, ať se stejná zpráva neduplikuje), seřadit, oříznout
   world.news = mergeLogs(myNews, world.news || [], NEWS_MAX);
   world.chat = mergeLogs(myChat, world.chat || [], CHAT_MAX, true);
+  // vyházet zprávy, které admin na kterémkoli zařízení smazal (přežije napříč sloučeními)
+  const deleted = asArray(world.deletedMsgs);
+  if(deleted.length) world.chat = world.chat.filter(m => !m.id || !deleted.includes(m.id));
 
   // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal).
   // U samotného účtu porovnáme AKTIVITU: když jsem naposledy hrál na jiném zařízení (cloud má
@@ -3712,6 +3745,20 @@ function adoptWorld(incoming){
       const p = world.parcels[id];
       if(p){ if(!p.owners) p.owners = {}; if(!p.owners[myName]) p.owners[myName] = pct; }
     });
+    // U domů, které spravuju, vrátím SVOU verzi celou — ale jen když je novější (podle lastActive),
+    // ať nepřepíšu čerstvou akci z jiného mého zařízení. Zachová přestavbu, byty i vylepšení.
+    const iAmNewer = !world.users[myName] || (myUser.lastActive || 0) >= ((world.users[myName] && world.users[myName].lastActive) || 0);
+    if(iAmNewer){
+      Object.entries(myManagedHouses).forEach(([id, saved]) => {
+        // pořád musím být většinovým vlastníkem i v přijatém světě (jinak mi dům někdo mezitím přebral)
+        const cloudP = world.parcels[id];
+        const stillMine = cloudP && cloudP.owners && (cloudP.owners[myName] || 0) > 50;
+        if(stillMine){
+          // zachovat aktuální polohu/cenu z definice, ale stav (useType, units, upgrades…) vzít můj
+          world.parcels[id] = Object.assign({}, saved, { lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels });
+        }
+      });
+    }
     Object.entries(myBizShares).forEach(([id, pct]) => {
       const b = world.businesses[id];
       if(b){ if(!b.owners) b.owners = {}; if(!b.owners[myName]) b.owners[myName] = pct; }
@@ -5567,6 +5614,7 @@ function renderAdmin(){
       <input id="adminBroadcastInput" type="text" maxlength="200" placeholder="Text oznámení..." style="flex:1;">
       <button onclick="adminBroadcast()">Odeslat</button>
     </div>
+    <div class="row" style="margin-top:6px;"><button class="secondary" onclick="adminClearChat()">🧹 Smazat celý chat</button></div>
   </div>`;
 
   const lmCustom = asArray(world.landmarks);
@@ -5670,6 +5718,18 @@ async function adminDeleteLandmark(id){
   if(!(await showConfirm('Smazat tohle místo zájmu?'))) return;
   world.landmarks = asArray(world.landmarks).filter(l => l.id !== id);
   saveWorld(); renderAdmin(); renderLandmarkMarkers();
+}
+
+// Admin: smaže celou historii chatu najednou.
+async function adminClearChat(){
+  if(!isAdmin) return;
+  if(!(await showConfirm('Smazat úplně celý chat? Nedá se to vzít zpět.'))) return;
+  if(!Array.isArray(world.deletedMsgs)) world.deletedMsgs = [];
+  (world.chat || []).forEach(m => { if(m.id && !world.deletedMsgs.includes(m.id)) world.deletedMsgs.push(m.id); });
+  if(world.deletedMsgs.length > 200) world.deletedMsgs = world.deletedMsgs.slice(-200);
+  world.chat = [];
+  saveWorld();
+  showAlert('Chat byl vymazán.');
 }
 
 function adminBroadcast(){
@@ -5941,8 +6001,9 @@ function renderChat(){
         <span style="font-size:0.72em;color:var(--muted);">${timeAgo(m.ts)}</span>
       </div>
       <div style="font-size:0.95em;margin-top:2px;word-break:break-word;">${escapeHtml(m.text)}</div>
-      <div style="margin-top:4px;">
+      <div style="margin-top:4px;display:flex;gap:12px;">
         <span onclick="startReply('${m.id||''}')" style="cursor:pointer;font-size:0.75em;color:var(--muted);">↩︎ Odpovědět</span>
+        ${isAdmin ? `<span onclick="adminDeleteMessage('${m.id||''}')" style="cursor:pointer;font-size:0.75em;color:var(--danger);">🗑️ Smazat</span>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -5977,6 +6038,22 @@ function startReply(id){
 function cancelReply(){
   chatReplyTo = null;
   renderReplyBar();
+}
+
+// Admin: smaže zprávu z chatu (moderace). Zprávu pozná podle id.
+async function adminDeleteMessage(id){
+  if(!isAdmin) return;
+  const msg = (world.chat || []).find(m => m.id === id);
+  const nahled = msg ? `„${(msg.text||'').slice(0,40)}${(msg.text||'').length>40?'…':''}" od ${msg.name}` : 'tuhle zprávu';
+  if(!(await showConfirm(`Smazat ${nahled}?`))) return;
+  world.chat = (world.chat || []).filter(m => m.id !== id);
+  // Zapamatovat smazané id, ať se zpráva nevrátí přes synchronizaci z jiného zařízení,
+  // které o smazání ještě neví (chat se totiž slučuje, ne přepisuje). Držíme posledních 200.
+  if(!Array.isArray(world.deletedMsgs)) world.deletedMsgs = [];
+  if(id && !world.deletedMsgs.includes(id)) world.deletedMsgs.push(id);
+  if(world.deletedMsgs.length > 200) world.deletedMsgs = world.deletedMsgs.slice(-200);
+  saveWorld();
+  renderChat();
 }
 
 function sendChat(){
