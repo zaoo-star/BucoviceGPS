@@ -651,6 +651,7 @@ function moveInNpc(npcId, houseId, unitIdx){
   }
   u.npc = { name: npc.name, avatar: npc.avatar, minCondition: npc.minCondition };
   u.tenant = null;
+  stampHouse(p);
   // odebrat zájemce z nabídky
   world.npcTenants.list = world.npcTenants.list.filter(n => n.id !== npcId);
   addNews('rental', `📥 ${npc.name} se nastěhoval do domu ${p.id.replace('h_','#')} (nájem ${u.rentPrice} Kč/den).`);
@@ -664,6 +665,7 @@ function evictNpc(houseId, unitIdx){
   if(!p || !p.units || !p.units[unitIdx] || !p.units[unitIdx].npc) return;
   const name = p.units[unitIdx].npc.name;
   p.units[unitIdx].npc = null;
+  stampHouse(p);
   addNews('rental', `📤 ${name} byl vystěhován z domu ${p.id.replace('h_','#')}.`);
   saveWorld(); refreshAll();
 }
@@ -878,7 +880,10 @@ function checkQuests(){
   const u = world.users[currentUser.name];
   if(!u) return;
   ensureQuests(u);
-  let awarded = false;
+  u.questDone = asArray(u.questDone);
+  let changed = false;
+
+  // 1) odměny za jednotlivé splněné úkoly
   u.quests.forEach(qid => {
     const q = questById(qid);
     if(!q || u.questDone.includes(qid)) return;
@@ -886,21 +891,29 @@ function checkQuests(){
       const reward = Math.round(q.reward * inflationMult());
       u.balance += reward;
       u.questDone.push(qid);
-      awarded = true;
+      changed = true;
       showToast(`${q.icon} Úkol splněn: ${q.name} · +${reward} Kč`);
       notifyPlayer('Úkol splněn!', `${q.name} — získáváš ${reward} Kč`);
       playSound('coin');
     }
   });
-  if(awarded){
-    if(u.questDone.length >= u.quests.length && u.quests.length){
-      const bonus = Math.round(QUEST_ALL_BONUS * inflationMult());
-      u.balance += bonus;
-      showAlert(`🏅 Splnil jsi všechny dnešní úkoly! Bonus ${bonus} Kč.`);
-      notifyPlayer('Všechny úkoly hotové!', `Bonus ${bonus} Kč`);
-    }
-    saveWorld(); updateHeaderStats();
+
+  // 2) bonus za VŠECHNY úkoly — vyhodnotí se samostatně a jen JEDNOU (u.questBonusDay).
+  //    Dřív byl uvnitř větve "něco se právě připsalo", takže když se poslední úkol splnil
+  //    akcí, po které se bonus nedopočítal, o něj hráč přišel. Teď se zkontroluje pokaždé.
+  const today = calendarDay();
+  const vsechnySplneny = u.quests.length && u.questDone.length >= u.quests.length;
+  if(vsechnySplneny && u.questBonusDay !== today){
+    u.questBonusDay = today;
+    const bonus = Math.round(QUEST_ALL_BONUS * inflationMult());
+    u.balance += bonus;
+    changed = true;
+    showAlert(`🏅 Splnil jsi všechny dnešní úkoly! Bonus ${bonus} Kč.`);
+    notifyPlayer('Všechny úkoly hotové!', `Bonus ${bonus} Kč`);
+    playSound('coin');
   }
+
+  if(changed){ saveWorld(); updateHeaderStats(); }
 }
 const QUEST_ALL_BONUS = 300;   // bonus za splnění všech tří úkolů dne
 
@@ -3437,6 +3450,9 @@ function houseDecider(p){
 function iAmDecider(p){ return currentUser && houseDecider(p) === currentUser.name; }
 // Zásadní změny (změna využití domu) vyžadují nadpoloviční podíl
 function iHaveMajority(p){ return myHousePct(p) > 50; }
+// Razítko poslední změny domu — při sloučení světů vyhraje novější verze domu.
+// Spolehlivější než porovnávat aktivitu hráče (ta se mění i bez dotyku domu).
+function stampHouse(p){ if(p) p.mod = Date.now(); }
 
 // Férové (tržní) nájemné bytu podle hodnoty domu a počtu bytů — reaguje i na tržní cyklus
 function fairRentForHouse(p){
@@ -3596,6 +3612,7 @@ function migrateWorld(){
         u.lmGot     = asArray(u.lmGot);
         u.quests    = asArray(u.quests);
         u.questDone = asArray(u.questDone);
+        if(u.questBonusDay !== undefined && typeof u.questBonusDay !== 'number') u.questBonusDay = 0;
         u.claimedGifts = asArray(u.claimedGifts);
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
@@ -3763,20 +3780,20 @@ function adoptWorld(incoming){
       const p = world.parcels[id];
       if(p){ if(!p.owners) p.owners = {}; if(!p.owners[myName]) p.owners[myName] = pct; }
     });
-    // U domů, které spravuju, vrátím SVOU verzi celou — ale jen když je novější (podle lastActive),
-    // ať nepřepíšu čerstvou akci z jiného mého zařízení. Zachová přestavbu, byty i vylepšení.
-    const iAmNewer = !world.users[myName] || (myUser.lastActive || 0) >= ((world.users[myName] && world.users[myName].lastActive) || 0);
-    if(iAmNewer){
-      Object.entries(myManagedHouses).forEach(([id, saved]) => {
-        // pořád musím být většinovým vlastníkem i v přijatém světě (jinak mi dům někdo mezitím přebral)
-        const cloudP = world.parcels[id];
-        const stillMine = cloudP && cloudP.owners && (cloudP.owners[myName] || 0) > 50;
-        if(stillMine){
-          // zachovat aktuální polohu/cenu z definice, ale stav (useType, units, upgrades…) vzít můj
-          world.parcels[id] = Object.assign({}, saved, { lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels });
-        }
-      });
-    }
+    // U domů, které spravuju, porovnám RAZÍTKO ZMĚNY (p.mod): vyhraje novější verze domu.
+    // Tohle je spolehlivější než porovnávat aktivitu hráče — přesně tady mizela přestavba,
+    // protože se čerstvá změna neuznala za novější. Teď rozhoduje čas úpravy samotného domu.
+    Object.entries(myManagedHouses).forEach(([id, saved]) => {
+      const cloudP = world.parcels[id];
+      const stillMine = cloudP && cloudP.owners && (cloudP.owners[myName] || 0) > 50;
+      if(!stillMine) return;   // dům mi mezitím někdo přebral → nechat verzi z cloudu
+      const myMod = saved.mod || 0;
+      const cloudMod = cloudP.mod || 0;
+      // Moje verze vyhraje, když je stejně stará nebo novější (u shody držím svou — je to můj dům).
+      if(myMod >= cloudMod){
+        world.parcels[id] = Object.assign({}, saved, { lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels });
+      }
+    });
     Object.entries(myBizShares).forEach(([id, pct]) => {
       const b = world.businesses[id];
       if(b){ if(!b.owners) b.owners = {}; if(!b.owners[myName]) b.owners[myName] = pct; }
@@ -5532,6 +5549,7 @@ function renderDaily(){
   if(!currentUser || !world.users[currentUser.name]){ el.innerHTML = '<div class="empty-state">Nejdřív se přihlas.</div>'; return; }
   const u = world.users[currentUser.name];
   ensureQuests(u);
+  checkQuests();   // pojistka: dorovnat odměny/bonus, kdyby je nějaká akce nezapočítala
   ensureWalkDay(u);
   const got = myLandmarksToday();
 
@@ -6673,6 +6691,7 @@ function setUseType(id, type){
   if(!iHaveMajority(p)){ showAlert('Změnit využití domu může jen vlastník s víc než 50 % podílu.'); return; }
   p.useType = type;
   if(type === 'residence'){ delete p.units; }
+  stampHouse(p);
   saveWorld(); refreshAll();
 }
 
@@ -6690,6 +6709,7 @@ async function startRental(id){
   me.balance -= setupCost;
   p.useType = 'rental';
   p.units = Array.from({length: numUnits}, () => ({rentPrice: rent, condition: 100}));
+  stampHouse(p);
   addNews('rental', `🏘️ ${currentUser.name} otevřel pronájem v domě ${p.id.replace('h_','#')} (${numUnits} ${numUnits===1?'byt':'bytů'}, nájem ${rent} Kč).`);
   saveWorld(); refreshAll();
   showAlert(`Zaplaceno ${setupCost} Kč za zařízení ${numUnits} ${numUnits===1?'bytu':'bytů'}. Nájem se připisuje průběžně v reálném čase, byty postupně chátrají.`);
@@ -6704,6 +6724,7 @@ async function setUnitRentPrice(id, idx){
   const rent = parseInt(await showPrompt(`Nové nájemné za byt (${idx+1}. patro), Kč/den. Odhad trhu ${rentEstimateRange(p)} (vyšší = víc peněz, ale riziko prázdna):`, unit.rentPrice), 10);
   if(isNaN(rent) || rent <= 0) return;
   unit.rentPrice = rent;
+  stampHouse(p);
   saveWorld(); refreshAll();
 }
 
@@ -6722,6 +6743,7 @@ async function installUpgrade(id, key){
   me.balance -= cost;
   if(!p.upgrades) p.upgrades = {};
   p.upgrades[key] = true;
+  stampHouse(p);
   addNews('rental', `${up.icon} ${currentUser.name} vylepšil dům ${p.id.replace('h_','#')} — ${up.name}.`);
   playSound('success');
   saveWorld(); refreshAll();
@@ -6741,6 +6763,7 @@ async function repairUnit(id, idx){
   if(me.balance < cost){ showAlert('Nemáš dost peněz na stavebniny.'); return; }
   me.balance -= cost;
   unit.condition = 100;
+  stampHouse(p);
   // počítadlo oprav pro denní úkol (nuluje se s novým dnem)
   const today = calendarDay();
   if(me.repairDay !== today){ me.repairDay = today; me.repairsToday = 0; }
