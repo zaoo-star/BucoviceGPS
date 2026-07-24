@@ -135,6 +135,9 @@
     border:2px solid #fff;box-shadow:0 0 10px 3px rgba(192,132,252,0.5);
   }
   .landmarkMarker.visited{background:rgba(120,120,130,0.55);box-shadow:none;opacity:0.6;}
+  .adminPlayer summary::-webkit-details-marker{display:none;}
+  .adminPlayer summary::marker{content:'';}
+  .adminPlayer[open] summary{border-bottom:1px solid var(--border);}
   .pickupMarker{
     width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
     justify-content:center;font-size:18px;background:rgba(250,204,21,0.95);
@@ -857,6 +860,18 @@ function ensureQuests(u){
   if(!u.quests.length) u.quests = pickQuestsForDay(today);
 }
 function questById(id){ return QUEST_DEFS.find(q => q.id === id); }
+// Vyzvednutí čekající platby přímo za hry (tlačítko v panelu 🎯).
+function claimGiftsNow(){
+  if(!currentUser) return;
+  const got = claimGifts(currentUser.name);
+  if(got){
+    saveWorld(); updateHeaderStats(); renderDaily();
+    showAlert(`🎁 Vyzvedl jsi ${got.toLocaleString('cs-CZ')} Kč!`);
+    playSound('coin');
+  } else {
+    showAlert('Žádná čekající platba.');
+  }
+}
 // Zkontroluje splnění úkolů a rovnou odmění. Volá se po akcích (chůze, sběr, práce, oprava).
 function checkQuests(){
   if(!currentUser) return;
@@ -3581,6 +3596,7 @@ function migrateWorld(){
         u.lmGot     = asArray(u.lmGot);
         u.quests    = asArray(u.quests);
         u.questDone = asArray(u.questDone);
+        u.claimedGifts = asArray(u.claimedGifts);
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
         u.loans = asArray(u.loans);
@@ -3617,6 +3633,8 @@ function migrateWorld(){
       world.pickups.list = asArray(world.pickups.list);
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
       world.deletedMsgs = asArray(world.deletedMsgs); // id smazaných zpráv (moderace)
+      if(!world.gifts || typeof world.gifts !== 'object' || Array.isArray(world.gifts)) world.gifts = {};
+      Object.keys(world.gifts).forEach(k => { world.gifts[k] = asArray(world.gifts[k]); });
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
@@ -5571,6 +5589,22 @@ function renderDaily(){
   });
   html += `</div>`;
 
+  // --- čekající platby (dárky od admina) ---
+  const pending = asArray(world.gifts && world.gifts[u.name]);
+  const claimedIds = asArray(u.claimedGifts);
+  const toClaim = pending.filter(g => g && !claimedIds.includes(g.id));
+  if(toClaim.length){
+    const sum = toClaim.reduce((s,g)=>s+(g.amount||0),0);
+    html += `<div class="card" style="border:1px solid var(--accent);">
+      <h3>🎁 Čeká na tebe platba</h3>
+      <p style="font-size:1.2em;font-weight:700;color:var(--gold);margin:4px 0;">+${sum.toLocaleString('cs-CZ')} Kč</p>`;
+    toClaim.forEach(g => {
+      html += `<p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${g.amount.toLocaleString('cs-CZ')} Kč od ${escapeHtml(g.from||'?')}${g.note?' — '+escapeHtml(g.note):''}</p>`;
+    });
+    html += `<div class="row"><button onclick="claimGiftsNow()">Vyzvednout</button></div>
+    </div>`;
+  }
+
   // --- upozornění ---
   const supported = (typeof Notification !== 'undefined');
   html += `<div class="card">
@@ -5646,24 +5680,33 @@ function renderAdmin(){
   </div>`;
 
   html += `<div class="card">
-    <h3>👥 Hráči (${players.length})</h3>`;
+    <h3>👥 Hráči (${players.length})</h3>
+    <input id="adminPlayerSearch" type="text" placeholder="🔍 Hledat hráče podle jména…" oninput="filterAdminPlayers()" style="width:100%;margin-bottom:8px;">
+    <div id="adminPlayerList">`;
   if(!players.length) html += '<p style="color:var(--muted)">Zatím žádní hráči.</p>';
   players.forEach(u => {
     const worth = Math.round(netWorthEstimate(u.name));
     const houses = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0).length;
     const bizs = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0).length;
     const nm = escapeHtml(u.name).replace(/'/g, "\\'");
-    html += `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
-      <p style="margin:0;font-weight:600;">${escapeHtml(u.avatar||'🧑')} ${escapeHtml(u.name)}${u.pinHash?' 🔒':''}</p>
-      <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">Hotovost ${Math.round(u.balance).toLocaleString('cs-CZ')} · spoření ${Math.round(u.savings||0).toLocaleString('cs-CZ')} · jmění ${worth.toLocaleString('cs-CZ')} Kč · 🏠${houses} 📈${bizs}</p>
-      <div class="row" style="gap:4px;flex-wrap:wrap;">
-        <button class="secondary" style="font-size:0.85em;" onclick="adminSetMoney('${nm}')">💰 Peníze</button>
-        <button class="secondary" style="font-size:0.85em;" onclick="adminClearProps('${nm}')">🏚️ Zabavit majetek</button>
-        <button class="danger" style="font-size:0.85em;" onclick="adminDeletePlayer('${nm}')">🗑️ Smazat</button>
+    // Každý hráč je sbalený (jen jméno + jmění); rozklikne se kliknutím. Řeší nekonečné rolování.
+    html += `<details class="adminPlayer" data-name="${escapeHtml(u.name).toLowerCase()}" style="border:1px solid var(--border);border-radius:8px;margin-top:6px;">
+      <summary style="padding:8px;cursor:pointer;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span>${escapeHtml(u.avatar||'🧑')} ${escapeHtml(u.name)}${u.pinHash?' 🔒':''}</span>
+        <span style="font-size:0.8em;color:var(--gold);font-weight:600;white-space:nowrap;">${worth.toLocaleString('cs-CZ')} Kč</span>
+      </summary>
+      <div style="padding:0 8px 8px 8px;">
+        <p style="margin:2px 0 6px 0;font-size:0.85em;color:var(--muted)">Hotovost ${Math.round(u.balance).toLocaleString('cs-CZ')} · spoření ${Math.round(u.savings||0).toLocaleString('cs-CZ')} · 🏠${houses} 📈${bizs}</p>
+        <div class="row" style="gap:4px;flex-wrap:wrap;">
+          <button style="font-size:0.85em;background:var(--accent);color:#08130a;" onclick="adminSendMoney('${nm}')">🎁 Poslat peníze</button>
+          <button class="secondary" style="font-size:0.85em;" onclick="adminSetMoney('${nm}')">💰 Nastavit hotovost</button>
+          <button class="secondary" style="font-size:0.85em;" onclick="adminClearProps('${nm}')">🏚️ Zabavit majetek</button>
+          <button class="danger" style="font-size:0.85em;" onclick="adminDeletePlayer('${nm}')">🗑️ Smazat</button>
+        </div>
       </div>
-    </div>`;
+    </details>`;
   });
-  html += `</div>`;
+  html += `</div></div>`;
 
   html += `<div class="card">
     <h3 style="color:var(--danger)">☢️ Nebezpečná zóna</h3>
@@ -5732,6 +5775,15 @@ async function adminClearChat(){
   showAlert('Chat byl vymazán.');
 }
 
+// Filtruje seznam hráčů v admin panelu podle napsaného jména (bez překreslení celého panelu).
+function filterAdminPlayers(){
+  const q = (document.getElementById('adminPlayerSearch')?.value || '').toLowerCase().trim();
+  document.querySelectorAll('#adminPlayerList .adminPlayer').forEach(el => {
+    const name = el.getAttribute('data-name') || '';
+    el.style.display = (!q || name.includes(q)) ? '' : 'none';
+  });
+}
+
 function adminBroadcast(){
   const inp = document.getElementById('adminBroadcastInput');
   let text = (inp.value || '').trim();
@@ -5745,6 +5797,26 @@ function adminBroadcast(){
   saveWorld(); renderAdmin();
   showAlert('Oznámení odesláno.');
 }
+// Admin pošle hráči peníze do schránky (pošty). Hráč si je vyzvedne sám při dalším přihlášení
+// nebo v panelu 🎯 → tím se připíšou JEHO akcí a synchronizace je nepřepíše.
+async function adminSendMoney(name){
+  const u = world.users[name];
+  if(!u) return;
+  const val = await showPrompt(`Kolik Kč poslat hráči „${name}"? (připíše se, až si to vyzvedne)`, '1000', true);
+  if(val === null) return;
+  const n = parseInt(val, 10);
+  if(isNaN(n) || n === 0){ showAlert('Zadej nenulové číslo.'); return; }
+  const note = await showPrompt('Krátká zpráva k platbě (třeba důvod):', 'Náhrada od vedení města', false);
+  if(!world.gifts) world.gifts = {};
+  if(!Array.isArray(world.gifts[name])) world.gifts[name] = [];
+  world.gifts[name].push({
+    id: 'gift_' + Date.now() + '_' + Math.floor(Math.random()*1000),
+    amount: n, note: (note || '').slice(0,80), from: 'Vedení města', ts: Date.now()
+  });
+  saveWorld(); renderAdmin();
+  showAlert(`Poslal jsi ${n.toLocaleString('cs-CZ')} Kč hráči ${name}. Vyzvedne si je, až otevře hru (nemůže se to ztratit ani přepsat).`);
+}
+
 async function adminSetMoney(name){
   const u = world.users[name];
   if(!u) return;
@@ -5754,7 +5826,7 @@ async function adminSetMoney(name){
   if(isNaN(n)){ showAlert('Zadej číslo.'); return; }
   u.balance = n;
   saveWorld(); renderAdmin();
-  showAlert(`Hotovost hráče ${name} nastavena na ${n} Kč.`);
+  showAlert(`Hotovost hráče ${name} nastavena na ${n} Kč.\n\nPozor: když má hráč právě otevřenou hru, jeho zařízení může tuhle změnu přepsat. Spolehlivější je „🎁 Poslat peníze" — ty si vyzvedne sám.`);
 }
 async function adminClearProps(name){
   if(!(await showConfirm(`Zabavit VŠECHEN majetek hráče „${name}"? (domy, podíly, nájmy) Peníze zůstanou.`))) return;
@@ -6929,6 +7001,29 @@ async function login(){
 }
 
 // Vlastní přihlášení (sdílené ručním loginem i automatickým)
+// Vyzvedne všechny čekající dárky/platby pro hráče. Vrací celkovou částku (0 = nic nečekalo).
+// Připisuje SE hráčovou akcí, takže se to uloží jako jeho pravda a sync to nepřepíše.
+function claimGifts(name){
+  if(!world.gifts) return 0;
+  const list = asArray(world.gifts[name]);
+  if(!list.length) return 0;
+  const u = world.users[name];
+  if(!u) return 0;
+  let total = 0;
+  const claimedIds = asArray(u.claimedGifts);
+  list.forEach(g => {
+    if(!g || claimedIds.includes(g.id)) return;   // už vyzvednuto (pojistka proti dvojímu připsání)
+    u.balance += g.amount;
+    total += g.amount;
+    claimedIds.push(g.id);
+    addNews('event', `🎁 ${name} dostal ${g.amount.toLocaleString('cs-CZ')} Kč od ${g.from}${g.note?' ('+g.note+')':''}.`);
+  });
+  u.claimedGifts = claimedIds.slice(-100);
+  // vyzvednuté dárky ze schránky odebereme
+  world.gifts[name] = list.filter(g => g && !claimedIds.includes(g.id));
+  return total;
+}
+
 function doLogin(name, pinHash){
   if(!world.users[name]){
     world.users[name] = {name, balance: START_BALANCE, lastWorkedDay: -1, lastWorkedCalDay: -1, walkEarnedToday: 0, distanceToday: 0, totalDistance: 0, loans: [], totalShifts: 0, jobBanUntil: 0,
@@ -6952,6 +7047,16 @@ function doLogin(name, pinHash){
   }
   startGeoTracking();
   setTimeout(maybeShowTutorial, 400);
+
+  // Vyzvednout čekající platby/dárky (od admina) — připíšou se hráčovou akcí, sync je nepřepíše
+  const gift = claimGifts(name);
+  if(gift){
+    saveWorld();
+    setTimeout(() => {
+      showAlert(`🎁 Přišla ti platba: +${gift.toLocaleString('cs-CZ')} Kč!\nUž je na tvém účtu.`);
+      playSound('coin');
+    }, 900);
+  }
 
   // Série za přihlášení + denní úkoly (obojí se řeší 1× denně)
   ensureQuests(u);
