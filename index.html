@@ -3597,6 +3597,22 @@ function migrateWorld(){
         }
       });
       if(!world.users) world.users = {};
+      // Firebase umí poslat záznam jako null (typicky po smazání hráče na jiném zařízení).
+      // Takové klíče musíme zahodit, jinak by na nich spadla celá migrace a hra by se nenačetla.
+      Object.keys(world.users).forEach(k => {
+        const u = world.users[k];
+        if(!u || typeof u !== 'object'){ delete world.users[k]; return; }
+        if(!u.name) u.name = k;
+      });
+      Object.keys(world.parcels).forEach(k => {
+        if(!world.parcels[k] || typeof world.parcels[k] !== 'object') delete world.parcels[k];
+      });
+      Object.keys(world.businesses).forEach(k => {
+        if(!world.businesses[k] || typeof world.businesses[k] !== 'object') delete world.businesses[k];
+      });
+      Object.keys(world.listings || {}).forEach(k => {
+        if(!world.listings[k] || typeof world.listings[k] !== 'object') delete world.listings[k];
+      });
       Object.values(world.users).forEach(u => {
         if(u.totalShifts === undefined) u.totalShifts = 0;
         if(u.jobBanUntil === undefined) u.jobBanUntil = 0;
