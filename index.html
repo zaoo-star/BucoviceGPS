@@ -142,6 +142,24 @@
     border:2px solid #fff;box-shadow:0 0 10px 3px rgba(192,132,252,0.5);
   }
   .landmarkMarker.visited{background:rgba(120,120,130,0.55);box-shadow:none;opacity:0.6;}
+  .infoBox{
+    border:1px solid var(--border);border-radius:10px;margin:10px 0 4px 0;background:var(--panel);
+  }
+  .infoBox summary{
+    padding:9px 12px;cursor:pointer;font-size:0.92em;font-weight:600;color:var(--muted);
+    list-style:none;user-select:none;
+  }
+  .infoBox summary::-webkit-details-marker{display:none;}
+  .infoBox summary::marker{content:'';}
+  .infoBox[open] summary{border-bottom:1px solid var(--border);color:var(--text);}
+  .infoBoxBody{padding:10px 12px;font-size:0.88em;line-height:1.55;color:var(--muted);}
+  .infoBoxBody p{margin:0 0 8px 0;}
+  .infoBoxBody p:last-child{margin-bottom:0;}
+  .infoBoxBody b{color:var(--text);}
+  .infoBoxBody .ex{
+    background:var(--panel2);border-left:3px solid var(--accent);border-radius:6px;
+    padding:7px 9px;margin:8px 0;font-size:0.95em;
+  }
   .adminPlayer summary::-webkit-details-marker{display:none;}
   .adminPlayer summary::marker{content:'';}
   .adminPlayer[open] summary{border-bottom:1px solid var(--border);}
@@ -372,6 +390,16 @@
         <div id="newsContent" class="empty-state">Načítám noviny...</div>
       </div>
       <div class="panelContent" id="tab-chat">
+        <details class="infoBox" style="margin:0 0 8px 0;">
+          <summary>❓ Pravidla chatu</summary>
+          <div class="infoBoxBody">
+            <p><b>K čemu je.</b> Domluva se sousedy — kdo co prodává, kdo hledá spoluvlastníka, nebo jen popovídání.</p>
+            <p><b>Odpovídání.</b> Klepni na „↩︎ Odpovědět" pod zprávou a tvoje odpověď se k ní připojí i s citací, ať je jasné, na co reaguješ.</p>
+            <p><b>Hrajou i děti.</b> Piš slušně. Správce může zprávy mazat a v krajním případě i zablokovat účet.</p>
+            <p><b>Nesdílej osobní údaje</b> — adresu, telefon, ani přesné místo, kde právě jsi. Hra sice běží v Bučovicích, ale chat je veřejný.</p>
+            <p><b>Historie.</b> Ukládá se posledních 100 zpráv, starší se automaticky mažou.</p>
+          </div>
+        </details>
         <div id="chatMessages" style="max-height:calc(100vh - 260px);overflow-y:auto;margin-bottom:10px;"></div>
         <div id="chatReplyBar" style="display:none;align-items:center;background:var(--panel2);border-left:3px solid var(--accent2);border-radius:6px;padding:4px 6px;margin-bottom:6px;"></div>
         <div class="row" style="gap:6px;">
@@ -3831,6 +3859,7 @@ function adoptWorld(incoming){
   let myUser = null;
   const myHouseShares = {};   // parcelId -> pct (podíly ve VŠECH domech, kde něco mám)
   const myManagedHouses = {}; // parcelId -> celý stav domu, kde jsem SPRÁVCE (>50 %)
+  const mojeRazitka = {};     // parcelId -> {mod, dum} pro VŠECHNY domy s razítkem změny
   const myBizShares = {};     // bizId -> pct
   const myTenancies = [];     // {parcelId, unitIdx}
   const myNews = world.news || [];
@@ -3845,6 +3874,9 @@ function adoptWorld(incoming){
       if((p.owners && p.owners[myName] || 0) > 50){
         myManagedHouses[id] = JSON.parse(JSON.stringify(p));
       }
+      // Razítko si pamatujeme u KAŽDÉHO domu, i cizího. Když někdo pošle starší verzi domu
+      // (typicky hráč, který ještě nedostal cizí změnu), nepřijdeme o novější stav.
+      if(p && p.mod) mojeRazitka[id] = { mod: p.mod, dum: JSON.parse(JSON.stringify(p)) };
       (p.units || []).forEach((u, idx) => { if(u.tenant === myName) myTenancies.push({id, idx}); });
     });
     Object.entries(world.businesses || {}).forEach(([id, b]) => {
@@ -3887,6 +3919,21 @@ function adoptWorld(incoming){
       const p = world.parcels[id];
       if(p){ if(!p.owners) p.owners = {}; if(!p.owners[myName]) p.owners[myName] = pct; }
     });
+    // Nejdřív obecně: u KAŽDÉHO domu vyhraje verze s novějším razítkem změny.
+    // Bez toho by hráč, který má zastaralá data, mohl svým zápisem smazat cizí přestavbu.
+    Object.entries(mojeRazitka).forEach(([id, zaloha]) => {
+      const cloudP = world.parcels[id];
+      if(!cloudP) return;
+      if((zaloha.mod || 0) > (cloudP.mod || 0)){
+        // moje verze domu je novější → vrátit ji, ale zachovat vlastnictví z cloudu
+        // (podíly mohl mezitím legitimně změnit někdo jiný koupí/prodejem)
+        world.parcels[id] = Object.assign({}, zaloha.dum, {
+          lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels,
+          owners: cloudP.owners || zaloha.dum.owners
+        });
+      }
+    });
+
     // U domů, které spravuju, porovnám RAZÍTKO ZMĚNY (p.mod): vyhraje novější verze domu.
     // Tohle je spolehlivější než porovnávat aktivitu hráče — přesně tady mizela přestavba,
     // protože se čerstvá změna neuznala za novější. Teď rozhoduje čas úpravy samotného domu.
@@ -3930,7 +3977,8 @@ function worldForCloud(){
     const p = src[id];
     const owned = p.owners && Object.keys(p.owners).length > 0;
     const modified = owned || p.useType || (p.units && p.units.length) || p.upgrades ||
-                     (p.gentrifyMult && p.gentrifyMult !== 1) || p.popularity || p.salesHistory;
+                     (p.gentrifyMult && p.gentrifyMult !== 1) || p.popularity || p.salesHistory ||
+                     p.mod || p.project;
     if(modified) slim[id] = p;
   }
   return { ...world, parcels: slim };
@@ -3988,8 +4036,23 @@ function doCloudWrite(){
   if(!(firebaseSyncEnabled && fbDb)) return;
   lastFbWrite = Date.now();
   lastWrittenRev = world.rev; // ať sedí s tím, co reálně posíláme (rozpoznání vlastní ozvěny)
+  const posilanaRev = world.rev;
   fbDb.ref('world').set(worldForCloud())
+    .then(() => { lastSyncedRev = Math.max(lastSyncedRev, posilanaRev); })
     .catch(e => console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e));
+}
+// Poslední verze, o které víme, že OPRAVDU dorazila do cloudu.
+// Když se liší od world.rev, máme rozpracované změny, které ještě nikdo jiný nevidí.
+let lastSyncedRev = 0;
+function hasUnsyncedChanges(){ return firebaseSyncEnabled && fbDb && (world.rev || 0) > lastSyncedRev; }
+
+// Okamžitý zápis bez čekání na throttling. Voláme ho, když appka odchází na pozadí
+// nebo se zavírá — jinak by se změna z posledních vteřin nikdy neodeslala
+// a ostatní hráči by ji neviděli (typicky: přestavíš dům a hned zamkneš telefon).
+function flushCloudWrite(){
+  if(!(firebaseSyncEnabled && fbDb)) return;
+  if(fbWriteTimer){ clearTimeout(fbWriteTimer); fbWriteTimer = null; }
+  doCloudWrite();
 }
 
 // ===== NOVINY / KRONIKA UDÁLOSTÍ =====
@@ -4980,6 +5043,16 @@ function renderSelected(id){
     });
   }
 
+  html += infoBox('Co s tímhle domem můžu dělat?', `
+    <p><b>Koupit podíl.</b> Domy se kupují po procentech. Musíš stát <b>u domu</b> (do ${INTERACTION_RADIUS} m). Cena za procento se odvíjí od hodnoty domu a mění se s tím, jak se ve městě kupuje.</p>
+    <p><b>Kdo rozhoduje.</b> Majitel s <b>víc než 50 %</b> určuje, co s domem bude. Ostatní spoluvlastníci berou svůj podíl z výnosu, ale do rozhodování nemluví.</p>
+    <p><b>Bydlení nebo pronájem.</b> Buď v domě bydlíš (poloviční životní náklady), nebo ho přestavíš na byty a pronajímáš. Obojí naráz nejde.</p>
+    <p><b>Nájem za byt.</b> Nastavíš si cenu sám. Nad férovou cenou začnou nájemníci ubývat — hra ti u každého bytu ukáže, jak je obsazený.</p>
+    <p><b>Stav bytu.</b> Obydlené byty chátrají. Pod hranicí, kterou nájemník snese, se odstěhuje. Oprava stojí ${REPAIR_COST_PER_POINT} Kč za bod.</p>
+    <p><b>Vylepšení.</b> Jednorázová investice, která dům trvale zlepší (zateplení, klimatizace, rekonstrukce, solár). Vrátí se za pár měsíců.</p>
+    <p><b>Projekty.</b> Větší stavby, které pár dní trvají — podkroví přidá byt, fasáda a zahrada zvednou hodnotu.</p>
+    <p><b>Prodej.</b> Podíl můžeš prodat zpátky městu (hned, ale za nižší cenu) nebo nabídnout na tržišti ostatním hráčům (za víc, ale musíš počkat).</p>
+  `);
   el.innerHTML = html;
 }
 
@@ -5013,7 +5086,18 @@ function renderMine(){
       ${p.useType==='rental' && p.units ? `<p>${p.units.length} ${p.units.length===1?'byt':'bytů'} · Nájem celkem: ${p.units.filter(u=>u.condition>0).reduce((s,u)=>s+u.rentPrice,0)} Kč/den</p>` : ''}
       <div class="row"><button class="secondary" onclick="flyToParcel('${p.id}')">Zobrazit na mapě</button></div>
     </div>`;
-    }).join('');
+    }).join('')
+    + infoBox('Jak vydělávat na nemovitostech?', `
+      <p><b>Podíl v domě.</b> Domy se kupují po procentech — nemusíš mít celý dům. Kdo má <b>přes 50 %</b>, ten o domě rozhoduje (přestavba, nájem, vylepšení). Ostatní jen berou svůj díl z výnosu.</p>
+      <p><b>Dva způsoby využití:</b></p>
+      <p>• <b>Bydlení</b> — sám v něm bydlíš a klesnou ti životní náklady na polovinu. Nevydělává, ale šetří.<br>
+         • <b>Pronájem</b> — dům se rozdělí na byty a nájemníci ti platí každý den. Vydělává, ale sám tam bydlet nemůžeš.</p>
+      <p><b>Kolik si říct za nájem.</b> Hra počítá <b>férovou cenu</b> podle hodnoty domu. Když si řekneš míň, byt je pořád plný. Když víc, nájemníci ubývají — a prázdný byt nevydělává nic.</p>
+      <div class="ex">Férový nájem 60 Kč: při 60 Kč máš plno. Při 90 Kč zaplatíš jen část času — a vyjde to hůř než levnější, ale plný byt.</div>
+      <p><b>Byty chátrají.</b> Každý den se stav obydleného bytu zhorší. Když spadne pod to, co nájemník snese, <b>odstěhuje se</b>. Proto se vyplatí opravovat dřív, než odejde.</p>
+      <p><b>Daň z nemovitosti.</b> Z hodnoty tvých podílů platíš každý den malou daň — i z domů, které nic nevydělávají. Prázdný drahý dům tě tedy stojí peníze.</p>
+      <p><b>Gentrifikace.</b> Když se v okolí kupuje a staví, hodnota tvých domů roste. Proto se vyplatí kupovat tam, kde je živo.</p>
+    `);
 }
 
 function flyToParcel(id){
@@ -5096,6 +5180,15 @@ function renderJobs(){
     </div>`;
     }).join('');
 
+  html += infoBox('Jak funguje práce?', `
+    <p><b>Kde se pracuje.</b> Do práce se nastupuje <b>na radnici</b> na náměstí — musíš tam fyzicky dojít (do ${JOB_RADIUS} m). Odtud se pak hlásíš na směny.</p>
+    <p><b>Jedna směna denně.</b> Odpracovat můžeš jednu směnu za den, o víkendu je volno. Peníze dostaneš hned na účet.</p>
+    <p><b>Postup v kariéře.</b> Pozice jsou seřazené od nejlehčích. Vyšší místa vyžadují <b>odpracované směny</b> — s praxí se ti odemykají lépe placené práce. Praxe se počítá dohromady za celou hru.</p>
+    <p><b>Příplatek za stáž.</b> Čím déle jsi na jedné pozici, tím víc bereš — až o ${SENIORITY_BONUS_CAP} Kč navíc. Když změníš práci, příplatek začíná znovu.</p>
+    <p><b>Spropitné.</b> Občas dostaneš něco navíc, když ti to vyjde.</p>
+    <p><b>Kolik míst je volných.</b> Každá pozice má omezený počet míst. Když je plno, musíš počkat, až někdo odejde.</p>
+    <p><b>Proč pracovat.</b> Na začátku je to <b>nejjistější příjem</b> — pravidelný a bez rizika. Později tě uživí nemovitosti, ale než na ně vyděláš, práce je základ.</p>
+  `);
   el.innerHTML = html;
 }
 
@@ -5529,7 +5622,18 @@ function renderMarket(){
 
   if(!listings.length){
     html += `<div class="empty-state">Na tržišti teď nejsou žádné nabídky. Svůj podíl nabídneš v detailu domu tlačítkem „Nabídnout na tržišti".</div>`;
-    el.innerHTML = html;
+    html += infoBox('Jak funguje tržiště?', `
+    <p><b>K čemu je.</b> Tady prodáváš a kupuješ podíly v domech <b>od ostatních hráčů</b> — na rozdíl od mapy, kde kupuješ od města za pevnou cenu.</p>
+    <p><b>Dva způsoby prodeje:</b></p>
+    <p>• <b>Pevná cena</b> — určíš částku a kdo první zaplatí, ten podíl dostane.<br>
+       • <b>Aukce</b> — nastavíš vyvolávací cenu a hráči přihazují. Vyhrává nejvyšší nabídka.</p>
+    <p><b>Jak funguje dražba.</b> Když přihodíš, peníze se ti <b>hned zablokují</b> (jsou v úschově, nemůžeš je utratit). Když tě někdo přebije, dostaneš je celé zpátky. Vítěz dostane podíl, prodejce peníze.</p>
+    <p><b>Provize městu ${Math.round(MARKET_FEE*100)} %.</b> Z každého prodeje si město vezme podíl — počítej s tím při určování ceny.</p>
+    <div class="ex">Prodáš podíl za 2 000 Kč. Kupci se strhne 2 000 Kč, tobě přijde ${Math.round(2000*(1-MARKET_FEE)).toLocaleString('cs-CZ')} Kč a ${Math.round(2000*MARKET_FEE)} Kč jde městu.</div>
+    <p><b>Za kolik prodávat.</b> Ostatní vidí, kolik dům vydělává. Když si řekneš moc, nikdo nekoupí. Když málo, prodělal jsi. Podívej se, za kolik se dům kupuje na mapě, a jdi kousek pod to.</p>
+    <p><b>Pozor.</b> Nabídku můžeš zrušit, dokud ji nikdo nekoupil. Když mezitím podíl prodáš jinam, nabídka se sama zruší.</p>
+  `);
+  el.innerHTML = html;
     return;
   }
 
@@ -6072,6 +6176,15 @@ function renderDaily(){
   html += `<p style="font-size:0.8em;color:var(--muted);margin-top:6px;">Pozn.: upozornění chodí, jen když je hra spuštěná (i na pozadí). Úplně zavřené appce je poslat nejde.</p>
   </div>`;
 
+  html += infoBox('Jak fungují denní výzvy?', `
+    <p><b>🔥 Série.</b> Za každý den, kdy hru otevřeš, dostaneš odměnu — a ta roste, čím delší sérii máš (až do sedmého dne). Když den vynecháš, začíná se od začátku.</p>
+    <p><b>🎯 Úkoly.</b> Každý den dostaneš tři, stejné pro všechny hráče. Odměna se připíše <b>sama</b>, jakmile úkol splníš — nemusíš nic potvrzovat. Za splnění všech tří je bonus navíc.</p>
+    <p><b>📍 Místa zájmu.</b> Fialové body na mapě u skutečných míst v Bučovicích. Dojdi k nim (do ${LANDMARK_VISIT_RADIUS} m) a dostaneš odměnu — každé místo jednou denně.</p>
+    <p><b>💰 Balíky peněz.</b> Žluté body na mapě. Sbírají se automaticky, když k nim dojdeš na ${PICKUP_COLLECT_RADIUS} m. Každý den se objeví na nových místech.</p>
+    <p><b>Vše se obnovuje o půlnoci</b> — nové úkoly, nové balíky, místa jde zase navštívit.</p>
+    <p><b>Proč to tu je.</b> Aby se vyplatilo vyjít ven i ve dnech, kdy zrovna nemáš na nákup domu. Denní výzvy jsou nejrychlejší způsob, jak si přivydělat na začátku.</p>
+  `);
+
   if(u.walkBlocked){
     html += `<div class="card"><h3 style="color:var(--danger)">⚠️ Chůze pozastavena</h3>
       <p style="font-size:0.9em;">Poloha skákala nesmyslně rychle (auto, vlak nebo falešná GPS), takže se dnes za chůzi neplatí. Zítra se to samo obnoví.</p></div>`;
@@ -6395,6 +6508,15 @@ function renameUserEverywhere(oldName, newName){
 }
 
 // ===== NÁPOVĚDA "JAK TO FUNGUJE" (finanční gramotnost pro mladší hráče) =====
+// Rozbalovací vysvětlivka do panelů — nezabírá místo, dokud si ji hráč neotevře.
+// Používá se v každé obrazovce, ať hráč nemusí hledat v nápovědě.
+function infoBox(title, bodyHtml){
+  return `<details class="infoBox">
+    <summary>❓ ${title}</summary>
+    <div class="infoBoxBody">${bodyHtml}</div>
+  </details>`;
+}
+
 function guideSection(emoji, title, bodyHtml){
   return `<div class="card"><h3>${emoji} ${title}</h3>${bodyHtml}</div>`;
 }
@@ -6635,9 +6757,15 @@ function renderNews(){
     const st = NEWS_STYLE[n.type] || {color:'var(--text)'};
     html += `<div class="card" style="border-left:3px solid ${st.color};padding:8px 10px;margin-bottom:6px;">
       <p style="margin:0;font-size:0.95em;">${escapeHtml(n.text)}</p>
-      <p style="margin:2px 0 0;font-size:0.75em;color:var(--muted);">den ${n.day}${timeAgo(n.ts)}</p>
+      <p style="margin:2px 0 0;font-size:0.75em;color:var(--muted);">${n.day ? 'den '+n.day : ''}${timeAgo(n.ts)}</p>
     </div>`;
   });
+  html += infoBox('Co jsou noviny?', `
+    <p><b>Kronika města.</b> Zapisuje se sem všechno důležité, co se ve hře stalo — kdo co koupil, kdo se nastěhoval, jaké je dnes počasí v ekonomice.</p>
+    <p><b>Proč to číst.</b> Poznáš podle toho, <b>co dělají ostatní</b>: kde se nakupuje (tam roste hodnota), kdo staví, kdo prodává. Je to jediný způsob, jak sledovat konkurenci.</p>
+    <p><b>Dnešní událost.</b> Nahoře najdeš, co se dnes ve městě děje — jarmark, zdražení energií, výprodej stavebnin. Každá událost mění ekonomiku a vyplatí se podle ní plánovat.</p>
+    <p><b>Náhodné události.</b> Občas tě potká něco nečekaného — rozbitá pračka, malé dědictví. Objeví se i tady, ať máš přehled, kam ti mizí peníze.</p>
+  `);
   el.innerHTML = html;
 }
 function countPlayers(){ return Object.keys(world.users||{}).length; }
@@ -6761,6 +6889,19 @@ function renderFinance(){
     }</p>
     <p style="font-size:0.85em;color:var(--muted)">Chytré je mít rezervu aspoň na 2 týdny — kdyby přišel nečekaný výdaj nebo výpadek příjmu, nemusíš si hned půjčovat.</p>
   </div>`;
+
+  html += infoBox('Jak číst finanční přehled?', `
+    <p><b>Denní rozpočet.</b> Kolik ti každý den přiteče a odteče. Když je bilance <b>záporná</b>, ubývají ti peníze — a je jedno, kolik jich máš, jednou dojdou.</p>
+    <p><b>Aktiva vs. pasiva.</b> Nejdůležitější rozdíl v celé hře:</p>
+    <p>• <b>Aktivum</b> ti peníze <b>nese</b> — pronajatý byt, podíl ve firmě.<br>
+       • <b>Pasivum</b> ti peníze <b>bere</b> — dům, ve kterém bydlíš, půjčka.</p>
+    <p>Tvoje vlastní bydlení je technicky pasivum (platíš z něj daň a nic nevynáší), i když ti šetří na nákladech. Bohatnou lidé, kteří mají víc aktiv než pasiv.</p>
+    <p><b>Dvě čísla o době přežití.</b> Nejsou v rozporu, jen počítají různé věci:</p>
+    <p>• „<b>peníze dojdou za X dní</b>" — když ti příjmy zůstanou tak, jak jsou teď.<br>
+       • „<b>rezerva vydrží X dní</b>" — kdybys přišel o <b>všechny</b> příjmy naráz. Nejhorší možný případ.</p>
+    <p><b>Graf jmění.</b> Ukazuje, jestli rosteš nebo padáš. Jeden špatný den nic neznamená — dívej se na směr křivky.</p>
+    <p><b>Složené úročení.</b> Peníze (i dluhy) rostou samy ze sebe. Proto se vyplatí <b>spořit brzy</b> a <b>splácet rychle</b> — čas pracuje buď pro tebe, nebo proti tobě.</p>
+  `);
 
   el.innerHTML = html;
 }
@@ -7061,6 +7202,18 @@ function renderProfile(){
     </div>`;
   }
 
+  html += infoBox('Co znamenají údaje v profilu?', `
+    <p><b>🏅 Hodnost.</b> Postup podle čistého jmění: Nováček → Střádal → Podnikavec → Investor → Magnát → Realitní král. Je to jen titul, nic neodemyká — ale je vidět ostatním.</p>
+    <p><b>Bydlení.</b> Tři možné stavy:</p>
+    <p>• <b>vlastní bydlení</b> — máš přes 50 % domu určeného k bydlení, platíš poloviční náklady,<br>
+       • <b>v nájmu</b> — bydlíš v cizím bytě, platíš nájem majiteli,<br>
+       • <b>bez bydlení</b> — platíš plné náklady. Můžeš přitom vlastnit podíly, jen v nich nemůžeš bydlet.</p>
+    <p><b>Čisté jmění.</b> Hotovost + spoření + hodnota podílů − dluhy. Podle toho se řadí žebříček.</p>
+    <p><b>Odznaky.</b> Získáváš je za milníky — první dům, ušlé kilometry, odpracované směny. Jsou trvalé.</p>
+    <p><b>Změna přezdívky.</b> Přenese se ti všechen majetek i historie. Nemůžeš si vzít jméno, které už někdo má.</p>
+    <p><b>PIN.</b> Ochrání tvůj účet, kdyby hru otevřel někdo jiný na tomhle telefonu. Bez PINu se kdokoliv přihlásí jen zadáním tvojí přezdívky.</p>
+  `);
+
   el.innerHTML = html;
 }
 
@@ -7125,6 +7278,13 @@ function renderLeaderboard(){
     </div>`;
   }).join('');
 
+  html += infoBox('Co znamenají čísla v žebříčku?', `
+    <p><b>💰 Jmění</b> — hlavní žebříček. Sečte se hotovost, spoření a hodnota všech tvých podílů v domech a firmách, pak se odečtou dluhy. Tomu se říká <b>čisté jmění</b> a je to nejpoctivější měřítko toho, jak si stojíš.</p>
+    <div class="ex">Máš 5 000 Kč na účtu, podíly za 30 000 Kč a dluh 10 000 Kč → tvoje jmění je 25 000 Kč.</div>
+    <p><b>🏠 Nemovitosti</b> — v kolika domech máš aspoň nějaký podíl. Neříká nic o jejich hodnotě, jen o rozsahu.</p>
+    <p><b>🚶 Nachozeno</b> — kolik kilometrů jsi ušel za celou hru. Tenhle žebříček se dá vyhrát bez jediné koruny — stačí chodit.</p>
+    <p><b>Proč nejsi výš.</b> Jmění roste hlavně z nemovitostí, ne z hotovosti. Peníze ležící na účtu nevydělávají — dům ano.</p>
+  `);
   el.innerHTML = html;
 }
 
@@ -7142,6 +7302,15 @@ function renderBank(){
     <p>Limit pro novou půjčku: ${limit} Kč</p>
     <div class="row"><button onclick="takeLoan()">Vzít půjčku (${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)</button></div>
     <p style="font-size:0.85em;margin-top:8px;">Půjčku využiješ na nákup podílů v domech a podnicích. Banka strhává splátky automaticky — když je dlouho neplatíš, zabaví ti majetek.</p>
+    ${infoBox('Jak funguje půjčka?', `
+      <p><b>K čemu je.</b> Půjčka ti dá peníze hned, abys mohl koupit dům dřív, než si našetříš. Dům pak vydělává — a z toho splácíš. Tomu se říká <b>investiční dluh</b> a je to jediný dluh, který dává smysl.</p>
+      <p><b>Kolik si můžeš půjčit.</b> Limit je ${LOAN_BASE_LIMIT.toLocaleString('cs-CZ')} Kč, nebo ${Math.round(LOAN_LIMIT_RATIO*100)} % tvého čistého jmění — podle toho, co je víc. Čím víc majetku máš, tím víc ti banka půjčí. Už půjčené peníze se od limitu odečítají.</p>
+      <p><b>Úrok ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně.</b> Dluh každý den trochu vyroste. Nesplácíš‑li, roste i z toho, co narostlo — to je <b>složené úročení</b> a proti tobě pracuje rychle.</p>
+      <div class="ex">Půjčíš si 10 000 Kč a nesplácíš. Za 90 dní dlužíš zhruba ${Math.round(10000*Math.pow(1+LOAN_ANNUAL_RATE/DAYS_PER_YEAR,90)).toLocaleString('cs-CZ')} Kč — přibylo ti ${Math.round(10000*Math.pow(1+LOAN_ANNUAL_RATE/DAYS_PER_YEAR,90)-10000).toLocaleString('cs-CZ')} Kč jen za to, že jsi nic neudělal.</div>
+      <p><b>Splátky.</b> Banka si každý den sama vezme ${Math.round(LOAN_MIN_PAYMENT_RATIO*100*10)/10} % z původní částky, pokud máš na účtu dost. Kdykoliv můžeš splatit víc tlačítkem „Splatit" — čím dřív, tím míň zaplatíš na úrocích.</p>
+      <p><b>Když nesplácíš.</b> Dny bez splátky se počítají. Po ${LOAN_SEIZURE_MISSED_DAYS} dnech ti banka <b>zabaví majetek</b> — prodá tvoje podíly, dokud dluh nepokryje. Co zbyde, dostaneš zpátky.</p>
+      <p><b>Kdy si nepůjčovat.</b> Na běžný život, když jsi v mínusu. To dluh jen prohlubuje. Půjčuj si na věci, které <b>vydělávají</b>.</p>
+    `)}
   </div>`;
 
   // Spořicí účet
@@ -7153,6 +7322,14 @@ function renderBank(){
       <button class="secondary" onclick="depositSavings()">Vložit na spoření</button>
       <button class="secondary" onclick="withdrawSavings()">Vybrat</button>
     </div>
+    ${infoBox('Jak funguje spoření?', `
+      <p><b>Co to je.</b> Stranou odložené peníze, které samy pomalu rostou. Nejsou na běžném účtu, takže je omylem neutratíš — ale kdykoliv si je můžeš vybrat zpět.</p>
+      <p><b>Úrok ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % ročně</b> se připisuje každý den z toho, co máš naspořeno. Další den se počítá i z připsaného úroku — složené úročení tentokrát <b>pro tebe</b>.</p>
+      <div class="ex">Uložíš 10 000 Kč a necháš ležet. Za 90 dní máš ${Math.round(10000*Math.pow(1+SAVINGS_ANNUAL_RATE/DAYS_PER_YEAR,90)).toLocaleString('cs-CZ')} Kč. Není to zázrak, ale je to zadarmo.</div>
+      <p><b>Na co si dát pozor.</b> Úrok ze spoření (${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} %) je <b>mnohem nižší</b> než úrok z půjčky (${Math.round(LOAN_ANNUAL_RATE*100)} %). Když máš dluh a zároveň spoříš, prodělaváš — nejdřív splať dluh.</p>
+      <p><b>K čemu je to dobré.</b> Jako rezerva na nečekané výdaje. Když se rozbije pračka nebo vypadne příjem, sáhneš do spoření místo do půjčky.</p>
+      <p><b>Bohatství tím ale nezbuduješ.</b> Nemovitosti a podniky vydělávají násobně víc. Spoření je polštář, ne motor.</p>
+    `)}
   </div>`;
 
   if(!me.loans.length){
@@ -7447,6 +7624,15 @@ function renderBusinesses(){
       </div>
     </div>`;
   }).join('');
+  html += infoBox('Jak fungují investice do firem?', `
+    <p><b>Co to je.</b> Skutečné bučovické podniky, ve kterých si můžeš koupit podíl. Nemusíš nic řídit — jen vložíš peníze a bereš část zisku.</p>
+    <p><b>Jak vydělávají.</b> Každý podnik má <b>hodinový výnos</b>. Ten se dělí mezi majitele podle podílů a připisuje se ti průběžně, i když nehraješ.</p>
+    <div class="ex">Podnik vynáší 200 Kč za hodinu a ty vlastníš 25 % → za den ti přijde zhruba ${Math.round(200*0.25*24).toLocaleString('cs-CZ')} Kč.</div>
+    <p><b>Rozdíl proti domům.</b> Podniky vydělávají <b>pasivně a spolehlivě</b> — nechátrají, nepotřebují opravy, nemají nájemníky, co odejdou. Zato se jejich hodnota nezvyšuje gentrifikací a nedají se vylepšovat.</p>
+    <p><b>Kde se kupuje.</b> Musíš dojít <b>k podniku na mapě</b> — investuje se na místě, ne od stolu.</p>
+    <p><b>Kolik koupit.</b> Podíly jsou po procentech, takže můžeš začít malým vkladem a přikupovat. Když je podnik vyprodaný, musíš počkat, až někdo prodá.</p>
+    <p><b>Proč rozložit.</b> Mít všechno v jednom domě je riziko — nájemník odejde a příjem spadne na nulu. Kombinace domů a firem je stabilnější.</p>
+  `);
   el.innerHTML = html;
 }
 
@@ -7742,6 +7928,15 @@ function registerServiceWorker(){
 let deferredInstallPrompt = null;
 function setupInstallPrompt(){
   // Android/Chrome nabídne appce možnost vyvolat instalační dialog vlastním tlačítkem
+  // Když appka jde na pozadí nebo se zavírá, odešleme rozpracované změny hned.
+  // Na mobilu je to zásadní: hráč typicky udělá akci a do vteřiny zamkne telefon —
+  // odložený zápis by se pak nikdy neprovedl a ostatní by změnu neviděli.
+  document.addEventListener('visibilitychange', () => {
+    if(document.visibilityState === 'hidden') flushCloudWrite();
+  });
+  window.addEventListener('pagehide', () => flushCloudWrite());
+  window.addEventListener('blur', () => { if(hasUnsyncedChanges()) flushCloudWrite(); });
+
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredInstallPrompt = e;
