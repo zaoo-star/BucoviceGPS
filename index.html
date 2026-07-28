@@ -6261,7 +6261,8 @@ function renderAdmin(){
       </summary>
       <div style="padding:0 8px 8px 8px;">
         <p style="margin:2px 0 6px 0;font-size:0.85em;color:var(--muted)">Hotovost ${Math.round(u.balance).toLocaleString('cs-CZ')} · spoření ${Math.round(u.savings||0).toLocaleString('cs-CZ')} · 🏠${houses} 📈${bizs}</p>
-        <div class="row" style="gap:4px;flex-wrap:wrap;">
+        ${adminPlayerDetail(u.name)}
+        <div class="row" style="gap:4px;flex-wrap:wrap;margin-top:8px;">
           <button style="font-size:0.85em;background:var(--accent);color:#08130a;" onclick="adminSendMoney('${nm}')">🎁 Poslat peníze</button>
           <button class="secondary" style="font-size:0.85em;" onclick="adminSetMoney('${nm}')">💰 Nastavit hotovost</button>
           <button class="secondary" style="font-size:0.85em;" onclick="adminClearProps('${nm}')">🏚️ Zabavit majetek</button>
@@ -6340,6 +6341,124 @@ async function adminClearChat(){
 }
 
 // Filtruje seznam hráčů v admin panelu podle napsaného jména (bez překreslení celého panelu).
+// Kompletní rozpis toho, co hráč skutečně má — pro ověření, jestli sedí, co tvrdí.
+// Ukazuje i razítko poslední změny domu, podle kterého se pozná, kdy se s ním naposledy hýbalo.
+function adminPlayerDetail(name){
+  const u = world.users[name];
+  if(!u) return '<p style="color:var(--muted)">Hráč neexistuje.</p>';
+  const kdy = ts => {
+    if(!ts) return 'nikdy';
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if(s < 60) return 'před ' + s + ' s';
+    if(s < 3600) return 'před ' + Math.floor(s/60) + ' min';
+    if(s < 86400) return 'před ' + Math.floor(s/3600) + ' h';
+    return 'před ' + Math.floor(s/86400) + ' dny';
+  };
+  let h = '';
+
+  // --- účet ---
+  h += `<div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px;">
+    <p style="margin:0 0 4px 0;font-weight:600;font-size:0.9em;">💼 Účet</p>
+    <p style="margin:1px 0;font-size:0.82em;color:var(--muted)">
+      Hotovost <b>${Math.round(u.balance||0).toLocaleString('cs-CZ')}</b> ·
+      spoření <b>${Math.round(u.savings||0).toLocaleString('cs-CZ')}</b> ·
+      jmění <b style="color:var(--gold)">${Math.round(netWorthEstimate(name)).toLocaleString('cs-CZ')} Kč</b><br>
+      bydlení: <b>${({owner:'vlastní',tenant:'v nájmu',homeless:'bez bydlení'})[housingStatus(name)]}</b> ·
+      hodnost: <b>${titleForWorth(netWorthEstimate(name))}</b><br>
+      naposledy aktivní: <b>${kdy(u.lastActive)}</b> ·
+      ve hře od dne <b>${u.joinedGameDay || '?'}</b>${isNewbieProtected(u) ? ' · <span style="color:var(--accent)">ochranná lhůta</span>' : ''}<br>
+      směny <b>${u.totalShifts||0}</b> · nachozeno <b>${((u.totalDistance||0)/1000).toFixed(2).replace('.',',')} km</b> ·
+      série <b>${u.streak||0}</b> dní
+    </p>
+  </div>`;
+
+  // --- půjčky ---
+  const pujcky = asArray(u.loans);
+  if(pujcky.length){
+    h += `<div style="margin-top:6px;">
+      <p style="margin:0 0 2px 0;font-weight:600;font-size:0.9em;">💵 Půjčky (${pujcky.length})</p>`;
+    pujcky.forEach(l => {
+      h += `<p style="margin:1px 0;font-size:0.82em;color:var(--muted)">dluh <b style="color:var(--danger)">${Math.round(l.balance||0).toLocaleString('cs-CZ')} Kč</b> · nesplaceno ${(l.missedDays||0).toFixed(1)} dní</p>`;
+    });
+    h += `</div>`;
+  }
+
+  // --- domy ---
+  const domy = Object.values(world.parcels || {}).filter(p => p && (p.owners?.[name] || 0) > 0)
+    .sort((a,b) => (b.owners[name]||0) - (a.owners[name]||0));
+  h += `<div style="margin-top:6px;">
+    <p style="margin:0 0 2px 0;font-weight:600;font-size:0.9em;">🏠 Domy (${domy.length})</p>`;
+  if(!domy.length){
+    h += `<p style="margin:1px 0;font-size:0.82em;color:var(--muted)">Žádné.</p>`;
+  }
+  domy.forEach(p => {
+    const podil = p.owners[name] || 0;
+    const spravce = podil > 50;
+    const vyuziti = p.useType === 'rental' ? '🏘️ pronájem' : (p.useType === 'residence' ? '🏠 bydlení' : '— neurčeno');
+    const vylepseni = Object.keys(HOUSE_UPGRADES).filter(k => hasUpgrade(p,k));
+    h += `<div style="border:1px solid var(--border);border-radius:6px;padding:5px 7px;margin-top:4px;background:var(--panel);">
+      <p style="margin:0;font-size:0.85em;">
+        <b>${p.id.replace('h_','#')}</b> · podíl <b>${podil.toFixed(1)} %</b>${spravce?' 👑':''} · ${vyuziti}
+        <span style="color:var(--muted)"> · hodnota ${Math.round(effectiveHousePrice(p)).toLocaleString('cs-CZ')} Kč</span>
+      </p>
+      <p style="margin:1px 0;font-size:0.78em;color:var(--muted)">
+        poslední změna domu: <b>${p.mod ? kdy(p.mod) : 'nezaznamenána'}</b>${p.mod ? ` <span style="opacity:0.7">(${new Date(p.mod).toLocaleString('cs-CZ')})</span>` : ''}
+      </p>`;
+    // byty
+    if(p.useType === 'rental' && asArray(p.units).length){
+      p.units.forEach((un, i) => {
+        if(!un) return;
+        const kdoTam = un.tenant ? ('👤 ' + escapeHtml(un.tenant)) : (un.npc ? ('🧑 ' + escapeHtml(un.npc.name||'?')) : '— prázdný');
+        h += `<p style="margin:1px 0;font-size:0.78em;color:var(--muted)">
+          ${i+1}. byt: nájem <b>${Math.round(un.rentPrice||0)} Kč</b> · stav <b>${Math.round(un.condition||0)} %</b> · ${kdoTam}</p>`;
+      });
+    }
+    if(vylepseni.length){
+      h += `<p style="margin:1px 0;font-size:0.78em;color:var(--accent)">vylepšení: ${vylepseni.map(k=>HOUSE_UPGRADES[k].icon+' '+HOUSE_UPGRADES[k].name).join(', ')}</p>`;
+    }
+    if(p.project){
+      const def = PROJECT_DEFS[p.project.key];
+      h += `<p style="margin:1px 0;font-size:0.78em;color:var(--gold)">🏗️ projekt: ${def?def.name:p.project.key} · hotovo den ${p.project.endDay} (dnes ${world.day})</p>`;
+    }
+    if((p.gentrifyMult||1) !== 1){
+      h += `<p style="margin:1px 0;font-size:0.78em;color:var(--muted)">gentrifikace: ×${(p.gentrifyMult||1).toFixed(3)}</p>`;
+    }
+    h += `</div>`;
+  });
+  h += `</div>`;
+
+  // --- podniky ---
+  const firmy = Object.values(world.businesses || {}).filter(b => b && (b.owners?.[name] || 0) > 0);
+  h += `<div style="margin-top:6px;">
+    <p style="margin:0 0 2px 0;font-weight:600;font-size:0.9em;">📈 Podniky (${firmy.length})</p>`;
+  if(!firmy.length) h += `<p style="margin:1px 0;font-size:0.82em;color:var(--muted)">Žádné.</p>`;
+  firmy.forEach(b => {
+    h += `<p style="margin:1px 0;font-size:0.82em;color:var(--muted)">${escapeHtml(b.name)} — podíl <b>${(b.owners[name]||0).toFixed(1)} %</b> · výnos ${Math.round(b.hourlyYield*(b.owners[name]/100)*24)} Kč/den</p>`;
+  });
+  h += `</div>`;
+
+  // --- práce a nájmy ---
+  const prace = getCurrentJob(name);
+  const najmy = [];
+  Object.values(world.parcels || {}).forEach(p => asArray(p.units).forEach((un,i) => { if(un && un.tenant === name) najmy.push(p.id.replace('h_','#')+' ('+(i+1)+'. byt, '+Math.round(un.rentPrice||0)+' Kč)'); }));
+  h += `<div style="margin-top:6px;">
+    <p style="margin:1px 0;font-size:0.82em;color:var(--muted)">💼 práce: <b>${prace ? escapeHtml(prace.job.name) : '—'}</b>${prace?' ('+(u.currentJobShifts||0)+' směn)':''}</p>
+    <p style="margin:1px 0;font-size:0.82em;color:var(--muted)">🔑 nájmy: <b>${najmy.length ? najmy.join(', ') : '—'}</b></p>
+  </div>`;
+
+  // --- čekající platby ---
+  const darky = asArray(world.gifts && world.gifts[name]);
+  if(darky.length){
+    h += `<p style="margin:4px 0 0 0;font-size:0.82em;color:var(--gold)">🎁 nevyzvednuto: ${darky.reduce((s,g)=>s+(g.amount||0),0).toLocaleString('cs-CZ')} Kč (${darky.length}×)</p>`;
+  }
+
+  // --- denní bilance ---
+  const f = financeBreakdown(name);
+  h += `<p style="margin:4px 0 0 0;font-size:0.82em;color:var(--muted)">📊 denní bilance: <b style="color:${f.net>=0?'var(--accent)':'var(--danger)'}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
+
+  return h;
+}
+
 function filterAdminPlayers(){
   const q = (document.getElementById('adminPlayerSearch')?.value || '').toLowerCase().trim();
   document.querySelectorAll('#adminPlayerList .adminPlayer').forEach(el => {
