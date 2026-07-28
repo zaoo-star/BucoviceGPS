@@ -400,7 +400,10 @@
             <p><b>Historie.</b> Ukládá se posledních 100 zpráv, starší se automaticky mažou.</p>
           </div>
         </details>
-        <div id="chatMessages" style="max-height:calc(100vh - 260px);overflow-y:auto;margin-bottom:10px;"></div>
+        <div style="position:relative;margin-bottom:10px;">
+          <div id="chatMessages" style="max-height:calc(100vh - 260px);overflow-y:auto;"></div>
+          <div id="chatNewBadge" onclick="scrollChatToBottom()" style="display:none;position:absolute;left:50%;transform:translateX(-50%);bottom:8px;background:var(--accent);color:#08130a;padding:5px 12px;border-radius:14px;font-size:0.85em;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.4);z-index:5;">↓ nové zprávy</div>
+        </div>
         <div id="chatReplyBar" style="display:none;align-items:center;background:var(--panel2);border-left:3px solid var(--accent2);border-radius:6px;padding:4px 6px;margin-bottom:6px;"></div>
         <div class="row" style="gap:6px;">
           <input id="chatInput" type="text" maxlength="200" placeholder="Napiš zprávu..." style="flex:1;" onkeydown="if(event.key==='Enter')sendChat()">
@@ -6759,85 +6762,238 @@ function renderStatDetail(which){
   const el = document.getElementById('statDetailContent');
   if(!currentUser){ el.innerHTML = '<div class="empty-state"></div>'; return; }
   const u = world.users[currentUser.name];
+  const kc = v => Math.round(v||0).toLocaleString('cs-CZ');
   let html = '';
 
   if(which === 'day'){
     const clock = gameClock();
     const msLeft = Math.max(0, Math.round((1 - clock.dayProgress) * GAME_DAY_MS));
-    const hrsLeft = (msLeft/3600000).toFixed(1);
-    html += `<div class="card"><h3>📅 Herní den</h3>
-      <p>Právě je <b>den ${clock.day}</b>.</p>
-      <p>Nový den začíná <b>o půlnoci</b> — do té zbývá <b>${hrsLeft} hodin</b>.</p>
-      <p style="font-size:0.9em;color:var(--muted)">Herní den = skutečný kalendářní den. Čas nahoře v liště ukazuje aktuální hodiny (stejné jako na telefonu). O půlnoci se strhnou náklady na bydlení, připíšou úroky, vyřeší aukce a může se stát nečekaná událost. Hra běží pořád — i když ji zavřeš, čas plyne dál.</p>
+    const hrsLeft = Math.floor(msLeft/3600000);
+    const minLeft = Math.round((msLeft%3600000)/60000);
+    const ev = todaysCityEvent();
+    const dnes = calendarDay();
+    // co hráč dnes ještě nestihl
+    const zbyva = [];
+    if((u.pickupDay===dnes ? asArray(u.pickupGot).length : 0) < PICKUP_COUNT) zbyva.push(`💰 sebrat balíky (${PICKUP_COUNT - (u.pickupDay===dnes ? asArray(u.pickupGot).length : 0)} zbývá)`);
+    if((u.lmDay===dnes ? asArray(u.lmGot).length : 0) < allLandmarks().length) zbyva.push(`📍 navštívit místa (${allLandmarks().length - (u.lmDay===dnes ? asArray(u.lmGot).length : 0)} zbývá)`);
+    if(u.lastWorkedCalDay !== dnes && !isWeekend()) zbyva.push('💼 jít do práce');
+    const ukoly = (u.questDay===dnes) ? asArray(u.quests).length - asArray(u.questDone).length : 3;
+    if(ukoly > 0) zbyva.push(`🎯 splnit úkoly (${ukoly} zbývá)`);
+
+    html += `<div class="card"><h3>📅 Den ${clock.day}</h3>
+      <p>Do půlnoci zbývá <b>${hrsLeft} h ${minLeft} min</b>.</p>
+      <p style="font-size:0.9em;color:var(--muted)">Herní den je skutečný kalendářní den — čas v liště sedí s hodinami na telefonu.</p>
     </div>`;
-    html += `<div class="card"><h3>📊 Tržní cyklus</h3>
-      <p>Teď: <b style="color:${marketCycleLabel().color}">${marketCycleLabel().label}</b> (ceny ×${marketMultiplier().toFixed(2)})</p>
-      <p style="font-size:0.9em;color:var(--muted)">Město prochází obdobími růstu a poklesu. Podrobnosti v pilulce „trh".</p>
+
+    html += `<div class="card" style="border-left:3px solid var(--gold);"><h3>${ev.emoji} Dnes ve městě</h3>
+      <p><b>${ev.name}</b></p>
+      <p style="font-size:0.9em;">${ev.desc}</p>
+    </div>`;
+
+    if(zbyva.length){
+      html += `<div class="card"><h3>⏳ Co dnes ještě stihneš</h3>
+        ${zbyva.map(z => `<p style="margin:3px 0;font-size:0.92em;">${z}</p>`).join('')}
+        <p style="font-size:0.85em;color:var(--muted);margin-top:6px;">Po půlnoci se to všechno obnoví — co dnes nestihneš, propadne.</p>
+      </div>`;
+    } else {
+      html += `<div class="card"><h3>✅ Dnes máš hotovo</h3>
+        <p style="font-size:0.92em;color:var(--accent)">Balíky sebrané, místa navštívená, úkoly splněné. Zítra nanovo.</p>
+      </div>`;
+    }
+
+    html += `<div class="card"><h3>🌙 Co se stane o půlnoci</h3>
+      <p style="margin:2px 0;font-size:0.9em;">• strhnou se náklady na bydlení a daně</p>
+      <p style="margin:2px 0;font-size:0.9em;">• připíšou se úroky ze spoření a z půjček</p>
+      <p style="margin:2px 0;font-size:0.9em;">• vyřeší se skončené aukce a dokončí renovace</p>
+      <p style="margin:2px 0;font-size:0.9em;">• objeví se nové balíky, úkoly a nová městská událost</p>
+      <p style="margin:2px 0;font-size:0.9em;">• byty o kousek zchátrají</p>
+      <p style="font-size:0.85em;color:var(--muted);margin-top:6px;">Hra běží, i když ji máš zavřenou — čas plyne dál a nájem se počítá.</p>
     </div>`;
   }
 
   else if(which === 'money'){
     const worth = netWorthEstimate(u.name);
     const f = financeBreakdown(u.name);
-    html += `<div class="card"><h3>💰 Peníze</h3>
-      <p>Hotovost: <b style="color:var(--gold)">${Math.round(u.balance).toLocaleString('cs-CZ')} Kč</b></p>
-      <p>Na spoření: ${Math.round(u.savings||0).toLocaleString('cs-CZ')} Kč</p>
-      <p>Čisté jmění: <b>${Math.round(worth).toLocaleString('cs-CZ')} Kč</b></p>
+    const majetek = Math.max(0, worth - (u.balance||0) - (u.savings||0));
+    const dluh = asArray(u.loans).reduce((s,l)=>s+(l.balance||0),0);
+    // pasivní = vše kromě platu
+    const pasivni = f.income.filter(i => !i.label.includes('Plat')).reduce((s,i)=>s+i.amount,0);
+    const aktivni = f.totalIncome - pasivni;
+
+    html += `<div class="card"><h3>💰 Kde máš peníze</h3>
+      <p>V hotovosti: <b style="color:var(--gold)">${kc(u.balance)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— můžeš hned utratit</span></p>
+      <p>Na spoření: <b>${kc(u.savings)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— úročí se ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % ročně</span></p>
+      <p>V majetku: <b>${kc(majetek)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— domy a firmy</span></p>
+      ${dluh > 0 ? `<p>Dluhy: <b style="color:var(--danger)">−${kc(dluh)} Kč</b></p>` : ''}
+      <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">Čisté jmění: <b style="color:var(--gold)">${kc(worth)} Kč</b></p>
     </div>`;
+
+    // rozpis toku po položkách
+    let tok = '';
+    f.income.forEach(i => tok += `<p style="margin:2px 0;font-size:0.9em;color:var(--accent)">+ ${i.label}: <b>${kc(i.amount)} Kč</b></p>`);
+    if(!f.income.length) tok += `<p style="margin:2px 0;font-size:0.9em;color:var(--muted)">Zatím žádný příjem.</p>`;
+    f.expense.forEach(e => tok += `<p style="margin:2px 0;font-size:0.9em;color:var(--danger)">− ${e.label}: <b>${kc(e.amount)} Kč</b></p>`);
     const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
-    html += `<div class="card"><h3>📈 Denní tok</h3>
-      <p>Příjmy: <b style="color:var(--accent)">+${Math.round(f.totalIncome)} Kč/den</b></p>
-      <p>Výdaje: <b style="color:var(--danger)">−${Math.round(f.totalExpense)} Kč/den</b></p>
-      <p>Bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>
-      ${f.net<0 && f.daysUntilBroke!==null ? `<p style="color:var(--danger);font-size:0.9em">⚠️ Při tomto tempu ti peníze dojdou za ${f.daysUntilBroke} dní.</p>` : ''}
-      <div class="row"><button class="secondary" onclick="openSheet('finance')">Celý finanční přehled</button></div>
+    html += `<div class="card"><h3>📈 Denní tok peněz</h3>
+      ${tok}
+      <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">Bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>
     </div>`;
+
+    // pasivní vs aktivní příjem — jádro finanční gramotnosti
+    html += `<div class="card"><h3>🎯 Jak si vyděláváš</h3>
+      <p>Prací (musíš pro to něco udělat): <b>${kc(aktivni)} Kč/den</b></p>
+      <p>Majetkem (vydělává sám): <b style="color:${pasivni>0?'var(--accent)':'var(--muted)'}">${kc(pasivni)} Kč/den</b></p>
+      <p style="font-size:0.9em;color:var(--muted);margin-top:6px;">${
+        pasivni <= 0
+          ? 'Zatím ti nic nevydělává samo. Prvním pronajatým bytem se to změní — peníze pak chodí, i když zrovna nehraješ.'
+          : (pasivni >= f.totalExpense
+              ? '✅ Majetek ti pokryje všechny výdaje. Tomu se říká finanční nezávislost — pracovat už nemusíš.'
+              : `Kdyby ti majetek vydělával ${kc(f.totalExpense)} Kč/den, uživil by tě sám. Chybí ${kc(f.totalExpense - pasivni)} Kč.`)
+      }</p>
+    </div>`;
+
+    if(f.net < 0){
+      html += `<div class="card"><h3>⚠️ Utrácíš víc, než vyděláváš</h3>
+        ${f.daysUntilBroke !== null ? `<p>Při tomhle tempu ti peníze dojdou <b>za ${f.daysUntilBroke} dní</b>.</p>` : ''}
+        <p style="font-size:0.9em;color:var(--muted)">Co s tím:</p>
+        ${housingStatus(u.name)==='homeless' ? `<p style="margin:2px 0;font-size:0.9em;">• pořiď si bydlení — ušetříš ${Math.round(LIVING_COST*RESIDENCE_LIVING_DISCOUNT)} Kč/den</p>` : ''}
+        ${!getCurrentJob(u.name) ? `<p style="margin:2px 0;font-size:0.9em;">• nastup do práce na radnici</p>` : ''}
+        ${dluh > 0 ? `<p style="margin:2px 0;font-size:0.9em;">• splať dluh — úroky ti ukusují ${kc(asArray(u.loans).reduce((s,l)=>s+(l.balance||0)*(l.dailyRate||0),0))} Kč/den</p>` : ''}
+        <p style="margin:2px 0;font-size:0.9em;">• pronajmi byt v domě, kde máš většinu</p>
+      </div>`;
+    }
+
+    html += `<div class="row"><button class="secondary" onclick="openSheet('finance')">📊 Celý finanční přehled</button></div>`;
   }
 
   else if(which === 'walk'){
-    ensureWalkDay(u); // dnešní čísla musí patřit dnešnímu dni (reset o půlnoci)
+    ensureWalkDay(u);
     const earnedToday = Math.round(u.walkEarnedToday || 0);
     const distToday = Math.round(u.distanceToday || 0);
     const totalKm = ((u.totalDistance||0)/1000).toFixed(2).replace('.',',');
-    html += `<div class="card"><h3>🚶 Chůze dnes</h3>
-      <p>Dnes nachozeno: <b>${distToday} m</b></p>
-      <p>Vyděláno chůzí: <b style="color:var(--gold)">${earnedToday} Kč</b></p>
-      <p style="font-size:0.9em;color:var(--muted)">Za každých 100 metrů dostaneš ${Math.round(WALK_REWARD_PER_METER*100*inflationMult())} Kč. Kolik ujdeš, tolik vyděláš — bez horního limitu.</p>
+    const zaKm = Math.round(1000 * WALK_REWARD_PER_METER * inflationMult() * eventMult('walkMult'));
+    const kroky = Math.round(distToday / 0.75);   // průměrný krok ~75 cm
+    const dnes = calendarDay();
+    // postup v denních úkolech na chůzi
+    const chuzeUkoly = (u.questDay===dnes ? asArray(u.quests) : []).map(id => QUEST_DEFS.find(q=>q.id===id))
+      .filter(q => q && q.id.startsWith('walk'));
+
+    html += `<div class="card"><h3>🚶 Dnešní chůze</h3>
+      <p>Nachozeno: <b>${distToday} m</b> <span style="font-size:0.85em;color:var(--muted)">(zhruba ${kroky.toLocaleString('cs-CZ')} kroků)</span></p>
+      <p>Vyděláno: <b style="color:var(--gold)">${earnedToday} Kč</b></p>
+      <p style="font-size:0.9em;color:var(--muted)">Za kilometr dostaneš <b>${zaKm} Kč</b>${eventMult('walkMult')!==1 ? ` <span style="color:var(--gold)">(dnes ${eventMult('walkMult')}× díky události!)</span>` : ''}.</p>
     </div>`;
-    html += `<div class="card"><h3>👟 Celkem</h3>
-      <p>Za celou hru nachozeno: <b>${totalKm} km</b></p>
-      <p style="font-size:0.9em;color:var(--muted)">Chůze je jádro hry — čím víc chodíš, tím víc vyděláš a tím víc domů a práce máš v dosahu. Nemusíš appku mít pořád zapnutou: po procházce ji zapni a cesta, kterou jsi ušel pěšky, se ti připíše (jízda autem ne — pozná se podle rychlosti).</p>
+
+    if(chuzeUkoly.length){
+      let t = '';
+      chuzeUkoly.forEach(q => {
+        const hotovo = asArray(u.questDone).includes(q.id);
+        const chybi = Math.max(0, q.goal - distToday);
+        t += `<p style="margin:3px 0;font-size:0.92em;${hotovo?'opacity:0.6;':''}">${hotovo?'✅':q.icon} ${q.name}: ${hotovo ? 'splněno' : `chybí <b>${chybi} m</b>`}</p>`;
+      });
+      html += `<div class="card"><h3>🎯 Dnešní úkoly na chůzi</h3>${t}</div>`;
+    }
+
+    // co je v dosahu
+    if(playerPos){
+      const balikyDnes = (u.pickupDay===dnes) ? asArray(u.pickupGot) : [];
+      const nejblizsiBalik = (world.pickups && asArray(world.pickups.list) || [])
+        .filter(pk => !balikyDnes.includes(pk.id))
+        .map(pk => haversine(playerPos, {lat:pk.lat,lng:pk.lng}))
+        .sort((a,b)=>a-b)[0];
+      const mistaDnes = (u.lmDay===dnes) ? asArray(u.lmGot) : [];
+      const nejblizsiMisto = allLandmarks().filter(lm => !mistaDnes.includes(lm.id))
+        .map(lm => haversine(playerPos, {lat:lm.lat,lng:lm.lng}))
+        .sort((a,b)=>a-b)[0];
+      html += `<div class="card"><h3>📍 Co máš poblíž</h3>
+        ${nejblizsiBalik !== undefined ? `<p style="margin:2px 0;font-size:0.92em;">💰 nejbližší balík: <b>${Math.round(nejblizsiBalik)} m</b> (${Math.round(nejblizsiBalik*WALK_REWARD_PER_METER*inflationMult())} Kč cestou tam)</p>` : `<p style="margin:2px 0;font-size:0.92em;color:var(--muted)">💰 balíky máš dnes všechny</p>`}
+        ${nejblizsiMisto !== undefined ? `<p style="margin:2px 0;font-size:0.92em;">📍 nejbližší místo zájmu: <b>${Math.round(nejblizsiMisto)} m</b></p>` : `<p style="margin:2px 0;font-size:0.92em;color:var(--muted)">📍 místa máš dnes navštívená</p>`}
+        ${!isInPlayArea() ? `<p style="margin:4px 0 0 0;font-size:0.9em;color:var(--orange)">⚠️ Jsi mimo herní oblast — tady se chůze nepočítá. Vrať se mezi domy.</p>` : ''}
+      </div>`;
+    }
+
+    html += `<div class="card"><h3>👟 Za celou hru</h3>
+      <p>Nachozeno: <b>${totalKm} km</b></p>
+      <p style="font-size:0.9em;color:var(--muted)">Nemusíš mít appku pořád zapnutou — po procházce ji zapni a cesta se ti připíše. Jízda autem se nepočítá, pozná se podle rychlosti.</p>
     </div>`;
   }
 
   else if(which === 'housing'){
     const status = housingStatus(u.name);
-    const label = {owner:'🏠 vlastní bydlení', tenant:'🔑 nájem', homeless:'🚶 bez bydlení'}[status];
+    const label = {owner:'🏠 vlastní bydlení', tenant:'🔑 bydlíš v nájmu', homeless:'🚶 bez bydlení'}[status];
     const cost = status==='owner' ? LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT) : (status==='tenant'?TENANT_LIVING_COST:LIVING_COST);
-    let rentPart = 0;
-    if(status==='tenant'){ Object.values(world.parcels).forEach(p=>(p.units||[]).forEach(un=>{ if(un.tenant===u.name) rentPart += un.rentPrice; })); }
+    let rentPart = 0, kdeBydli = null;
+    if(status==='tenant'){
+      Object.values(world.parcels).forEach(p => asArray(p.units).forEach((un,i) => {
+        if(un && un.tenant===u.name){ rentPart += un.rentPrice||0; kdeBydli = p.id.replace('h_','#') + ' (' + (i+1) + '. byt)'; }
+      }));
+    }
+    if(status==='owner'){
+      const domov = Object.values(world.parcels).find(p => p.useType==='residence' && (p.owners?.[u.name]||0) > 0);
+      if(domov) kdeBydli = domov.id.replace('h_','#') + ` (podíl ${(domov.owners[u.name]||0).toFixed(0)} %)`;
+    }
+    const celkem = Math.round(cost + rentPart);
+
     html += `<div class="card"><h3>${label}</h3>
-      <p>Denní náklad na bydlení: <b style="color:var(--gold)">${Math.round(cost+rentPart)} Kč/den</b></p>
-      ${status==='homeless' ? `<p style="color:var(--danger);font-size:0.9em">Bez vlastního bydlení platíš nejvíc (${LIVING_COST} Kč/den).</p>
-        <p style="font-size:0.9em;color:var(--muted)">${housingHint(u.name)}</p>` : ''}
-      ${status==='tenant' ? `<p style="font-size:0.9em;color:var(--muted)">Platíš životní náklady (${TENANT_LIVING_COST}) + nájem majiteli (${Math.round(rentPart)}). Kdybys měl vlastní bydlení, platil bys jen ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.</p>` : ''}
-      ${status==='owner' ? `<p style="font-size:0.9em;color:var(--accent)">Máš nejlevnější možné bydlení — vlastní podíl v domě. Dobrá práce!</p>` : ''}
+      ${kdeBydli ? `<p>Kde: <b>${kdeBydli}</b></p>` : ''}
+      <p>Platíš: <b style="color:var(--gold)">${celkem} Kč/den</b> <span style="font-size:0.85em;color:var(--muted)">= ${kc(celkem*30)} Kč za měsíc</span></p>
+      ${status==='tenant' ? `<p style="font-size:0.9em;color:var(--muted)">Z toho ${TENANT_LIVING_COST} Kč životní náklady + ${Math.round(rentPart)} Kč nájem majiteli.</p>` : ''}
     </div>`;
-    html += `<div class="card"><h3>💡 Jak to funguje</h3>
-      <p style="font-size:0.9em;color:var(--muted)">Vlastník (${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč) < nájemník < bezdomovec (${LIVING_COST} Kč). Vlastní bydlení se vždycky vyplatí.</p>
+
+    // srovnání všech tří možností s konkrétními čísly
+    const ceny = {
+      owner: Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT)),
+      tenant: TENANT_LIVING_COST + Math.round(rentPart || 60),
+      homeless: LIVING_COST
+    };
+    html += `<div class="card"><h3>💡 Srovnání možností</h3>
+      <p style="margin:3px 0;${status==='owner'?'color:var(--accent);font-weight:600;':''}">🏠 vlastní bydlení: <b>${ceny.owner} Kč/den</b>${status==='owner'?' ← tvoje':''}</p>
+      <p style="margin:3px 0;${status==='tenant'?'color:var(--gold);font-weight:600;':''}">🔑 nájem: <b>~${ceny.tenant} Kč/den</b>${status==='tenant'?' ← tvoje':''}</p>
+      <p style="margin:3px 0;${status==='homeless'?'color:var(--danger);font-weight:600;':''}">🚶 bez bydlení: <b>${ceny.homeless} Kč/den</b>${status==='homeless'?' ← tvoje':''}</p>
+      ${status!=='owner' ? `<p style="font-size:0.9em;color:var(--muted);margin-top:6px;">Vlastním bydlením bys ušetřil <b>${celkem - ceny.owner} Kč/den</b> — to je ${kc((celkem-ceny.owner)*30)} Kč měsíčně.</p>` : `<p style="font-size:0.9em;color:var(--accent);margin-top:6px;">Máš nejlevnější možnost. Nic lepšího už nevymyslíš.</p>`}
     </div>`;
+
+    if(status !== 'owner'){
+      html += `<div class="card"><h3>🎯 Jak na vlastní bydlení</h3>
+        <p style="font-size:0.92em;">${housingHint(u.name)}</p>
+      </div>`;
+    }
+
+    if(isNewbieProtected(u)){
+      html += `<div class="card" style="border-left:3px solid var(--accent);"><h3>🛡️ Ochranná lhůta</h3>
+        <p style="font-size:0.92em;">Prvních pár dní neplatíš nic — zbývá ti <b>${newbieDaysLeft(u)} ${newbieDaysLeft(u)===1?'den':'dní'}</b>. Využij je na pořízení bydlení.</p>
+      </div>`;
+    }
   }
 
   else if(which === 'market'){
     const cyc = marketCycleLabel();
-    html += `<div class="card"><h3>📊 Tržní cyklus</h3>
-      <p>Teď: <b style="color:${cyc.color}">${cyc.label}</b></p>
-      <p>Ceny nemovitostí jsou momentálně <b>×${marketMultiplier().toFixed(2)}</b> oproti základu.</p>
-      <p style="font-size:0.9em;color:var(--muted)">${marketMultiplier()>=1 ? 'Ceny jsou nad průměrem — dobrá doba na prodej.' : 'Ceny jsou pod průměrem — výhodná doba na nákup.'}</p>
+    const mult = marketMultiplier();
+    const mojeDomy = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
+    const mojeHodnota = mojeDomy.reduce((s,p) => s + effectiveHousePrice(p) * (p.owners[u.name]||0)/100, 0);
+    // o kolik se hodnota liší proti průměrnému trhu
+    const rozdil = mojeHodnota - (mojeHodnota / mult);
+
+    html += `<div class="card"><h3>📊 Trh je ${cyc.label}</h3>
+      <p>Ceny nemovitostí: <b style="color:${cyc.color}">×${mult.toFixed(2)}</b> proti základu</p>
+      <p style="font-size:0.9em;color:var(--muted)">${mult>=1 ? 'Ceny jsou nad průměrem — dobrá doba prodávat.' : 'Ceny jsou pod průměrem — dobrá doba nakupovat.'}</p>
     </div>`;
-    html += `<div class="card"><h3>💡 Jak to funguje</h3>
-      <p style="font-size:0.9em;color:var(--muted)">Celé město prochází obdobími růstu (📈 konjunktura, 🔥 boom) a poklesu (📉 recese). V recesi kupuj levně, v boomu prodávej draho — přesně jako na skutečném trhu.</p>
-      <p style="font-size:0.9em;color:var(--muted)">Inflace navíc pomalu zvedá všechny ceny i mzdy (teď ×${inflationMult().toFixed(3)}).</p>
+
+    if(mojeDomy.length){
+      html += `<div class="card"><h3>🏠 Co to znamená pro tebe</h3>
+        <p>Tvoje nemovitosti mají teď hodnotu <b>${kc(mojeHodnota)} Kč</b>.</p>
+        <p style="font-size:0.92em;color:${rozdil>=0?'var(--accent)':'var(--danger)'}">${
+          rozdil >= 0
+            ? `Díky trhu máš o ${kc(rozdil)} Kč víc, než kdyby byl trh normální.`
+            : `Kvůli poklesu máš o ${kc(-rozdil)} Kč míň. Prodávat teď se nevyplatí — počkej na oživení.`
+        }</p>
+      </div>`;
+    }
+
+    html += `<div class="card"><h3>💡 Jak trh funguje</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Město prochází obdobími růstu (📈 konjunktura, 🔥 boom) a poklesu (📉 recese, ❄️ krize). Cyklus se mění pomalu — trvá týdny, ne dny.</p>
+      <p style="font-size:0.9em;color:var(--muted)">Pravidlo zní: <b>v recesi kupuj, v boomu prodávej</b>. Většina lidí dělá pravý opak, protože v krizi mají strach a v boomu chamtivost.</p>
+      <p style="font-size:0.9em;color:var(--muted)">Inflace navíc pomalu zvedá všechny ceny i mzdy (teď ×${inflationMult().toFixed(3)}) — peníze pod polštářem tak postupně ztrácejí hodnotu.</p>
     </div>`;
   }
 
@@ -6848,9 +7004,17 @@ function renderStatDetail(which){
 const CHAT_MAX = 100; // kolik zpráv se drží
 let chatReplyTo = null; // na kterou zprávu právě odpovídáme (snapshot {id,name,text})
 
-function renderChat(){
+// forceScroll = true → vždy sjet na konec (po odeslání vlastní zprávy).
+// Jinak se pozice zachová, aby čtení starších zpráv nepřerušila synchronizace,
+// která chat překresluje na pozadí každých pár vteřin.
+function renderChat(forceScroll){
   const el = document.getElementById('chatMessages');
   const msgs = world.chat || [];
+  // kde byl hráč PŘED překreslením (do 60 px od spodku bereme jako "dole")
+  const bylDole = !el.scrollHeight || (el.scrollHeight - el.scrollTop - el.clientHeight) < 60;
+  const puvodniScroll = el.scrollTop;
+  const puvodniPocet = chatLastCount;
+  chatLastCount = msgs.length;
   if(!msgs.length){
     el.innerHTML = `<div class="empty-state">Zatím tu nikdo nic nenapsal. Buď první!</div>`;
     renderReplyBar();
@@ -6880,8 +7044,26 @@ function renderChat(){
       </div>
     </div>`;
   }).join('');
-  el.scrollTop = el.scrollHeight; // odscrollovat dolů na nejnovější
+  if(forceScroll || bylDole){
+    el.scrollTop = el.scrollHeight;           // jsme dole (nebo posíláme) → držet se u nejnovějších
+    setChatNewBadge(false);
+  } else {
+    el.scrollTop = puvodniScroll;             // hráč čte výš → nechat ho být
+    if(msgs.length > puvodniPocet) setChatNewBadge(true);  // ale dát vědět, že něco přibylo
+  }
   renderReplyBar();
+}
+// Kolik zpráv bylo při posledním vykreslení (pro rozpoznání nových)
+let chatLastCount = 0;
+// Ukazatel "nové zprávy" — objeví se, když přijde zpráva a hráč čte starší.
+function setChatNewBadge(zobrazit){
+  const b = document.getElementById('chatNewBadge');
+  if(b) b.style.display = zobrazit ? 'block' : 'none';
+}
+function scrollChatToBottom(){
+  const el = document.getElementById('chatMessages');
+  if(el) el.scrollTop = el.scrollHeight;
+  setChatNewBadge(false);
 }
 
 // Lišta nad vstupem: ukazuje, na koho zrovna odpovídáš (jako na FB)
@@ -6947,7 +7129,7 @@ function sendChat(){
   input.value = '';
   chatReplyTo = null;
   saveWorld();
-  renderChat();
+  renderChat(true);   // vlastní zprávu chceme vidět → sjet na konec
 }
 
 function renderNews(){
@@ -8076,7 +8258,7 @@ function openSheet(tabName){
   if(tabName === 'leaderboard') renderLeaderboard();
   if(tabName === 'profile') renderProfile();
   if(tabName === 'news') renderNews();
-  if(tabName === 'chat') renderChat();
+  if(tabName === 'chat') renderChat(true);   // při otevření ukázat nejnovější
   if(tabName === 'finance') renderFinance();
   if(tabName === 'guide') renderGuide();
   if(tabName === 'admin') renderAdmin();
