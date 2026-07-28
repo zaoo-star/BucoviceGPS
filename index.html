@@ -683,6 +683,7 @@ function moveInNpc(npcId, houseId, unitIdx){
   const p = world.parcels[houseId];
   if(!npc || !p || !p.units || !p.units[unitIdx]){ showAlert('Zájemce nebo byt už není k dispozici.'); return; }
   if(!iHaveMajority(p)){ showAlert('Nastěhovat nájemníka může jen správce domu (víc než 50 % podílu).'); return; }
+  if(p.useType !== 'rental'){ showAlert('Dům není určený k pronájmu — nejdřív ho přepni na pronájem.'); return; }
   const u = p.units[unitIdx];
   if(!unitMeetsNpc(p, u, npc)){ showAlert('Tenhle byt nesplňuje požadavky zájemce (nájem, stav nebo vylepšení).'); return; }
   if(occupiedTenantNames().has(npc.name)){   // to samé jméno už mezitím obsadilo jiný byt
@@ -4932,8 +4933,16 @@ function renderSelected(id){
       html += `<p style="color:var(--accent);font-size:1em;margin-top:8px;">🏠 Dům slouží jako tvoje bydlení — životní náklady −${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % (${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den).</p>`;
     }
     html += `<div class="row">`;
-    if(p.useType !== 'residence') html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)</button>`;
-    if(p.useType !== 'rental') html += `<button class="secondary" ${near?'':'disabled'} onclick="startRental('${p.id}')">Přestavět na pronájem (${p.levels||1} ${(p.levels||1)===1?'byt':'bytů'}, ${Math.round(effectiveHousePrice(p)*RENTAL_SETUP_RATIO)} Kč)</button>`;
+    if(p.useType !== 'residence'){
+      const obsazenych = asArray(p.units).filter(u => u && (u.tenant || u.npc)).length;
+      html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)${obsazenych?` ⚠️ vystěhuje ${obsazenych}`:''}</button>`;
+    }
+    if(p.useType !== 'rental'){
+      const uzZarizeno = asArray(p.units).length;   // dům byl přestavěný dřív → znovu otevřít je zdarma
+      html += uzZarizeno
+        ? `<button class="secondary" ${near?'':'disabled'} onclick="startRental('${p.id}')">Zase pronajímat (${uzZarizeno} ${uzZarizeno===1?'byt':'bytů'}, zdarma)</button>`
+        : `<button class="secondary" ${near?'':'disabled'} onclick="startRental('${p.id}')">Přestavět na pronájem (${p.levels||1} ${(p.levels||1)===1?'byt':'bytů'}, ${Math.round(effectiveHousePrice(p)*RENTAL_SETUP_RATIO)} Kč)</button>`;
+    }
     html += `</div>`;
   } else if(iDecide) {
     html += `<p style="font-size:0.92em;color:var(--muted);margin-top:6px;">Jsi správce, ale na přestavbu domu (změnu využití) potřebuješ víc než 50 % podílu.</p>`;
@@ -5052,6 +5061,7 @@ function renderSelected(id){
     <p><b>Koupit podíl.</b> Domy se kupují po procentech. Musíš stát <b>u domu</b> (do ${INTERACTION_RADIUS} m). Cena za procento se odvíjí od hodnoty domu a mění se s tím, jak se ve městě kupuje.</p>
     <p><b>Kdo rozhoduje.</b> Majitel s <b>víc než 50 %</b> určuje, co s domem bude. Ostatní spoluvlastníci berou svůj podíl z výnosu, ale do rozhodování nemluví.</p>
     <p><b>Bydlení nebo pronájem.</b> Buď v domě bydlíš (poloviční životní náklady), nebo ho přestavíš na byty a pronajímáš. Obojí naráz nejde.</p>
+    <p><b>Přepínání tam a zpět.</b> Za přestavbu na pronájem platíš <b>jen jednou</b>. Když se pak rozhodneš, že v domě chceš bydlet, byty ti zůstanou zachované — jen se z nich vystěhují nájemníci. Kdykoliv později můžeš dům zase otevřít k pronájmu <b>zdarma</b>.</p>
     <p><b>Nájem za byt.</b> Nastavíš si cenu sám. Nad férovou cenou začnou nájemníci ubývat — hra ti u každého bytu ukáže, jak je obsazený.</p>
     <p><b>Stav bytu.</b> Obydlené byty chátrají. Pod hranicí, kterou nájemník snese, se odstěhuje. Oprava stojí ${REPAIR_COST_PER_POINT} Kč za bod.</p>
     <p><b>Vylepšení.</b> Jednorázová investice, která dům trvale zlepší (zateplení, klimatizace, rekonstrukce, solár). Vrátí se za pár měsíců.</p>
@@ -7568,20 +7578,67 @@ async function withdrawSavings(){
   showAlert(`Vybráno ${amount} Kč ze spoření na účet.`);
 }
 
-function setUseType(id, type){
+async function setUseType(id, type){
   const p = world.parcels[id];
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
   if(!iHaveMajority(p)){ showAlert('Změnit využití domu může jen vlastník s víc než 50 % podílu.'); return; }
+  if(p.useType === type) return;
+
+  // Přechod z pronájmu na bydlení: nájemníci se musí vystěhovat (bydlet tam budeš ty).
+  // Byty ale ZŮSTANOU zachované — dřív se mazaly, takže jedno klepnutí zahodilo celou
+  // přestavbu i s penězi za ni a musela se platit znovu. Teď se dají kdykoliv zase pronajmout.
+  if(type === 'residence' && p.useType === 'rental'){
+    const byty = asArray(p.units);
+    const obsazene = byty.filter(u => u && (u.tenant || u.npc));
+    if(obsazene.length){
+      const kdo = obsazene.map(u => u.tenant ? u.tenant : (u.npc && u.npc.name) || 'nájemník').join(', ');
+      const ok = await showConfirm(
+        `V domě bydlí ${obsazene.length} ${obsazene.length===1?'nájemník':(obsazene.length<5?'nájemníci':'nájemníků')} (${kdo}).\n\n` +
+        `Když se sem nastěhuješ, budou se muset vystěhovat a přijdeš o nájem ` +
+        `${Math.round(obsazene.reduce((s,u)=>s+(u.rentPrice||0),0))} Kč/den.\n\n` +
+        `Byty ti zůstanou — kdykoliv můžeš dům zase přepnout na pronájem bez placení přestavby.\n\nPokračovat?`);
+      if(!ok) return;
+    }
+    // vystěhovat všechny (hráče i NPC), byty ale necháme stát
+    byty.forEach(u => {
+      if(!u) return;
+      if(u.tenant){
+        const najemnik = u.tenant;
+        u.tenant = null;
+        if(world.users[najemnik]) addNews('rental', `📤 ${najemnik} se musel vystěhovat z domu ${p.id.replace('h_','#')} — majitel se tam nastěhoval.`);
+      }
+      if(u.npc){ u.npc = null; }
+    });
+  }
+
   p.useType = type;
-  if(type === 'residence'){ delete p.units; }
   stampHouse(p);
   saveWorld(); refreshAll();
+  if(type === 'residence') showAlert('Dům je teď tvoje bydlení. Byty zůstaly zachované — až budeš chtít zpět na pronájem, nemusíš platit přestavbu znovu.');
 }
 
 async function startRental(id){
   const p = world.parcels[id];
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
   if(!iHaveMajority(p)){ showAlert('Přestavět dům na pronájem může jen vlastník s víc než 50 % podílu.'); return; }
+
+  // Dům už jednou přestavěný byl (byty zůstaly z dřívějška) → jen ho zase otevřeme, zdarma.
+  // Za přestavbu se platí jednou, ne pokaždé, když si to hráč rozmyslí.
+  const stavajiciByty = asArray(p.units);
+  if(stavajiciByty.length){
+    const novyNajem = parseInt(await showPrompt(
+      `Dům je už zařízený (${stavajiciByty.length} ${stavajiciByty.length===1?'byt':'bytů'}) — znovu otevřít pronájem je zdarma.\n\nNájemné za byt/den (Kč)? Odhadovaná tržní cena: ${rentEstimateRange(p)}.`,
+      stavajiciByty[0].rentPrice || fairRentForHouse(p)), 10);
+    if(isNaN(novyNajem) || novyNajem <= 0) return;
+    p.useType = 'rental';
+    p.units.forEach(u => { if(u) u.rentPrice = novyNajem; });
+    stampHouse(p);
+    addNews('rental', `🏘️ ${currentUser.name} zase pronajímá dům ${p.id.replace('h_','#')} (nájem ${novyNajem} Kč).`);
+    saveWorld(); refreshAll();
+    showAlert(`Pronájem zase běží — zdarma, byty ti zůstaly z dřívějška.`);
+    return;
+  }
+
   const setupCost = Math.round(effectiveHousePrice(p) * RENTAL_SETUP_RATIO);
   const me = world.users[currentUser.name];
   if(me.balance < setupCost){ showAlert(`Zařízení bytů k pronájmu (nábytek, úklid, inzerce) stojí ${setupCost} Kč — tolik nemáš.`); return; }
@@ -7660,6 +7717,7 @@ async function repairUnit(id, idx){
 async function rentUnit(id, idx){
   const p = world.parcels[id];
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu, který si chceš najmout.'); return; }
+  if(p.useType !== 'rental'){ showAlert('Tenhle dům se momentálně nepronajímá — majitel v něm bydlí.'); return; }
   const unit = p.units[idx];
   if(unit.tenant){ showAlert('Tento byt už má nájemníka.'); return; }
   if(unit.condition <= 0){ showAlert('Byt je zchátralý, nedá se v něm bydlet.'); return; }
