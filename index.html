@@ -505,6 +505,11 @@ function modalConfirmCancel(){
   modalResolve = null;
 }
 
+// Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
+// Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
+const APP_VERSION = '1.1';
+const APP_BUILD = '28.07.2026 07:58';
+
 const STORAGE_KEY = 'bucovice_landlord_v9';
 
 // ===== FIREBASE: sdílený svět mezi hráči =====
@@ -6199,7 +6204,14 @@ function renderAdmin(){
   const players = Object.values(world.users);
   players.sort((a,b) => netWorthEstimate(b.name) - netWorthEstimate(a.name));
 
-  let html = `<div class="card">
+  // Verze nahoře — hned je vidět, jestli appka běží na aktuálním kódu
+  let html = `<div class="card" style="border-left:3px solid var(--accent);">
+    <h3>ℹ️ Verze appky</h3>
+    <p style="font-size:0.88em;margin:2px 0;">Běží: <b>${APP_VERSION}</b> · sestaveno <b>${APP_BUILD}</b></p>
+    <p style="font-size:0.82em;color:var(--muted);margin:2px 0;">Vidíš tu staré datum po nahrání nové verze? Appka běží ze staré kopie — zavři ji úplně (i z přehledu aplikací) a otevři znovu.</p>
+  </div>`;
+
+  html += `<div class="card">
     <h3>🐞 Mobilní konzole (ladění)</h3>
     <p style="font-size:0.85em;color:var(--muted)">Zobrazí vývojářskou konzoli přímo na displeji — chyby, requesty, síť. Užitečné, když nemáš PC po ruce.</p>
     <div class="row"><button class="secondary" onclick="adminToggleConsole()">${window.eruda ? 'Skrýt/zobrazit konzoli' : '🐞 Zapnout mobilní konzoli'}</button></div>
@@ -7317,7 +7329,7 @@ function renderProfile(){
       <h3>👤 Účet</h3>
       <p style="font-size:0.9em;color:var(--muted)">Na tomhle zařízení se přihlašuješ automaticky jako <b>${escapeHtml(u.name)}</b>. Můžeš se odhlásit a hrát pod jinou přezdívkou.</p>
       <div class="row"><button class="secondary" onclick="logout()">Odhlásit se / změnit hráče</button></div>
-      <p style="font-size:0.75em;color:var(--muted);text-align:center;margin-top:14px;cursor:default;" onclick="adminTapCount()">Bučpoly · verze 1.0</p>
+      <p style="font-size:0.75em;color:var(--muted);text-align:center;margin-top:14px;cursor:default;" onclick="adminTapCount()">Bučpoly · verze ${APP_VERSION} · ${APP_BUILD}</p>
     </div>`;
   }
 
