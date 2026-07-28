@@ -2,7 +2,7 @@
 // Cíl: appka jde nainstalovat na plochu a otevře se i bez signálu (cache).
 // GPS a mapové dlaždice pořád potřebují internet — offline funguje jen spuštění appky.
 
-const CACHE_NAME = 'bucovice-landlord-v1';
+const CACHE_NAME = 'bucovice-landlord-v2';
 const CORE_ASSETS = [
   './index.html',
   './manifest.json',
