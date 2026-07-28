@@ -129,13 +129,20 @@
     justify-content:center;font-size:16px;background:rgba(192,132,252,0.9);
     border:2px solid #fff8;box-shadow:0 0 8px 2px rgba(192,132,252,0.5);cursor:pointer;
   }
-  /* Tip pro nováčka: zeleně pulzující obrys u domů, kde nárok zdarma stačí na bydlení */
+  /* Tip pro nováčka: BÍLÝ blikající obrys. Záměrně ne zelený — zelená už znamená
+     "tady se bydlí" (výplň) a plete se i se zvětšením u domů v dosahu. */
   .parcelMarker.p-recommended{
-    outline:3px solid #4ade80; outline-offset:2px; opacity:1 !important;
-    box-shadow:0 0 12px 3px rgba(74,222,128,0.7);
-    animation:recPulse 1.6s ease-in-out infinite;
+    outline:3px solid #ffffff; outline-offset:2px; opacity:1 !important;
+    animation:recPulse 1.4s ease-in-out infinite;
   }
-  @keyframes recPulse{ 0%,100%{box-shadow:0 0 8px 2px rgba(74,222,128,0.5);} 50%{box-shadow:0 0 16px 5px rgba(74,222,128,0.9);} }
+  @keyframes recPulse{ 0%,100%{outline-color:#ffffff;} 50%{outline-color:rgba(255,255,255,0.35);} }
+  .encounterMarker{
+    width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
+    justify-content:center;font-size:17px;background:rgba(251,146,60,0.95);
+    border:2px solid #fff;box-shadow:0 0 10px 3px rgba(251,146,60,0.6);
+    animation:encPulse 2s ease-in-out infinite;
+  }
+  @keyframes encPulse{ 0%,100%{transform:scale(1);} 50%{transform:scale(1.15);} }
   .landmarkMarker{
     width:30px;height:30px;border-radius:50%;display:flex;align-items:center;
     justify-content:center;font-size:17px;background:rgba(192,132,252,0.95);
@@ -174,10 +181,12 @@
   .p-residence{background:#4ade80;}
   .p-rental{background:#38bdf8;}
   .p-rental-bad{background:#f87171;}
-  .p-mine{box-shadow:0 0 0 3px var(--gold);}
+  /* Každý stav domu má VLASTNÍ vizuální prvek, ať se nepřebíjejí:
+     výplň = k čemu slouží · zlatý rámeček = je můj · zvětšení = jsi u něj · bílý obrys = doporučeno */
+  .p-mine{box-shadow:0 0 0 3px var(--gold);}                    /* zlatý rámeček = můj podíl */
   .p-cityhall{background:#fbbf24;opacity:0.85;}
-  .p-inreach{opacity:1 !important;box-shadow:0 0 0 3px #4ade80, 0 0 10px 3px #4ade8099; animation:pulse 1.6s infinite;}
-  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.8;}}
+  .p-inreach{opacity:1 !important;transform:scale(1.2);z-index:5;animation:pulse 1.6s infinite;}  /* zvětšení = v dosahu */
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.75;}}
   .p-business{background:#f472b6;opacity:0.8;}
   .condBar{background:var(--bg);border-radius:6px;height:8px;overflow:hidden;margin-top:4px;}
   .condBarFill{height:100%;background:var(--accent);}
@@ -513,7 +522,12 @@ function modalConfirmCancel(){
 const APP_VERSION = '1.1';
 const APP_BUILD = '28.07.2026 07:58';
 
-const STORAGE_KEY = 'bucovice_landlord_v9';
+const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
+// Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
+// ostatní města dostanou vlastní, aby si data nepřepisovala.
+function storageKey(){
+  return (CITY && CITY.id === 'bucovice') ? STORAGE_KEY_LEGACY : storageKeyForCity();
+}
 
 // ===== FIREBASE: sdílený svět mezi hráči =====
 // Tvá konfigurace z Firebase konzole (Project settings → Your apps).
@@ -541,7 +555,47 @@ let lastGeoPos = null;      // pro výpočet ušlé vzdálenosti mezi updaty
 let lastGeoTime = 0;        // čas poslední polohy (pro rychlostní kontrolu po znovuzapnutí)
 let geoAvailable = false;
 
-const CITY_CENTER = [49.1503, 17.0035]; // náměstí Svobody, Bučovice — reálný střed města
+// ===== MĚSTO, VE KTERÉM SE HRAJE =====
+// Hra se umí přizpůsobit libovolnému městu: podle polohy hráče zjistí, kde je,
+// stáhne si budovy z OpenStreetMap a připojí ho ke světu daného města.
+// Bučovice mají data vestavěná (nemusí se nic stahovat), ostatní se dotáhnou za běhu.
+const DEFAULT_CITY = {
+  id: 'bucovice',
+  name: 'Bučovice',
+  center: [49.1503, 17.0035],   // náměstí Svobody
+  builtIn: true                  // domy jsou přímo v souboru
+};
+// Aktuálně hrané město (přepíše se při detekci polohy)
+let CITY = loadSavedCity() || DEFAULT_CITY;
+// Zpětná kompatibilita: většina kódu pracuje s CITY_CENTER
+let CITY_CENTER = CITY.center;
+
+function loadSavedCity(){
+  try {
+    const raw = localStorage.getItem('bucpoly_city');
+    if(!raw) return null;
+    const c = JSON.parse(raw);
+    if(c && c.id && Array.isArray(c.center) && c.center.length === 2) return c;
+  } catch(e){}
+  return null;
+}
+function saveCity(c){
+  try { localStorage.setItem('bucpoly_city', JSON.stringify(c)); } catch(e){}
+}
+// Přepne hru do jiného města (změní střed, klíč pro ukládání i uzel ve Firebase)
+function setCity(c){
+  CITY = c;
+  CITY_CENTER = c.center;
+  saveCity(c);
+}
+// Klíč do localStorage — každé město má vlastní uložený svět
+function storageKeyForCity(){ return 'bucpoly_world_' + (CITY && CITY.id || 'bucovice'); }
+// Uzel ve Firebase — města se navzájem nevidí.
+// Bučovice zůstávají na původním uzlu 'world', aby rozehraná hra nikomu nezmizela.
+function cloudPathForCity(){
+  if(!CITY || CITY.id === 'bucovice') return 'world';
+  return 'worlds/' + CITY.id;
+}
 const START_BALANCE = 10000;
 const STARTER_HOME_VALUE = 9000;      // hodnota první nemovitosti zdarma pro nováčky (podíl v domě dle jeho ceny)
 
@@ -974,7 +1028,12 @@ const LANDMARK_DEFS = [
 // Všechna místa = pevná + vlastní přidaná adminem (world.landmarks)
 function allLandmarks(){
   const custom = asArray(world.landmarks).filter(l => l && l.lat && l.lng);
-  return LANDMARK_DEFS.concat(custom);
+  // Pevná místa má jen Bučovice (zámek, náměstí). V jiném městě je radnice ve středu
+  // a zbytek si přidá admin sám — jinak by hra posílala lidi na neexistující památky.
+  const zaklad = (CITY && CITY.builtIn)
+    ? LANDMARK_DEFS
+    : [{id:'lm_center', name:'Náměstí ' + (CITY.name||''), emoji:'🏛️', lat:CITY_CENTER[0], lng:CITY_CENTER[1], desc:'Střed města.'}];
+  return zaklad.concat(custom);
 }
 function myLandmarksToday(){
   const u = currentUser && world.users[currentUser.name];
@@ -3417,9 +3476,29 @@ const REAL_HOUSES = [
 
 // Skutečné domy Bučovic (OSM/RÚIAN data přes Overpass export) — cena podle počtu pater a vzdálenosti od náměstí
 const HOUSE_PRICE_MULTIPLIER = 5;
+
+// Domy aktuálního města. Bučovice mají vestavěná data, ostatní se stáhnou z map.
+let CITY_HOUSES = REAL_HOUSES;
+let CITY_BUSINESSES = null;   // podniky aktuálního města (null = použít vestavěné bučovické)
+
+// Dopočítá cenu domu, když ji data neobsahují (stažené z OpenStreetMap).
+// Deterministicky ze souřadnic, ať mají všechna zařízení stejná čísla.
+function computeBasePrice(h, center){
+  const patra = Math.max(1, Math.min(12, h.levels || 1));
+  // pseudonáhodný rozptyl odvozený ze souřadnic (stejný na každém zařízení)
+  const seed = Math.abs(Math.round((h.lat * 1e5 + h.lng * 1e5) * 7919)) % 1000;
+  const rozptyl = 0.75 + (seed / 1000) * 0.5;         // 0,75× až 1,25×
+  // blízko středu o něco dráž
+  const d = center ? haversine({lat:h.lat, lng:h.lng}, {lat:center[0], lng:center[1]}) : 800;
+  const blizkost = d < 400 ? 1.12 : (d < 900 ? 1.04 : 0.96);
+  return Math.round((2500 + patra * 2800) * rozptyl * blizkost);
+}
+
 function generateHouses(){
   const grid = {};
-  REAL_HOUSES.forEach(h => {
+  const zdroj = (CITY_HOUSES && CITY_HOUSES.length) ? CITY_HOUSES : REAL_HOUSES;
+  zdroj.forEach(h => {
+    if(h.basePrice === undefined) h.basePrice = computeBasePrice(h, CITY_CENTER);
     grid[h.id] = {
       id: h.id, lat: h.lat, lng: h.lng, basePrice: h.basePrice * HOUSE_PRICE_MULTIPLIER, levels: h.levels,
       owners: {},        // { jménoHráče: procenta } — spoluvlastnictví
@@ -3593,12 +3672,265 @@ function dailyHousingCost(name){
 
 function generateBusinesses(){
   const b = {};
-  BUSINESS_DEFS.forEach(def => { b[def.id] = {...def, owners:{}}; });
+  const zdrojB = (CITY_BUSINESSES && CITY_BUSINESSES.length) ? CITY_BUSINESSES : BUSINESS_DEFS;
+  zdrojB.forEach(def => { b[def.id] = {...def, owners:{}}; });
   return b;
 }
 
+// ===== ZJIŠTĚNÍ MĚSTA PODLE POLOHY =====
+// Hra se umí rozjet kdekoli: zjistí, ve které obci hráč je, stáhne budovy z OpenStreetMap
+// a vytvoří svět. Bučovice mají data vestavěná, takže se pro ně nic stahovat nemusí.
+
+// Normalizace názvu na id (bez diakritiky, malá písmena)
+function cityIdFromName(name){
+  return (name || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // pryč s diakritikou
+    .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'neznamo';
+}
+
+// Zjistí obec podle souřadnic (OpenStreetMap Nominatim).
+// Vrací {id, name, center} nebo null, když se to nepovede.
+async function detectCity(lat, lng){
+  const url = 'https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=13&addressdetails=1'
+    + '&lat=' + encodeURIComponent(lat) + '&lon=' + encodeURIComponent(lng);
+  try {
+    const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+    if(!res.ok) return null;
+    const d = await res.json();
+    const a = d.address || {};
+    const nazev = a.city || a.town || a.village || a.municipality || a.suburb || a.county;
+    if(!nazev) return null;
+    return {
+      id: cityIdFromName(nazev),
+      name: nazev,
+      center: [parseFloat(d.lat) || lat, parseFloat(d.lon) || lng]
+    };
+  } catch(e){
+    console.warn('Nepodařilo se zjistit město:', e);
+    return null;
+  }
+}
+
+// Stáhne budovy v okolí z OpenStreetMap (Overpass API).
+// Vrací pole {id, lat, lng, levels} ve stejném tvaru jako vestavěná data Bučovic.
+const CITY_FETCH_RADIUS = 1800;   // m — kolem středu města
+const CITY_MAX_HOUSES = 3000;     // strop, ať appka nezaplave daty
+async function fetchHousesFromOSM(lat, lng, radius){
+  const r = radius || CITY_FETCH_RADIUS;
+  // ptáme se jen na budovy; "center" nám vrátí jeden bod za každou budovu
+  const dotaz = `[out:json][timeout:25];(way["building"](around:${r},${lat},${lng});relation["building"](around:${r},${lat},${lng}););out center ${CITY_MAX_HOUSES};`;
+  const servery = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter'
+  ];
+  for(const server of servery){
+    try {
+      const res = await fetch(server, { method: 'POST', body: 'data=' + encodeURIComponent(dotaz),
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+      if(!res.ok) continue;
+      const data = await res.json();
+      const prvky = (data && data.elements) || [];
+      const domy = [];
+      prvky.forEach((el, i) => {
+        const p = el.center || el;
+        if(typeof p.lat !== 'number' || typeof p.lon !== 'number') return;
+        // počet pater z OSM, jinak odhad podle typu budovy
+        let levels = parseInt((el.tags && (el.tags['building:levels'] || el.tags['levels'])) || '', 10);
+        if(!levels || levels < 1 || levels > 12){
+          const typ = (el.tags && el.tags.building) || 'yes';
+          levels = (typ === 'apartments' || typ === 'residential') ? 3 : 1;
+        }
+        domy.push({ id: 'h_' + domy.length, lat: p.lat, lng: p.lon, levels });
+      });
+      if(domy.length >= 20) return domy;   // pod 20 budov nedává smysl (chyba dat)
+    } catch(e){
+      console.warn('Overpass server nedostupný:', server, e);
+    }
+  }
+  return null;
+}
+
+// Stáhne místní podniky (obchody, restaurace, hotely, benzinky) z OpenStreetMap.
+// Hodnota a výnos se odvodí od typu — supermarket vydělá víc než kavárna.
+const BIZ_TYPY = {
+  supermarket: {emoji:'🏬', kat:'Supermarket', hodnota:400000},
+  convenience: {emoji:'🛒', kat:'Obchod',      hodnota:120000},
+  bakery:      {emoji:'🥖', kat:'Pekárna',     hodnota:90000},
+  butcher:     {emoji:'🥩', kat:'Řeznictví',   hodnota:90000},
+  restaurant:  {emoji:'🍽️', kat:'Restaurace',  hodnota:130000},
+  cafe:        {emoji:'☕', kat:'Kavárna',     hodnota:80000},
+  pub:         {emoji:'🍺', kat:'Hospoda',     hodnota:100000},
+  bar:         {emoji:'🍸', kat:'Bar',         hodnota:90000},
+  fast_food:   {emoji:'🍔', kat:'Rychlé občerstvení', hodnota:85000},
+  fuel:        {emoji:'⛽', kat:'Benzinka',    hodnota:320000},
+  bank:        {emoji:'🏦', kat:'Banka',       hodnota:350000},
+  pharmacy:    {emoji:'💊', kat:'Lékárna',     hodnota:160000},
+  hotel:       {emoji:'🏨', kat:'Hotel',       hodnota:280000},
+  guest_house: {emoji:'🏨', kat:'Penzion',     hodnota:180000},
+  hairdresser: {emoji:'💇', kat:'Kadeřnictví', hodnota:70000},
+  car_repair:  {emoji:'🔧', kat:'Autoservis',  hodnota:150000},
+};
+async function fetchBusinessesFromOSM(lat, lng, radius){
+  const r = radius || CITY_FETCH_RADIUS;
+  const dotaz = `[out:json][timeout:25];(`
+    + `node["shop"](around:${r},${lat},${lng});`
+    + `node["amenity"~"restaurant|cafe|pub|bar|fast_food|fuel|bank|pharmacy"](around:${r},${lat},${lng});`
+    + `node["tourism"~"hotel|guest_house"](around:${r},${lat},${lng});`
+    + `);out ${120};`;
+  const servery = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  for(const server of servery){
+    try {
+      const res = await fetch(server, { method:'POST', body:'data=' + encodeURIComponent(dotaz),
+        headers:{'Content-Type':'application/x-www-form-urlencoded'} });
+      if(!res.ok) continue;
+      const data = await res.json();
+      const out = [];
+      ((data && data.elements) || []).forEach(el => {
+        const t = el.tags || {};
+        const nazev = t.name;
+        if(!nazev || typeof el.lat !== 'number') return;
+        const druh = t.shop || t.amenity || t.tourism || 'shop';
+        const def = BIZ_TYPY[druh] || {emoji:'🏪', kat:'Obchod', hodnota:100000};
+        // pseudonáhodná odchylka podle souřadnic (stejná všude)
+        const seed = Math.abs(Math.round((el.lat*1e5 + el.lon*1e5) * 6151)) % 1000;
+        const hodnota = Math.round(def.hodnota * (0.8 + (seed/1000) * 0.4));
+        out.push({
+          id: 'b' + (out.length + 1), name: nazev, lat: el.lat, lng: el.lon,
+          category: def.kat, emoji: def.emoji,
+          totalValue: hodnota,
+          hourlyYield: Math.round(hodnota / 1800 * 10) / 10,   // stejný poměr jako u Bučovic
+          rating: 3.5 + (seed % 15) / 10, ratingCount: 20 + (seed % 400)
+        });
+      });
+      if(out.length >= 3) return out;
+    } catch(e){ console.warn('Overpass (podniky) nedostupný:', e); }
+  }
+  return null;
+}
+
+// Náhradní řešení: pravidelná mřížka parcel kolem středu.
+// Použije se, když se budovy nepodaří stáhnout (vesnice bez dat, výpadek služby).
+function generateGridHouses(lat, lng, pocet){
+  const domy = [];
+  const krok = 40;                       // m mezi parcelami
+  const naRadu = Math.ceil(Math.sqrt(pocet || 400));
+  const dLat = krok / 111000;
+  const dLng = krok / (111000 * Math.cos(lat * Math.PI / 180));
+  const start = -Math.floor(naRadu/2);
+  for(let i = 0; i < naRadu; i++){
+    for(let j = 0; j < naRadu; j++){
+      if(domy.length >= (pocet || 400)) break;
+      domy.push({
+        id: 'h_' + domy.length,
+        lat: lat + (start + i) * dLat,
+        lng: lng + (start + j) * dLng,
+        levels: (i + j) % 5 === 0 ? 3 : 1
+      });
+    }
+  }
+  return domy;
+}
+
+// Uloží stažené domy, ať se příště nestahují znovu
+function cacheHouses(cityId, domy){
+  try { localStorage.setItem('bucpoly_houses_' + cityId, JSON.stringify(domy)); } catch(e){}
+}
+function loadCachedHouses(cityId){
+  try {
+    const raw = localStorage.getItem('bucpoly_houses_' + cityId);
+    if(!raw) return null;
+    const d = JSON.parse(raw);
+    return (Array.isArray(d) && d.length >= 20) ? d : null;
+  } catch(e){ return null; }
+}
+
+// Připraví domy pro aktuální město. Pořadí: vestavěná data → cache → stažení → mřížka.
+async function ensureCityHouses(){
+  if(CITY.builtIn){ CITY_HOUSES = REAL_HOUSES; return REAL_HOUSES; }   // Bučovice
+  const cached = loadCachedHouses(CITY.id);
+  if(cached){ CITY_HOUSES = cached; return cached; }
+  showCityLoading('Stahuji domy z map pro ' + CITY.name + '…');
+  let domy = await fetchHousesFromOSM(CITY.center[0], CITY.center[1]);
+  if(!domy){
+    showCityLoading('Mapy neodpověděly — vytvářím náhradní parcely…');
+    domy = generateGridHouses(CITY.center[0], CITY.center[1], 400);
+  }
+  cacheHouses(CITY.id, domy);
+  CITY_HOUSES = domy;
+
+  // podniky ke stejnému městu (v cache, ať se nestahují pokaždé)
+  let firmy = null;
+  try {
+    const raw = localStorage.getItem('bucpoly_biz_' + CITY.id);
+    if(raw){ const d = JSON.parse(raw); if(Array.isArray(d) && d.length) firmy = d; }
+  } catch(e){}
+  if(!firmy){
+    showCityLoading('Hledám místní obchody a restaurace…');
+    firmy = await fetchBusinessesFromOSM(CITY.center[0], CITY.center[1]);
+    if(firmy){ try { localStorage.setItem('bucpoly_biz_' + CITY.id, JSON.stringify(firmy)); } catch(e){} }
+  }
+  CITY_BUSINESSES = firmy && firmy.length ? firmy : [];
+  hideCityLoading();
+  return domy;
+}
+
+// Jednoduchá hláška přes celou obrazovku během přípravy města
+function showCityLoading(text){
+  let el = document.getElementById('cityLoading');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'cityLoading';
+    el.style.cssText = 'position:fixed;inset:0;z-index:5000;background:rgba(15,17,21,0.95);color:#e5e7eb;'
+      + 'display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;font-size:1.05em;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<div style="font-size:2em;margin-bottom:10px;">🗺️</div><div>' + text + '</div>';
+  el.style.display = 'flex';
+}
+function hideCityLoading(){
+  const el = document.getElementById('cityLoading');
+  if(el) el.style.display = 'none';
+}
+
+// Zeptá se hráče, jestli chce přepnout do města, kde se právě nachází.
+// Spouští se jen jednou za spuštění a jen když je hráč jinde, než hraje.
+let citySwitchChecked = false;
+async function maybeSwitchCity(lat, lng){
+  if(citySwitchChecked) return;
+  citySwitchChecked = true;
+  // jsme dost blízko svého města? → nic neřešíme
+  const doMesta = haversine({lat, lng}, {lat: CITY_CENTER[0], lng: CITY_CENTER[1]});
+  if(doMesta < 8000) return;
+  const nalezene = await detectCity(lat, lng);
+  if(!nalezene || nalezene.id === CITY.id) return;
+  const ok = await showConfirm(
+    `Vypadá to, že jsi v místě „${nalezene.name}", ale hraješ za ${CITY.name}.\n\n` +
+    `Chceš přepnout na ${nalezene.name}? Hra si stáhne místní domy a obchody a založí tam vlastní svět.\n\n` +
+    `(Tvůj postup v ${CITY.name} zůstane uložený — kdykoliv se můžeš vrátit.)`);
+  if(!ok) return;
+  setCity({ ...nalezene, builtIn: false });
+  showCityLoading('Přepínám na ' + nalezene.name + '…');
+  setTimeout(() => location.reload(), 600);
+}
+
+// Hlavní vstupní bod: podle polohy hráče vybere město a připraví data.
+// Když se poloha nepodaří zjistit, zůstane u posledního (nebo Bučovic).
+async function initCityFromPosition(lat, lng){
+  // jsme blízko Bučovic? → zůstat u vestavěných dat
+  const doBucovic = haversine({lat, lng}, {lat: DEFAULT_CITY.center[0], lng: DEFAULT_CITY.center[1]});
+  if(doBucovic < 6000){
+    if(CITY.id !== 'bucovice') setCity(DEFAULT_CITY);
+    return false;   // nic se nemění
+  }
+  const nalezene = await detectCity(lat, lng);
+  if(!nalezene) return false;
+  if(nalezene.id === CITY.id) return false;   // jsme tam, kde jsme byli
+  setCity({ ...nalezene, builtIn: false });
+  return true;      // město se změnilo → hra se musí načíst znovu
+}
+
 function loadWorld(){
-  const raw = localStorage.getItem(STORAGE_KEY);
+  const raw = localStorage.getItem(storageKey());
   if(raw){
     try{
       world = JSON.parse(raw);
@@ -3684,7 +4016,30 @@ function migrateWorld(){
         if(u.peakWorth === undefined) u.peakWorth = Math.max(0, u.balance);
         if(u.avatar === undefined) u.avatar = '🧑';
         if(u.currentJobShifts === undefined) u.currentJobShifts = 0;
-        if(u.savings === undefined) u.savings = 0;
+        // Tvrdá kontrola čísel: poškozená data (text, NaN, nekonečno) by rozbila výpočty
+        // a Firebase by kvůli nim odmítl uložit svět úplně všem hráčům.
+        const cislo = (v, nahrada, min, max) => {
+          const n = Number(v);
+          if(!isFinite(n)) return nahrada;
+          if(min !== undefined && n < min) return min;
+          if(max !== undefined && n > max) return max;
+          return n;
+        };
+        u.balance = cislo(u.balance, START_BALANCE, -50000000, 50000000);
+        u.savings = cislo(u.savings, 0, 0, 50000000);
+        u.totalDistance = cislo(u.totalDistance, 0, 0, 100000000);
+        u.totalShifts = cislo(u.totalShifts, 0, 0, 1000000);
+        u.peakWorth = cislo(u.peakWorth, u.balance, 0, 1000000000);
+        if(typeof u.avatar !== 'string' || !u.avatar || u.avatar.length > 16) u.avatar = '🧑';
+        if(typeof u.name !== 'string' || !u.name) u.name = 'Hráč';
+        if(u.name.length > 24) u.name = u.name.slice(0, 24);
+        asArray(u.loans).forEach(l => {
+          if(!l) return;
+          l.balance = cislo(l.balance, 0, 0, 50000000);
+          l.principal = cislo(l.principal, l.balance, 0, 50000000);
+          l.dailyRate = cislo(l.dailyRate, LOAN_ANNUAL_RATE/DAYS_PER_YEAR, 0, 1);
+          l.missedDays = cislo(l.missedDays, 0, 0, 10000);
+        });
         if(u.achievements === undefined) u.achievements = [];
         u.achievements = asArray(u.achievements);
         u.pickupGot = asArray(u.pickupGot);
@@ -3694,6 +4049,8 @@ function migrateWorld(){
         if(u.questBonusDay !== undefined && typeof u.questBonusDay !== 'number') u.questBonusDay = 0;
         u.claimedGifts = asArray(u.claimedGifts);
         u.worthHistory = asArray(u.worthHistory);
+        u.worthFlags = asArray(u.worthFlags);
+        u.encDone = asArray(u.encDone);
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
         u.loans = asArray(u.loans);
@@ -3724,8 +4081,16 @@ function migrateWorld(){
       world.news = asArray(world.news);
       if(!world.chat) world.chat = [];
       world.chat = asArray(world.chat);
+      // ořezat příliš dlouhé texty — jinak by je Firebase odmítl
+      world.chat.forEach(m => {
+        if(!m) return;
+        if(typeof m.text === 'string' && m.text.length > 300) m.text = m.text.slice(0, 300);
+        if(typeof m.name === 'string' && m.name.length > 24) m.name = m.name.slice(0, 24);
+      });
       if(!world.npcTenants || typeof world.npcTenants !== 'object') world.npcTenants = { list:[], refreshedTs:0 };
       world.npcTenants.list = asArray(world.npcTenants.list);
+      if(!world.encounters || typeof world.encounters !== 'object') world.encounters = { day:0, list:[] };
+      world.encounters.list = asArray(world.encounters.list);
       if(!world.pickups || typeof world.pickups !== 'object') world.pickups = { day:0, list:[] };
       world.pickups.list = asArray(world.pickups.list);
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
@@ -3736,7 +4101,7 @@ function migrateWorld(){
       if(!world.marketCycle) world.marketCycle = {mult: 1, vel: 0};
       if(world.marketCycle.vel === undefined) world.marketCycle.vel = 0;
       if(world.inflation === undefined) world.inflation = 1;
-      BUSINESS_DEFS.forEach(def => {
+      ((CITY_BUSINESSES && CITY_BUSINESSES.length) ? CITY_BUSINESSES : BUSINESS_DEFS).forEach(def => {
         if(!world.businesses[def.id]) world.businesses[def.id] = {...def, owners:{}};
         else {
           const owners = world.businesses[def.id].owners || {};
@@ -3778,20 +4143,20 @@ function initFirebaseSync(){
     // appka po startu hned tikala a ukládala (rev = aktuální čas), takže její verze byla vždy
     // "novější" než cloud → cloud se nepřevzal a vzápětí se PŘEPSAL lokálním stavem.
     // Tím mizely zprávy v chatu, noviny i noví hráči zapsaní jinými zařízeními.
-    fbDb.ref('world').get().then((snap) => {
+    fbDb.ref(cloudPathForCity()).get().then((snap) => {
       if(snap.exists()){
         adoptWorld(snap.val()); // sloučit: jejich novinky + můj postup, nic se neztratí
       }
       firebaseSyncEnabled = true;
       world.rev = Math.max((world.rev || 0) + 1, Date.now());
       lastWrittenRev = world.rev;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(world));
+      localStorage.setItem(storageKey(), JSON.stringify(world));
       doCloudWrite(); // nahrát SLOUČENÝ stav (ne přepsat cloud tím naším starým)
 
       // Živé naslouchání: každou cizí změnu SLOUČÍME (adoptWorld chrání náš postup a přebere
       // nové hráče / noviny / chat). Neodmítáme "starší" verze úplně — jinak by se nový hráč,
       // který zapsal o chlup dřív než my, nikdy neobjevil v žebříčku ani nikde jinde.
-      fbDb.ref('world').on('value', (snap2) => {
+      fbDb.ref(cloudPathForCity()).on('value', (snap2) => {
         if(!snap2.exists()) return;
         const incoming = snap2.val();
         const incomingRev = incoming.rev || 0;
@@ -4025,7 +4390,7 @@ function saveWorld(){
   // Verze světa: rostoucí číslo, aby šlo poznat, který stav je novější (proti přepsání postupu).
   world.rev = Math.max((world.rev || 0) + 1, Date.now());
   lastWrittenRev = world.rev;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(world)); // lokálně vždy hned (rychlé)
+  localStorage.setItem(storageKey(), JSON.stringify(world)); // lokálně vždy hned (rychlé)
   scheduleCloudWrite();
 }
 // Zápis do Firebase se posílá nejvýš jednou za CLOUD_WRITE_MIN_MS — aby chůze (časté ukládání)
@@ -4046,7 +4411,7 @@ function doCloudWrite(){
   lastFbWrite = Date.now();
   lastWrittenRev = world.rev; // ať sedí s tím, co reálně posíláme (rozpoznání vlastní ozvěny)
   const posilanaRev = world.rev;
-  fbDb.ref('world').set(worldForCloud())
+  fbDb.ref(cloudPathForCity()).set(worldForCloud())
     .then(() => { lastSyncedRev = Math.max(lastSyncedRev, posilanaRev); })
     .catch(e => console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e));
 }
@@ -4311,7 +4676,8 @@ function onNewDay(catchUp){
   const cev = todaysCityEvent();
   if(cev) addNews('event', `${cev.emoji} ${cev.name} — ${cev.desc}`);
   finishDueProjects();                                    // dokončit renovace, kterým vypršel čas
-  if(currentUser && world.users[currentUser.name]) recordWorthSnapshot(world.users[currentUser.name]);
+  // snímek jmění všem — díky tomu vidí admin vývoj u každého, ne jen u sebe
+  Object.values(world.users || {}).forEach(x => { if(x) safeCall(() => recordWorthSnapshot(x)); });
   tickMarketCycle(1);
   world.inflation = (world.inflation || 1) * (1 + INFLATION_ANNUAL / DAYS_PER_YEAR);
   resolveAuctions();
@@ -4472,10 +4838,13 @@ function onPosition(pos){
   if(!hasCenteredOnPlayer){
     hasCenteredOnPlayer = true;
     map.setView([newPos.lat, newPos.lng], 18);
+    maybeSwitchCity(newPos.lat, newPos.lng);   // hraješ jinde než posledně? → přepnout město
   }
   renderOtherPlayers();
   renderPickupMarkers();
   renderLandmarkMarkers();
+  renderEncounterMarkers();
+  checkEncounters();      // potkal jsi někoho? → nabídka
   refreshRecommended();   // doporučené domy pro nováčka podle aktuální polohy
   checkLandmarks();   // došel jsi k místu zájmu? → odměna
   if(selectedParcelId) renderSelected(selectedParcelId);
@@ -4564,6 +4933,278 @@ function renderPickupMarkers(){
   // odstranit markery bodů, které už neexistují nebo jsou sebrané
   Object.keys(pickupMarkers).forEach(id => {
     if(!seen[id]){ if(map.hasLayer(pickupMarkers[id])) map.removeLayer(pickupMarkers[id]); delete pickupMarkers[id]; }
+  });
+}
+
+// ===== NÁHODNÁ SETKÁNÍ S KOLEMJDOUCÍMI =====
+// Po městě chodí lidé s nabídkami. Dojdeš k nim a rozhodneš se — na rozdíl od balíků
+// peněz, které se seberou samy, tady musíš zvážit, jestli se ti to vyplatí.
+const ENCOUNTER_COUNT = 3;          // kolik jich je denně na mapě
+const ENCOUNTER_RADIUS = 30;        // m — jak blízko musíš být
+const ENCOUNTER_TYPES = ['kupec', 'najemnik', 'brigada', 'penezenka', 'znalec'];
+
+const ENCOUNTER_DEFS = {
+  kupec: {
+    emoji: '🧳', jmeno: 'Kupec z okolí',
+    // koupí podíl v domě, kde máš většinu, za nadstandardní cenu
+    dostupne: (u) => Object.values(world.parcels).some(p => (p.owners?.[u.name] || 0) >= 10),
+  },
+  najemnik: {
+    emoji: '🔑', jmeno: 'Zájemce o bydlení',
+    // nastěhuje se do volného bytu za vyšší nájem
+    dostupne: (u) => Object.values(world.parcels).some(p =>
+      (p.owners?.[u.name] || 0) > 50 && p.useType === 'rental' &&
+      asArray(p.units).some(un => un && !un.tenant && !un.npc)),
+  },
+  brigada:   { emoji: '💪', jmeno: 'Soused s prosbou', dostupne: () => true },
+  penezenka: { emoji: '🎒', jmeno: 'Ztracená peněženka', dostupne: () => true },
+  znalec:    { emoji: '🗺️', jmeno: 'Místní znalec', dostupne: () => true },
+};
+
+// Vygeneruje setkání na dnešní den — deterministicky, aby je všichni měli stejná
+function ensureEncounters(){
+  const dnes = calendarDay();
+  if(world.encounters && world.encounters.day === dnes && asArray(world.encounters.list).length) return;
+  const domy = Object.values(world.parcels || {});
+  if(!domy.length){ world.encounters = { day: dnes, list: [] }; return; }
+  let seed = dnes * 4021 + 17;
+  const rnd = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const list = [];
+  for(let i = 0; i < ENCOUNTER_COUNT; i++){
+    const dum = domy[Math.floor(rnd() * domy.length)];
+    const typ = ENCOUNTER_TYPES[Math.floor(rnd() * ENCOUNTER_TYPES.length)];
+    list.push({
+      id: 'enc_' + dnes + '_' + i,
+      typ,
+      lat: dum.lat, lng: dum.lng,
+      // připravené hodnoty, ať jsou u všech hráčů stejné
+      bonus: Math.round(15 + rnd() * 20),        // % nad tržní cenu (kupec)
+      najemBonus: Math.round(20 + rnd() * 25),   // % nad férový nájem (zájemce)
+      odmena: Math.round(180 + rnd() * 320),     // Kč (brigáda)
+      nalez: Math.round(120 + rnd() * 380),      // Kč (peněženka)
+    });
+  }
+  world.encounters = { day: dnes, list };
+}
+
+// Která setkání už hráč dnes vyřídil
+function myEncountersToday(){
+  const u = currentUser && world.users[currentUser.name];
+  if(!u) return [];
+  const dnes = calendarDay();
+  if(u.encDay !== dnes){ u.encDay = dnes; u.encDone = []; }
+  u.encDone = asArray(u.encDone);
+  return u.encDone;
+}
+
+// Poblíž je někdo, s kým jsi ještě nemluvil? → otevřít nabídku
+let encounterOpen = false;
+function checkEncounters(){
+  if(!currentUser || !playerPos || encounterOpen) return;
+  ensureEncounters();
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  const hotove = myEncountersToday();
+  const blizko = asArray(world.encounters.list).find(e =>
+    e && !hotove.includes(e.id) &&
+    haversine(playerPos, {lat:e.lat, lng:e.lng}) <= ENCOUNTER_RADIUS);
+  if(blizko) openEncounter(blizko);
+}
+
+// Označí setkání za vyřízené (ať už hráč přijal, nebo odmítl)
+function finishEncounter(enc){
+  const u = world.users[currentUser.name];
+  const hotove = myEncountersToday();
+  if(!hotove.includes(enc.id)) hotove.push(enc.id);
+  u.encDone = hotove.slice(-30);
+  saveWorld();
+  renderEncounterMarkers();
+  encounterOpen = false;
+}
+
+// Otevře nabídku podle typu
+async function openEncounter(enc){
+  encounterOpen = true;
+  const u = world.users[currentUser.name];
+  const def = ENCOUNTER_DEFS[enc.typ] || ENCOUNTER_DEFS.brigada;
+  playSound('coin');
+  try {
+    if(enc.typ === 'kupec')          await encounterKupec(enc, u);
+    else if(enc.typ === 'najemnik')  await encounterNajemnik(enc, u);
+    else if(enc.typ === 'brigada')   await encounterBrigada(enc, u);
+    else if(enc.typ === 'penezenka') await encounterPenezenka(enc, u);
+    else                              await encounterZnalec(enc, u);
+  } catch(e){ console.warn('setkání selhalo', e); }
+  finishEncounter(enc);
+}
+
+// 🧳 Kupec — nabídne za tvůj podíl víc, než je tržní cena
+async function encounterKupec(enc, u){
+  const moje = Object.values(world.parcels)
+    .filter(p => (p.owners?.[u.name] || 0) >= 10)
+    .sort((a,b) => (b.owners[u.name]||0) - (a.owners[u.name]||0));
+  if(!moje.length){
+    await showAlert('🧳 „Hledám, kdo by mi prodal podíl v nějakém domě. Až něco budeš mít, ozvi se!"');
+    return;
+  }
+  const p = moje[0];
+  const pct = Math.min(50, p.owners[u.name]);          // koupí nejvýš polovinu
+  const trzni = housePricePerPercent(p) * pct;
+  const nabidka = Math.round(trzni * (1 + enc.bonus/100));
+  const ok = await showConfirm(
+    `🧳 Kupec z okolí\n\n„Zajímá mě dům ${p.id.replace('h_','#')}. Prodáš mi ${pct.toFixed(0)} %?\n` +
+    `Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — to je o ${enc.bonus} % víc, než kolik je běžná cena."\n\n` +
+    `(Tržní hodnota: ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)\n\nProdat?`);
+  if(!ok){ showToast('Nabídku jsi odmítl.'); return; }
+  p.owners[u.name] -= pct;
+  if(p.owners[u.name] < 0.001) delete p.owners[u.name];
+  u.balance += nabidka;
+  stampHouse(p);
+  addNews('sale', `🧳 ${u.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`);
+  await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.`);
+  refreshAll();
+}
+
+// 🔑 Zájemce o bydlení — nastěhuje se za vyšší nájem
+async function encounterNajemnik(enc, u){
+  let cil = null;
+  Object.values(world.parcels).forEach(p => {
+    if(cil) return;
+    if((p.owners?.[u.name] || 0) <= 50 || p.useType !== 'rental') return;
+    const idx = asArray(p.units).findIndex(un => un && !un.tenant && !un.npc);
+    if(idx >= 0) cil = { p, idx };
+  });
+  if(!cil){
+    await showAlert('🔑 „Sháním podnájem. Kdybys měl volný byt, rád se nastěhuju!"');
+    return;
+  }
+  const ferovy = fairRentForHouse(cil.p);
+  const nabidka = Math.round(ferovy * (1 + enc.najemBonus/100));
+  const stav = Math.round(cil.p.units[cil.idx].condition || 0);
+  const ok = await showConfirm(
+    `🔑 Zájemce o bydlení\n\n„Sháním byt a viděl jsem, že máš volný v domě ${cil.p.id.replace('h_','#')}.\n` +
+    `Nabízím ${nabidka} Kč denně — to je o ${enc.najemBonus} % víc, než je běžné."\n\n` +
+    `(Běžný nájem: ${ferovy} Kč · stav bytu: ${stav} %)\n\n` +
+    `${stav < 50 ? '⚠️ Byt je ve špatném stavu — brzy se odstěhuje.\n\n' : ''}Nastěhovat?`);
+  if(!ok){ showToast('Zájemce šel jinam.'); return; }
+  cil.p.units[cil.idx].npc = { name: 'Nájemník z ulice', avatar: '🧑', minCondition: 35 };
+  cil.p.units[cil.idx].rentPrice = nabidka;
+  stampHouse(cil.p);
+  addNews('rental', `🔑 Do domu ${cil.p.id.replace('h_','#')} se nastěhoval nový nájemník (${nabidka} Kč/den).`);
+  await showAlert(`Nastěhováno! Bude ti platit ${nabidka} Kč denně.`);
+  refreshAll();
+}
+
+// 💪 Brigáda — jednorázová práce
+async function encounterBrigada(enc, u){
+  const prace = ['přestěhovat skříň', 'posekat zahradu', 'vynosit dříví', 'pomoct se stavbou plotu', 'uklidit sklep'];
+  const co = prace[Math.abs(enc.id.length * 7 + enc.odmena) % prace.length];
+  const ok = await showConfirm(
+    `💪 Soused s prosbou\n\n„Nepomohl bys mi ${co}? Zabere to chvíli.\n` +
+    `Dám ti za to ${enc.odmena} Kč."\n\nPomoct?`);
+  if(!ok){ showToast('Odmítl jsi pomoc.'); return; }
+  u.balance += enc.odmena;
+  await showAlert(`💪 Hotovo! Soused ti dal ${enc.odmena} Kč a poděkoval.`);
+  checkQuests();
+  refreshAll();
+}
+
+// 🎒 Ztracená peněženka — nechat si, nebo vrátit?
+async function encounterPenezenka(enc, u){
+  const ok = await showConfirm(
+    `🎒 Ztracená peněženka\n\nNa chodníku leží peněženka. Je v ní ${enc.nalez} Kč a občanka.\n\n` +
+    `Můžeš si peníze nechat, nebo peněženku odnést na radnici majiteli.\n\n` +
+    `Nechat si peníze?`);
+  if(ok){
+    u.balance += enc.nalez;
+    await showAlert(`Nechal sis ${enc.nalez} Kč. Nikdo se to nedozví… ale majitel je bude hledat.`);
+  } else {
+    const odmena = Math.round(enc.nalez * 0.4);
+    u.balance += odmena;
+    addNews('event', `🎒 ${u.name} vrátil nalezenou peněženku majiteli. Slušnost se cení.`);
+    await showAlert(`Odnesl jsi peněženku na radnici. Majitel ti z vděčnosti dal ${odmena} Kč — a ve městě se o tom mluví.`);
+  }
+  refreshAll();
+}
+
+// 🗺️ Místní znalec — zná svoje okolí a poradí, co se v něm vyplatí.
+// Hledá ve svém sousedství (ne u hráče) a hodnotí podle toho, jak rychle se dům zaplatí
+// z nájmu — tedy jinak než tipy ve finančním přehledu, které koukají na dostupnost.
+const ZNALEC_DOSAH = 350;   // m — co "zná" ze svého okolí
+async function encounterZnalec(enc, u){
+  const okoli = Object.values(world.parcels || {})
+    .filter(p => {
+      if(!p) return false;
+      if(haversine({lat:enc.lat, lng:enc.lng}, {lat:p.lat, lng:p.lng}) > ZNALEC_DOSAH) return false;
+      if(houseFreePct(p) < 20) return false;              // musí být co koupit
+      if((p.owners?.[u.name] || 0) > 50) return false;    // co už hráč ovládá, nedoporučuje
+      return true;
+    })
+    .map(p => {
+      const bytu = (p.units && p.units.length) || p.levels || 1;
+      const denniNajem = fairRentForHouse(p) * bytu;
+      const volne = houseFreePct(p);
+      const zaVetsinu = Math.round(effectiveHousePrice(p) * (Math.min(51, volne) / 100));
+      // za kolik dní se většinový podíl zaplatí z nájmu (menší = lepší)
+      const navratnost = denniNajem > 0 ? Math.round(zaVetsinu / (denniNajem * 0.51)) : 99999;
+      return { p, denniNajem, zaVetsinu, volne, bytu, navratnost,
+               vzdalenost: haversine({lat:enc.lat, lng:enc.lng}, {lat:p.lat, lng:p.lng}) };
+    })
+    .sort((a,b) => a.navratnost - b.navratnost);
+
+  if(!okoli.length){
+    await showAlert('🗺️ Místní znalec\n\n„Znám tu každý barák. Ale tady kolem je všechno rozebrané — zkus to o kus dál."');
+    return;
+  }
+
+  const t = okoli[0];
+  // znalec vysvětlí, PROČ zrovna tenhle — podle toho, čím dům vyniká
+  let duvod;
+  if(t.bytu >= 3) duvod = `má ${t.bytu} byty, takže z něj vytěžíš víc nájmu než z běžného domku`;
+  else if(t.volne >= 90) duvod = 'je celý volný, takže si ho můžeš vzít celý pro sebe';
+  else if(t.navratnost < 400) duvod = 'nájem je na jeho cenu nezvykle vysoký';
+  else duvod = 'je z toho, co je tady kolem, nejrozumnější koupě';
+
+  await showAlert(
+    `🗺️ Místní znalec\n\n„Bydlím tady odjakživa, tak ti poradím.\n\n` +
+    `Vem si dům ${t.p.id.replace('h_','#')} — ${duvod}.\n\n` +
+    `Většinový podíl vyjde asi na ${t.zaVetsinu.toLocaleString('cs-CZ')} Kč a nesl by ti kolem ` +
+    `${Math.round(t.denniNajem * 0.51)} Kč denně. Zaplatí se ti zhruba za ${t.navratnost} dní.\n\n` +
+    `Je to ${Math.round(t.vzdalenost)} metrů odsud — mrkni na mapu, svítí zeleně."`);
+
+  // zvýraznit ho na mapě, ať ho hráč najde
+  recommendedIds[t.p.id] = true;
+  renderAllMarkers();
+}
+
+// Markery kolemjdoucích
+function renderAllMarkers(){
+  try { renderPickupMarkers(); } catch(e){}
+  try { renderLandmarkMarkers(); } catch(e){}
+  try { renderEncounterMarkers(); } catch(e){}
+  try { refreshAll(); } catch(e){}
+}
+let encounterMarkers = {};
+function renderEncounterMarkers(){
+  if(!map || !currentUser) return;
+  ensureEncounters();
+  const hotove = myEncountersToday();
+  const videne = {};
+  asArray(world.encounters.list).forEach(e => {
+    if(!e || hotove.includes(e.id)) return;
+    videne[e.id] = true;
+    const def = ENCOUNTER_DEFS[e.typ] || ENCOUNTER_DEFS.brigada;
+    if(!encounterMarkers[e.id]){
+      encounterMarkers[e.id] = L.marker([e.lat, e.lng], {
+        icon: L.divIcon({ html:`<div class="encounterMarker">${def.emoji}</div>`, className:'', iconSize:[30,30] })
+      }).addTo(map).bindTooltip(def.jmeno + ' — dojdi blíž');
+    }
+  });
+  Object.keys(encounterMarkers).forEach(id => {
+    if(!videne[id]){
+      if(map.hasLayer(encounterMarkers[id])) map.removeLayer(encounterMarkers[id]);
+      delete encounterMarkers[id];
+    }
   });
 }
 
@@ -5060,6 +5701,17 @@ function renderSelected(id){
     });
   }
 
+  html += infoBox('Co znamenají čísla u bytů?', `
+    <p><b>Nájem (Kč/den).</b> Kolik ti byt vydělá, když je obsazený. Nastavuješ si ho sám.</p>
+    <p><b>Obsazenost (%).</b> Jak často je byt pronajatý. Není to buď/anebo — při 70 % ti chodí 70 % nájmu. Klesá, když si řekneš víc než férovou cenu.</p>
+    <div class="ex">Nájem 90 Kč při obsazenosti 60 % ti vydělá 54 Kč/den. Nájem 60 Kč při 100 % vydělá 60 Kč — méně chtít se vyplatí.</div>
+    <p><b>Stav (%).</b> V jakém je byt stavu. Nový má 100 %, každý den obydlení klesá o kousek. Nájemníci mají svoje nároky — když stav klesne pod jejich mez, <b>odstěhují se</b>.</p>
+    <p style="margin:2px 0;">• <b style="color:var(--accent)">70–100 %</b> — v pořádku, bydlí se dobře<br>
+       • <b style="color:var(--gold)">40–70 %</b> — začíná to být znát, náročnější nájemníci odejdou<br>
+       • <b style="color:var(--danger)">pod 40 %</b> — kritické, byt se vylidňuje</p>
+    <p><b>Oprava</b> stojí ${REPAIR_COST_PER_POINT} Kč za každý chybějící bod. Vyplatí se opravovat průběžně — spravit z 90 % je levnější než nechat byt spadnout na 20 % a přijít mezitím o nájemné.</p>
+  `);
+
   html += infoBox('Co s tímhle domem můžu dělat?', `
     <p><b>Koupit podíl.</b> Domy se kupují po procentech. Musíš stát <b>u domu</b> (do ${INTERACTION_RADIUS} m). Cena za procento se odvíjí od hodnoty domu a mění se s tím, jak se ve městě kupuje.</p>
     <p><b>Kdo rozhoduje.</b> Majitel s <b>víc než 50 %</b> určuje, co s domem bude. Ostatní spoluvlastníci berou svůj podíl z výnosu, ale do rozhodování nemluví.</p>
@@ -5197,6 +5849,15 @@ function renderJobs(){
       ${taken>0 ? `<p style="font-size:0.92em;color:var(--muted)">Zaměstnanci: ${holders.map(h=>`<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${h}')">${h}</span>`).join(', ')}</p>` : ''}
     </div>`;
     }).join('');
+
+  html += infoBox('Co znamenají údaje u pozice?', `
+    <p><b>Plat (Kč/směna).</b> Kolik dostaneš za jednu směnu. Vyplácí se hned na účet.</p>
+    <p><b>Volné / míst.</b> Kolik lidí ještě může nastoupit. Když je plno, musíš počkat, až někdo odejde.</p>
+    <p><b>Praxe.</b> Kolik odpracovaných směn potřebuješ, aby se ti pozice odemkla. Počítají se všechny směny za celou hru, i z jiných pozic.</p>
+    <p><b>Zaměstnanci.</b> Kdo tam zrovna pracuje. Klepnutím na jméno si zobrazíš profil.</p>
+    <p><b>🔒 zamčeno.</b> Nemáš dost praxe. Odpracuj potřebný počet směn na nižších pozicích.</p>
+    <p style="color:var(--muted)">Tip: příplatek za stáž roste, čím déle jsi na jedné pozici. Přeskakovat mezi místy se nevyplácí — příplatek začíná znovu od nuly.</p>
+  `);
 
   html += infoBox('Jak funguje práce?', `
     <p><b>Kde se pracuje.</b> Do práce se nastupuje <b>na radnici</b> na náměstí — musíš tam fyzicky dojít (do ${JOB_RADIUS} m). Odtud se pak hlásíš na směny.</p>
@@ -5640,7 +6301,16 @@ function renderMarket(){
 
   if(!listings.length){
     html += `<div class="empty-state">Na tržišti teď nejsou žádné nabídky. Svůj podíl nabídneš v detailu domu tlačítkem „Nabídnout na tržišti".</div>`;
-    html += infoBox('Jak funguje tržiště?', `
+    html += infoBox('Co znamenají údaje u nabídky?', `
+    <p><b>Podíl (%).</b> Kolik procent domu se prodává. Nekupuješ celý dům — kupuješ jeho část.</p>
+    <p><b>Cena.</b> U pevné nabídky kolik zaplatíš. U aukce aktuální nejvyšší nabídka.</p>
+    <p><b>Za 1 %.</b> Přepočet, ať můžeš porovnat nabídky mezi sebou. Menší číslo = výhodnější.</p>
+    <p><b>Tržní cena.</b> Za kolik se ten podíl kupuje od města. Když někdo prodává výrazně pod ní, je to dobrá koupě — ale zkontroluj proč (rozbité byty, žádní nájemníci).</p>
+    <p><b>Končí den X.</b> U aukcí — kdy se vyhodnotí. Po půlnoci toho dne vyhrává nejvyšší nabídka.</p>
+    <p><b>Prodává.</b> Kdo nabídku vypsal. Klepnutím na jméno si zobrazíš jeho profil.</p>
+  `);
+
+  html += infoBox('Jak funguje tržiště?', `
     <p><b>K čemu je.</b> Tady prodáváš a kupuješ podíly v domech <b>od ostatních hráčů</b> — na rozdíl od mapy, kde kupuješ od města za pevnou cenu.</p>
     <p><b>Dva způsoby prodeje:</b></p>
     <p>• <b>Pevná cena</b> — určíš částku a kdo první zaplatí, ten podíl dostane.<br>
@@ -5688,6 +6358,23 @@ function renderMarket(){
     }
   }).join('');
 
+  html += infoBox('Co znamenají údaje u nabídky?', `
+    <p><b>Podíl (%).</b> Kolik procent domu se prodává. Nekupuješ celý dům — kupuješ jeho část.</p>
+    <p><b>Cena.</b> U pevné nabídky kolik zaplatíš. U aukce aktuální nejvyšší nabídka.</p>
+    <p><b>Za 1 %.</b> Přepočet, ať můžeš porovnat nabídky mezi sebou. Menší číslo = výhodnější.</p>
+    <p><b>Tržní cena.</b> Za kolik se ten podíl kupuje od města. Když někdo prodává výrazně pod ní, je to dobrá koupě — ale zkontroluj proč (rozbité byty, žádní nájemníci).</p>
+    <p><b>Končí den X.</b> U aukcí — kdy se vyhodnotí. Po půlnoci toho dne vyhrává nejvyšší nabídka.</p>
+    <p><b>Prodává.</b> Kdo nabídku vypsal. Klepnutím na jméno si zobrazíš jeho profil.</p>
+  `);
+  html += infoBox('Jak funguje tržiště?', `
+    <p><b>K čemu je.</b> Tady prodáváš a kupuješ podíly v domech <b>od ostatních hráčů</b> — na rozdíl od mapy, kde kupuješ od města za pevnou cenu.</p>
+    <p><b>Dva způsoby prodeje:</b></p>
+    <p>• <b>Pevná cena</b> — určíš částku a kdo první zaplatí, ten podíl dostane.<br>
+       • <b>Aukce</b> — nastavíš vyvolávací cenu a hráči přihazují. Vyhrává nejvyšší nabídka.</p>
+    <p><b>Jak funguje dražba.</b> Když přihodíš, peníze se ti <b>hned zablokují</b> (jsou v úschově, nemůžeš je utratit). Když tě někdo přebije, dostaneš je celé zpátky.</p>
+    <p><b>Provize městu ${Math.round(MARKET_FEE*100)} %.</b> Z každého prodeje si město vezme podíl — počítej s tím při určování ceny.</p>
+    <p><b>Pozor.</b> Nabídku můžeš zrušit, dokud ji nikdo nekoupil. Když mezitím podíl prodáš jinam, nabídka se sama zruší.</p>
+  `);
   el.innerHTML = html;
 }
 
@@ -5914,6 +6601,33 @@ function finishDueProjects(){
 // ===== HISTORIE JMĚNÍ (pro graf vývoje) =====
 // Jednou denně si uložíme snímek jmění, ať má hráč křivku svého růstu.
 const WORTH_HISTORY_MAX = 60;   // držíme posledních 60 dní
+// Kolik se dá za den poctivě vydělat, hodně velkoryse spočítáno.
+// Slouží jen k tomu, aby admin poznal nesmyslný skok — ne k trestání.
+function safeCall(fn){ try { return fn(); } catch(e){ console.warn(e); } }
+function poctivyDenniStrop(u){
+  const zaklad = 4000;                                    // chůze + balíky + úkoly + práce
+  const zMajetku = Math.max(0, financeBreakdown(u.name).totalIncome) * 2;   // dvojnásobek běžného příjmu
+  const zProdeje = Object.values(world.parcels || {})
+    .filter(p => p && (p.owners?.[u.name] || 0) > 0)
+    .reduce((s,p) => s + effectiveHousePrice(p) * (p.owners[u.name]/100), 0);   // kdyby prodal všechno
+  return zaklad + zMajetku + zProdeje;
+}
+// Zaznamená, když jmění vyskočí víc, než jde poctivě stihnout.
+// Nic to hráči neudělá — jen se to objeví adminovi v jeho detailu.
+function checkWorthJump(u){
+  if(!u || !u.worthHistory || u.worthHistory.length < 2) return;
+  const dnes = u.worthHistory[u.worthHistory.length - 1];
+  const vcera = u.worthHistory[u.worthHistory.length - 2];
+  if(!dnes || !vcera || dnes.d === vcera.d) return;
+  const skok = (dnes.w || 0) - (vcera.w || 0);
+  const strop = poctivyDenniStrop(u);
+  if(skok > strop * 1.5 && skok > 20000){
+    if(!Array.isArray(u.worthFlags)) u.worthFlags = [];
+    u.worthFlags.push({ d: dnes.d, skok: Math.round(skok), strop: Math.round(strop) });
+    if(u.worthFlags.length > 20) u.worthFlags = u.worthFlags.slice(-20);
+  }
+}
+
 function recordWorthSnapshot(u){
   if(!u) return;
   const den = calendarDay();
@@ -5923,6 +6637,7 @@ function recordWorthSnapshot(u){
   if(posledni && posledni.d === den){ posledni.w = hodnota; return; }   // dnešek jen aktualizujeme
   u.worthHistory.push({ d: den, w: hodnota });
   if(u.worthHistory.length > WORTH_HISTORY_MAX) u.worthHistory = u.worthHistory.slice(-WORTH_HISTORY_MAX);
+  checkWorthJump(u);
 }
 // Jednoduchý sloupcový graf z historie (bez knihoven, jen divy)
 function worthChartHtml(u){
@@ -6194,6 +6909,18 @@ function renderDaily(){
   html += `<p style="font-size:0.8em;color:var(--muted);margin-top:6px;">Pozn.: upozornění chodí, jen když je hra spuštěná (i na pozadí). Úplně zavřené appce je poslat nejde.</p>
   </div>`;
 
+  html += infoBox('Kdo jsou kolemjdoucí na mapě?', `
+    <p>Oranžové značky jsou lidé s nabídkou. Dojdi k nim a rozhodni se — <b>přijmout nemusíš</b>.</p>
+    <p>🧳 <b>Kupec</b> koupí tvůj podíl za nadstandardní cenu · 🔑 <b>Zájemce</b> se nastěhuje za vyšší nájem · 💪 <b>Brigáda</b> je práce navíc mimo směnu · 🎒 <b>Peněženka</b> je volba mezi penězi a poctivostí · 🗺️ <b>Znalec</b> poradí dobrý dům ve svém okolí.</p>
+    <p style="color:var(--muted)">Denně ${ENCOUNTER_COUNT} setkání, s každým mluvíš jednou. Po půlnoci přijdou nová.</p>
+  `);
+
+  html += infoBox('Jaké úkoly se můžou objevit?', `
+    <p>Každý den dostaneš tři z těchhle úkolů — vybírají se náhodně, ale pro všechny hráče stejně:</p>
+    ${QUEST_DEFS.map(q => `<p style="margin:3px 0;">${q.icon} <b>${q.name}</b> — ${q.goal} ${q.unit} · odměna ${Math.round(q.reward*inflationMult())} Kč</p>`).join('')}
+    <p style="color:var(--muted);margin-top:6px;">O víkendu se nezadává úkol na práci (podniky mají zavřeno). Za splnění všech tří je bonus ${Math.round(QUEST_ALL_BONUS*inflationMult())} Kč navíc.</p>
+  `);
+
   html += infoBox('Jak fungují denní výzvy?', `
     <p><b>🔥 Série.</b> Za každý den, kdy hru otevřeš, dostaneš odměnu — a ta roste, čím delší sérii máš (až do sedmého dne). Když den vynecháš, začíná se od začátku.</p>
     <p><b>🎯 Úkoly.</b> Každý den dostaneš tři, stejné pro všechny hráče. Odměna se připíše <b>sama</b>, jakmile úkol splníš — nemusíš nic potvrzovat. Za splnění všech tří je bonus navíc.</p>
@@ -6228,6 +6955,13 @@ function renderAdmin(){
     <h3>🐞 Mobilní konzole (ladění)</h3>
     <p style="font-size:0.85em;color:var(--muted)">Zobrazí vývojářskou konzoli přímo na displeji — chyby, requesty, síť. Užitečné, když nemáš PC po ruce.</p>
     <div class="row"><button class="secondary" onclick="adminToggleConsole()">${window.eruda ? 'Skrýt/zobrazit konzoli' : '🐞 Zapnout mobilní konzoli'}</button></div>
+  </div>`;
+
+  html += `<div class="card">
+    <h3>🗺️ Město</h3>
+    <p style="font-size:0.88em;margin:2px 0;">Hraješ za: <b>${escapeHtml(CITY.name)}</b> <span style="color:var(--muted)">(${CITY.builtIn ? 'vestavěná data' : asArray(CITY_HOUSES).length + ' domů z map'})</span></p>
+    <p style="font-size:0.82em;color:var(--muted);margin:2px 0;">Každé město má vlastní svět — hráči, ekonomiku i chat. Hra ho pozná podle polohy, ale můžeš přepnout ručně.</p>
+    <div class="row"><button class="secondary" onclick="adminSwitchCity()">Přepnout město</button></div>
   </div>`;
 
   html += `<div class="card">
@@ -6417,7 +7151,25 @@ function adminPlayerDetail(name){
   const flags = (u.cheatDay === dnes) ? (u.gpsFlags || 0) : 0;
   const blokovan = (u.cheatDay === dnes) && u.walkBlocked;
   const podezrele = blokovan || flags >= 3;
+  const skoky = asArray(u.worthFlags);
+  const hist = asArray(u.worthHistory);
+  // vývoj jmění za posledních pár dní — nesmyslný skok je vidět hned
+  let vyvoj = '';
+  if(hist.length >= 2){
+    const poslednich = hist.slice(-5);
+    vyvoj = poslednich.map((x,i) => {
+      const zmena = i > 0 ? x.w - poslednich[i-1].w : 0;
+      const barva = zmena > 0 ? 'var(--accent)' : (zmena < 0 ? 'var(--danger)' : 'var(--muted)');
+      return `<span style="color:${barva}">${kc(x.w)}</span>`;
+    }).join(' → ');
+  }
   h += sekce('🛡️ Poctivost hry', ''
+    + (skoky.length
+        ? `<p style="margin:1px 0;font-size:0.82em;color:var(--danger)"><b>⚠️ Nesmyslný nárůst jmění ${skoky.length}×</b></p>`
+          + skoky.slice(-3).reverse().map(s =>
+              `<p style="margin:1px 0 1px 10px;font-size:0.78em;color:var(--danger)">den ${s.d}: +${kc(s.skok)} Kč (poctivě šlo max ~${kc(s.strop)})</p>`).join('')
+        : r('nárůst jmění', 'v normě', 'var(--accent)'))
+    + (vyvoj ? r('vývoj jmění', vyvoj) : '')
     + r('podezřelých skoků dnes', flags.toFixed(1) + ' / ' + CHEAT_FLAG_LIMIT, podezrele ? 'var(--danger)' : 'var(--accent)')
     + r('chůze zablokována', blokovan ? 'ANO — dnes se mu neplatí' : 'ne', blokovan ? 'var(--danger)' : undefined)
     + (u.lastPos
@@ -6556,6 +7308,36 @@ function filterAdminPlayers(){
   });
 }
 
+// Ruční přepnutí města (admin) — hodí se na testování nebo když detekce netrefí.
+async function adminSwitchCity(){
+  if(!isAdmin) return;
+  const jmeno = await showPrompt('Název města (nechej prázdné pro návrat do Bučovic):', '', false);
+  if(jmeno === null) return;
+  if(!jmeno.trim()){
+    setCity(DEFAULT_CITY);
+    showAlert('Přepnuto na Bučovice. Hra se načte znovu.');
+    setTimeout(() => location.reload(), 800);
+    return;
+  }
+  showCityLoading('Hledám ' + jmeno + '…');
+  try {
+    const res = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=' + encodeURIComponent(jmeno));
+    const d = await res.json();
+    hideCityLoading();
+    if(!d || !d.length){ showAlert('Město se nepodařilo najít. Zkus jiný název.'); return; }
+    const m = d[0];
+    const nove = { id: cityIdFromName(m.name || jmeno), name: m.name || jmeno,
+                   center: [parseFloat(m.lat), parseFloat(m.lon)], builtIn: false };
+    if(!(await showConfirm(`Přepnout na „${nove.name}"?\n\nHra si stáhne místní domy a obchody a založí tam nový svět.`))) return;
+    setCity(nove);
+    showCityLoading('Přepínám na ' + nove.name + '…');
+    setTimeout(() => location.reload(), 600);
+  } catch(e){
+    hideCityLoading();
+    showAlert('Vyhledávání se nepodařilo — zkontroluj připojení.');
+  }
+}
+
 function adminBroadcast(){
   const inp = document.getElementById('adminBroadcastInput');
   let text = (inp.value || '').trim();
@@ -6642,7 +7424,7 @@ function adminResetInflation(){
 async function adminResetWorld(){
   if(!(await showConfirm('Opravdu SMAZAT CELÝ SVĚT? Všichni hráči, domy, podniky — vše se resetuje. NEVRATNÉ!'))) return;
   if(!(await showConfirm('Fakt úplně jistě? Tohle nejde vzít zpět.'))) return;
-  try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+  try { localStorage.removeItem(storageKey()); } catch(e){}
   world = null;
   loadWorld();
   saveWorld();
@@ -7147,6 +7929,17 @@ function renderNews(){
       <p style="margin:2px 0 0;font-size:0.75em;color:var(--muted);">${n.day ? 'den '+n.day : ''}${timeAgo(n.ts)}</p>
     </div>`;
   });
+  html += infoBox('Jaké zprávy se tu objevují?', `
+    <p>🏠 <b>Nákupy a prodeje</b> — kdo co koupil a za kolik. Podle toho poznáš, kde se ve městě něco děje a kde porostou ceny.</p>
+    <p>🏘️ <b>Pronájmy</b> — kdo přestavěl dům, kdo se kam nastěhoval nebo vystěhoval.</p>
+    <p>💼 <b>Práce</b> — kdo nastoupil, kdo dostal padáka.</p>
+    <p>📢 <b>Oznámení vedení</b> — zprávy od správce hry.</p>
+    <p>🎪 <b>Městské události</b> — co se dnes ve městě děje a jak to mění ekonomiku.</p>
+    <p>🎲 <b>Náhodné události</b> — nečekané výdaje i příjmy (rozbitá pračka, malé dědictví).</p>
+    <p>👋 <b>Příchody</b> — kdo se ke hře přidal.</p>
+    <p style="color:var(--muted)">Drží se posledních 200 zpráv, starší se automaticky mažou.</p>
+  `);
+
   html += infoBox('Co jsou noviny?', `
     <p><b>Kronika města.</b> Zapisuje se sem všechno důležité, co se ve hře stalo — kdo co koupil, kdo se nastěhoval, jaké je dnes počasí v ekonomice.</p>
     <p><b>Proč to číst.</b> Poznáš podle toho, <b>co dělají ostatní</b>: kde se nakupuje (tam roste hodnota), kdo staví, kdo prodává. Je to jediný způsob, jak sledovat konkurenci.</p>
@@ -7337,6 +8130,32 @@ function renderGuide(){
     <p>Byty <b>postupně chátrají</b> (víc, když jsou obydlené) — musíš je čas od času opravit, jinak přestanou vydělávat.</p>
   `);
 
+  html += guideSection('🗺️','Co znamenají značky na mapě', `
+    <p><b>Domy</b> — barva ukazuje, k čemu slouží:</p>
+    <p style="margin:4px 0;"><span style="display:inline-block;width:18px;height:18px;background:#4b5563;border-radius:4px;vertical-align:middle;"></span>
+      <b>šedý 🏚️</b> — nikdo ho nevlastní, můžeš si koupit podíl</p>
+    <p style="margin:4px 0;"><span style="display:inline-block;width:18px;height:18px;background:#4ade80;border-radius:4px;vertical-align:middle;"></span>
+      <b>zelený 🏠</b> — někdo v něm bydlí</p>
+    <p style="margin:4px 0;"><span style="display:inline-block;width:18px;height:18px;background:#38bdf8;border-radius:4px;vertical-align:middle;"></span>
+      <b>modrý 🏘️</b> — pronájem, jsou v něm byty</p>
+    <p style="margin:4px 0;"><span style="display:inline-block;width:18px;height:18px;background:#f87171;border-radius:4px;vertical-align:middle;"></span>
+      <b>červený 🏚️</b> — pronájem, ale všechny byty jsou rozbité (nikdo v nich nebydlí)</p>
+    <p style="margin:4px 0;"><span style="display:inline-block;width:18px;height:18px;background:#fbbf24;border-radius:4px;vertical-align:middle;"></span>
+      <b>zlatá 🏛️</b> — radnice, tady se chodí do práce</p>
+    <p><b>Zvýraznění.</b> Barva domečku říká, k čemu slouží. Že je tvůj nebo že u něj stojíš, poznáš podle něčeho jiného — ať se to neplete:</p>
+    <p style="margin:4px 0;">• <b>zlatý rámeček</b> 🟡 — v tomhle domě máš podíl</p>
+    <p style="margin:4px 0;">• <b>zvětšený a jasnější</b> — jsi u něj dost blízko (do ${INTERACTION_RADIUS} m), můžeš s ním něco dělat</p>
+    <p style="margin:4px 0;">• <b>bílý blikající obrys</b> ⬜ — tip pro nováčka: tenhle dům ti nárok zdarma pokryje tak, že v něm budeš rovnou bydlet</p>
+    <p style="margin:4px 0;color:var(--muted)">Můžou se objevit i naráz — zlatý rámeček se zvětšením znamená „tvůj dům, u kterého zrovna stojíš".</p>
+    <p><b>Ostatní značky:</b></p>
+    <p style="margin:4px 0;">• 💰 <b>žlutá</b> — balík peněz, dojdi k němu (do ${PICKUP_COLLECT_RADIUS} m) a sebere se sám</p>
+    <p style="margin:4px 0;">• 🎁 <b>žlutá</b> — bonusový balík, dá víc peněz</p>
+    <p style="margin:4px 0;">• 🏰 📍 <b>fialová</b> — místo zájmu, za návštěvu je odměna (šedivá = dnes už jsi tam byl)</p>
+    <p style="margin:4px 0;">• 🧳 🔑 💪 🎒 🗺️ <b>oranžová</b> — kolemjdoucí s nabídkou, dojdi k němu a ozve se</p>
+    <p style="margin:4px 0;">• 🧍 <b>fialová</b> — jiný hráč, klepnutím si zobrazíš jeho profil</p>
+    <p style="margin:4px 0;">• <b>zelený kroužek kolem tebe</b> — dosah, na který můžeš s domy pracovat</p>
+  `);
+
   html += guideSection('🎁','První nemovitost zdarma (a proč jen podíl)', `
     <p>Na začátku máš nárok na nemovitost zdarma. Nedostaneš ale celý dům — dostaneš <b>podíl v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč</b>. Domy mají různou cenu, takže:</p>
     <p>• u <b>levnějšího</b> domu ti to vyjde na většinu (přes 50 %) → hned v něm <b>bydlíš</b> a klesnou ti náklady,<br>
@@ -7361,6 +8180,17 @@ function renderGuide(){
   html += guideSection('📈','Vývoj jmění a tipy na nákup', `
     <p>V <b>Přehledu financí</b> najdeš graf, jak ti roste (nebo klesá) jmění den po dni. Je to nejlepší způsob, jak zjistit, jestli se ti daří.</p>
     <p>Pod ním jsou <b>tipy na dobrý nákup</b> — domy blízko tebe, které stojí za pozornost. U každého je napsáno proč: někde je nejlevnější vstup, jinde nejvíc bytů nebo už zabydlení nájemníci.</p>
+  `);
+
+  html += guideSection('🧳','Kolemjdoucí a jejich nabídky', `
+    <p>Po městě chodí lidé s nabídkami. Poznáš je podle <b>oranžové značky</b> na mapě — dojdi k nim (do ${ENCOUNTER_RADIUS} m) a sami se ozvou.</p>
+    <p>Na rozdíl od balíků peněz se nesbírají samy: <b>musíš se rozhodnout</b>, jestli nabídku přijmeš.</p>
+    <p>🧳 <b>Kupec z okolí</b> — koupí od tebe podíl v domě za víc, než je běžná cena. Vyplatí se, když potřebuješ hotovost nebo se chceš domu zbavit.</p>
+    <p>🔑 <b>Zájemce o bydlení</b> — nastěhuje se ti do volného bytu a zaplatí nadstandardní nájem. Pozor na stav bytu — z rozbitého se brzy odstěhuje.</p>
+    <p>💪 <b>Soused s prosbou</b> — jednorázová brigáda za peníze. Nezabere směnu, takže se dá stihnout i v den, kdy už jsi pracoval.</p>
+    <p>🎒 <b>Ztracená peněženka</b> — najdeš peníze a rozhodneš se: nechat si všechno, nebo ji vrátit majiteli a dostat menší odměnu (a dobré jméno ve městě).</p>
+    <p>🗺️ <b>Místní znalec</b> — poradí ti, který dům ve svém okolí se vyplatí koupit, a zvýrazní ti ho na mapě. Zná jen to, co má kolem sebe — jinde se ho ptát nemá smysl.</p>
+    <p style="color:var(--muted)">Každý den se objeví ${ENCOUNTER_COUNT} nová setkání na nových místech. S každým můžeš mluvit jen jednou za den.</p>
   `);
 
   html += guideSection('🎯','Denní výzvy, série a místa zájmu', `
@@ -7589,6 +8419,15 @@ function renderProfile(){
     </div>`;
   }
 
+  html += infoBox('Jak získat odznaky?', `
+    <p>Odznaky se udělují automaticky za dosažené milníky. Nemusíš nic potvrzovat — jakmile podmínku splníš, přidá se ti.</p>
+    ${ACHIEVEMENTS.map(a => {
+      const mam = asArray(u.achievements).includes(a.id);
+      return `<p style="margin:3px 0;${mam?'color:var(--accent);':''}">${mam?'✅':a.icon} <b>${a.title}</b> — ${a.desc}</p>`;
+    }).join('')}
+    <p style="color:var(--muted);margin-top:6px;">Odznaky jsou trvalé, nedají se ztratit. Na ekonomiku nemají vliv — jsou to památky na to, co jsi dokázal.</p>
+  `);
+
   html += infoBox('Co znamenají údaje v profilu?', `
     <p><b>🏅 Hodnost.</b> Postup podle čistého jmění: Nováček → Střádal → Podnikavec → Investor → Magnát → Realitní král. Je to jen titul, nic neodemyká — ale je vidět ostatním.</p>
     <p><b>Bydlení.</b> Tři možné stavy:</p>
@@ -7665,6 +8504,18 @@ function renderLeaderboard(){
     </div>`;
   }).join('');
 
+  html += infoBox('Jak se počítá čisté jmění?', `
+    <p>Je to jediné číslo, které o tvém bohatství říká pravdu. Počítá se takhle:</p>
+    <p style="margin:3px 0;">+ hotovost na účtu</p>
+    <p style="margin:3px 0;">+ peníze na spoření</p>
+    <p style="margin:3px 0;">+ hodnota podílů v domech <span style="color:var(--muted)">(podle aktuální tržní ceny)</span></p>
+    <p style="margin:3px 0;">+ hodnota podílů v podnicích</p>
+    <p style="margin:3px 0;">− všechny dluhy</p>
+    <div class="ex">Máš 5 000 Kč na účtu, dům za 40 000 Kč (vlastníš 60 % = 24 000 Kč) a dluh 10 000 Kč → tvoje jmění je 19 000 Kč.</div>
+    <p><b>Proč to není hotovost.</b> Kdo má milion v hotovosti a nic jiného, je na tom hůř než ten, kdo má 100 000 v domech, které mu vydělávají. Hotovost neroste — majetek ano.</p>
+    <p><b>Proč ti jmění může klesnout, i když nic neuděláš.</b> Ceny nemovitostí kolísají s trhem, dluhy rostou úroky, byty chátrají.</p>
+  `);
+
   html += infoBox('Co znamenají čísla v žebříčku?', `
     <p><b>💰 Jmění</b> — hlavní žebříček. Sečte se hotovost, spoření a hodnota všech tvých podílů v domech a firmách, pak se odečtou dluhy. Tomu se říká <b>čisté jmění</b> a je to nejpoctivější měřítko toho, jak si stojíš.</p>
     <div class="ex">Máš 5 000 Kč na účtu, podíly za 30 000 Kč a dluh 10 000 Kč → tvoje jmění je 25 000 Kč.</div>
@@ -7689,6 +8540,13 @@ function renderBank(){
     <p>Limit pro novou půjčku: ${limit} Kč</p>
     <div class="row"><button onclick="takeLoan()">Vzít půjčku (${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)</button></div>
     <p style="font-size:0.85em;margin-top:8px;">Půjčku využiješ na nákup podílů v domech a podnicích. Banka strhává splátky automaticky — když je dlouho neplatíš, zabaví ti majetek.</p>
+    ${infoBox('Kdy si půjčit a kdy ne?', `
+      <p><b>Dobrý dluh.</b> Půjčíš si na něco, co ti vydělá víc, než je úrok. Dům, který nese 60 Kč denně, splatí půjčku s úrokem ${Math.round(LOAN_ANNUAL_RATE*100)} % a ještě ti zbyde.</p>
+      <div class="ex">Půjčíš si 20 000 Kč (úrok ~${Math.round(20000*LOAN_ANNUAL_RATE/DAYS_PER_YEAR)} Kč/den), koupíš za ně podíl v domě, který nese 80 Kč/den. Vyděláváš ${Math.round(80 - 20000*LOAN_ANNUAL_RATE/DAYS_PER_YEAR)} Kč denně navíc — a dluh se sám splácí.</div>
+      <p><b>Špatný dluh.</b> Půjčíš si na běžný život, protože jsi v mínusu. Úrok tvůj problém jen zvětší — za měsíc dlužíš víc a příjem máš pořád stejný.</p>
+      <p><b>Jak poznat rozdíl.</b> Zeptej se: <i>vydělá mi to, co si koupím, víc než ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně?</i> Dům ano. Nákup jídla ne.</p>
+      <p><b>Nejhorší kombinace.</b> Mít dluh a zároveň spořit. Platíš ${Math.round(LOAN_ANNUAL_RATE*100)} % a dostáváš ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % — prodělaváš na tom každý den. Nejdřív splať.</p>
+    `)}
     ${infoBox('Jak funguje půjčka?', `
       <p><b>K čemu je.</b> Půjčka ti dá peníze hned, abys mohl koupit dům dřív, než si našetříš. Dům pak vydělává — a z toho splácíš. Tomu se říká <b>investiční dluh</b> a je to jediný dluh, který dává smysl.</p>
       <p><b>Kolik si můžeš půjčit.</b> Limit je ${LOAN_BASE_LIMIT.toLocaleString('cs-CZ')} Kč, nebo ${Math.round(LOAN_LIMIT_RATIO*100)} % tvého čistého jmění — podle toho, co je víc. Čím víc majetku máš, tím víc ti banka půjčí. Už půjčené peníze se od limitu odečítají.</p>
@@ -8059,6 +8917,15 @@ function renderBusinesses(){
       </div>
     </div>`;
   }).join('');
+  html += infoBox('Co znamenají čísla u podniků?', `
+    <p><b>Hodnota podniku.</b> Kolik stojí celá firma. Ty kupuješ podíl v procentech — za 10 % podniku za 300 000 Kč zaplatíš 30 000 Kč.</p>
+    <p><b>Výnos (Kč/hodinu).</b> Kolik firma vydělá za hodinu. Rozděluje se mezi majitele podle podílů a připisuje se <b>průběžně</b>, i když nehraješ.</p>
+    <div class="ex">Firma vynáší 200 Kč/h, ty máš 25 % → za den ti přijde 200 × 0,25 × 24 = 1 200 Kč.</div>
+    <p><b>Hodnocení (★).</b> Jak je podnik oblíbený — přebrané z map. Zatím je to jen informace o skutečném místě, na výnos nemá vliv.</p>
+    <p><b>Volný podíl.</b> Kolik procent ještě nikdo nekoupil. Když je 0 %, musíš počkat, až někdo prodá.</p>
+    <p><b>Kdy se to vyplatí.</b> Podnik za 300 000 Kč s výnosem 170 Kč/h vydělá zhruba 4 000 Kč denně — celý se zaplatí za ${'~75'} dní. Čím kratší doba, tím lepší investice.</p>
+  `);
+
   html += infoBox('Jak fungují investice do firem?', `
     <p><b>Co to je.</b> Skutečné bučovické podniky, ve kterých si můžeš koupit podíl. Nemusíš nic řídit — jen vložíš peníze a bereš část zisku.</p>
     <p><b>Jak vydělávají.</b> Každý podnik má <b>hodinový výnos</b>. Ten se dělí mezi majitele podle podílů a připisuje se ti průběžně, i když nehraješ.</p>
@@ -8330,7 +9197,7 @@ function isMobileDevice(){
   return false;
 }
 
-window.onload = () => {
+window.onload = async () => {
   // Hra je jen pro mobil. Na počítači ukážeme hlášku a nespustíme ji.
   // (Vývojářská výjimka: adresa s ?pc na konci obejde blok — pro testování na PC.)
   if(!isMobileDevice() && !location.search.includes('pc')){
@@ -8340,6 +9207,11 @@ window.onload = () => {
   }
   loadFontScale();
   loadSoundPref();
+  // Když hrajeme v jiném městě než Bučovice, nejdřív připravíme jeho domy a obchody
+  // (z cache okamžitě, jinak se stáhnou z map). Teprve pak se staví svět.
+  if(!CITY.builtIn){
+    await ensureCityHouses();
+  }
   loadWorld();          // nejdřív rychle lokálně (funguje okamžitě, i offline)
   initMap();
   setInterval(tick, 5000);
