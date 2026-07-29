@@ -836,7 +836,7 @@ const PLAY_AREA_RADIUS = 250;         // m — chůze se počítá jen když jsi
 // Po městě se rozmístí body. Když k nim dojdeš (fyzicky), automaticky je sebereš a dostaneš peníze.
 // Každý hráč může každý bod sebrat 1× za den; o půlnoci se body obnoví na nových místech.
 const PICKUP_COUNT = 10;              // kolik bodů je na mapě
-const PICKUP_COLLECT_RADIUS = 30;    // m — jak blízko musíš být, aby se bod sebral
+const PICKUP_COLLECT_RADIUS = 65;    // m — sebere se i z ulice, když bod padne na cizí zahradu
 const PICKUP_MIN = 40, PICKUP_MAX = 130;   // rozsah běžné odměny (Kč)
 const PICKUP_BONUS_MIN = 220, PICKUP_BONUS_MAX = 380; // bonusový balík
 const PICKUP_BONUS_CHANCE = 0.2;     // pravděpodobnost, že bod je bonusový
@@ -1019,7 +1019,7 @@ const QUEST_ALL_BONUS = 300;   // bonus za splnění všech tří úkolů dne
 // ===== MÍSTA ZÁJMU (reálná místa v Bučovicích) =====
 // Dojdi k místu → jednorázová denní odměna. Body jsou pevné (na rozdíl od balíků, co se stěhují).
 // Vlastní místa si můžeš přidat v admin panelu přímo tam, kde stojíš.
-const LANDMARK_VISIT_RADIUS = 45;   // m
+const LANDMARK_VISIT_RADIUS = 70;   // m — u velkých objektů (zámek) stačí přijít k plotu
 const LANDMARK_REWARD = 90;         // Kč za návštěvu (1× denně za místo)
 const LANDMARK_DEFS = [
   {id:'lm_zamek',   name:'Zámek Bučovice',   emoji:'🏰', lat:49.1496409, lng:17.0014607, desc:'Renesanční perla města.'},
@@ -4940,7 +4940,7 @@ function renderPickupMarkers(){
 // Po městě chodí lidé s nabídkami. Dojdeš k nim a rozhodneš se — na rozdíl od balíků
 // peněz, které se seberou samy, tady musíš zvážit, jestli se ti to vyplatí.
 const ENCOUNTER_COUNT = 3;          // kolik jich je denně na mapě
-const ENCOUNTER_RADIUS = 30;        // m — jak blízko musíš být
+const ENCOUNTER_RADIUS = 65;        // m — kolemjdoucí zamává i přes ulici
 const ENCOUNTER_TYPES = ['kupec', 'najemnik', 'brigada', 'penezenka', 'znalec'];
 
 const ENCOUNTER_DEFS = {
