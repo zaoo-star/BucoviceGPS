@@ -5389,6 +5389,10 @@ function refreshAll(){
   // Každý blok zvlášť v try-catch: když jeden render selže (např. na poškozených datech z Firebase),
   // nezastaví to ostatní — appka nezůstane viset na "Načítám".
   const safe = (fn) => { try { fn(); } catch(e){ console.warn('render chyba:', e && e.message); } };
+  // Zapamatovat, kam je hráč v otevřeném panelu odscrollovaný. Překreslení obsahu
+  // (děje se při každé synchronizaci) by ho jinak vrátilo na začátek uprostřed čtení.
+  const sheet = document.getElementById('sheetBody');
+  const scrollPred = sheet ? sheet.scrollTop : 0;
   safe(() => updateReachHighlight());
   safe(() => { if(selectedParcelId) renderSelected(selectedParcelId); });
   safe(() => renderMine());
@@ -5403,6 +5407,8 @@ function refreshAll(){
   safe(() => refreshRecommended());
   safe(() => { const t=document.getElementById('tab-profile'); if(t && t.classList.contains('active') && currentUser) viewProfile(currentUser.name); });
   safe(() => checkAchievements());
+  // vrátit hráče tam, kde četl (chat si pozici řeší sám ve své funkci)
+  if(sheet && scrollPred > 0) sheet.scrollTop = scrollPred;
 }
 
 function updateHeaderStats(){
@@ -9117,6 +9123,8 @@ function openSheet(tabName){
   if(target) target.classList.add('active');
   document.getElementById('sheetTitle').textContent = SHEET_TITLES[tabName] || '';
   document.getElementById('bottomSheet').classList.add('open');
+  const sheetBody = document.getElementById('sheetBody');
+  if(sheetBody) sheetBody.scrollTop = 0;   // nový panel začíná odshora
   if(tabName === 'mine') renderMine();
   if(tabName === 'jobs') renderJobs();
   if(tabName === 'businesses') renderBusinesses();
