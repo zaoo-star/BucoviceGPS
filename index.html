@@ -4378,6 +4378,13 @@ function mergeLogs(a, b, limit, isChat){
     map.set(key, item);
   });
   const merged = Array.from(map.values());
+  if(isChat){
+    // Chat je chronologický jako v Messengeru: nejstarší nahoře, nejnovější dole.
+    // Při přetečení limitu zahodíme nejstarší zprávy, ne nejnovější.
+    merged.sort((x, y) => (x.ts||0) - (y.ts||0));
+    return merged.slice(-limit);
+  }
+  // Noviny se čtou odshora, takže nejnovější první
   merged.sort((x, y) => (y.ts||0) - (x.ts||0));
   return merged.slice(0, limit);
 }
@@ -5729,7 +5736,7 @@ function renderSelected(id){
     <p><b>Projekty.</b> Větší stavby, které pár dní trvají — podkroví přidá byt, fasáda a zahrada zvednou hodnotu.</p>
     <p><b>Prodej.</b> Podíl můžeš prodat zpátky městu (hned, ale za nižší cenu) nebo nabídnout na tržišti ostatním hráčům (za víc, ale musíš počkat).</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 function renderMine(){
@@ -5749,7 +5756,7 @@ function renderMine(){
     totalTax += effectiveHousePrice(p) * (myHousePct(p)/100) * PROPERTY_TAX_RATE / 365;
   });
   const netDaily = totalRentShare - totalTax;
-  el.innerHTML = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">
+  setHtml(el, `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">
     Příjem z pronájmů: <b style="color:var(--gold)">+${totalRentShare.toFixed(0)} Kč/den</b><br>
     Daň z nemovitosti: <b style="color:var(--orange)">−${totalTax.toFixed(1)} Kč/den</b><br>
     Čistý tok z nemovitostí: <b style="color:${netDaily>=0?'var(--accent)':'var(--danger)'}">${netDaily>=0?'+':''}${netDaily.toFixed(0)} Kč/den</b>
@@ -5773,7 +5780,7 @@ function renderMine(){
       <p><b>Byty chátrají.</b> Každý den se stav obydleného bytu zhorší. Když spadne pod to, co nájemník snese, <b>odstěhuje se</b>. Proto se vyplatí opravovat dřív, než odejde.</p>
       <p><b>Daň z nemovitosti.</b> Z hodnoty tvých podílů platíš každý den malou daň — i z domů, které nic nevydělávají. Prázdný drahý dům tě tedy stojí peníze.</p>
       <p><b>Gentrifikace.</b> Když se v okolí kupuje a staví, hodnota tvých domů roste. Proto se vyplatí kupovat tam, kde je živo.</p>
-    `);
+    `));
 }
 
 function flyToParcel(id){
@@ -5874,7 +5881,7 @@ function renderJobs(){
     <p><b>Kolik míst je volných.</b> Každá pozice má omezený počet míst. Když je plno, musíš počkat, až někdo odejde.</p>
     <p><b>Proč pracovat.</b> Na začátku je to <b>nejjistější příjem</b> — pravidelný a bez rizika. Později tě uživí nemovitosti, ale než na ně vyděláš, práce je základ.</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 // ===== AKCE: NEMOVITOSTI =====
@@ -6327,7 +6334,7 @@ function renderMarket(){
     <p><b>Za kolik prodávat.</b> Ostatní vidí, kolik dům vydělává. Když si řekneš moc, nikdo nekoupí. Když málo, prodělal jsi. Podívej se, za kolik se dům kupuje na mapě, a jdi kousek pod to.</p>
     <p><b>Pozor.</b> Nabídku můžeš zrušit, dokud ji nikdo nekoupil. Když mezitím podíl prodáš jinam, nabídka se sama zruší.</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
     return;
   }
 
@@ -6381,7 +6388,7 @@ function renderMarket(){
     <p><b>Provize městu ${Math.round(MARKET_FEE*100)} %.</b> Z každého prodeje si město vezme podíl — počítej s tím při určování ceny.</p>
     <p><b>Pozor.</b> Nabídku můžeš zrušit, dokud ji nikdo nekoupil. Když mezitím podíl prodáš jinam, nabídka se sama zruší.</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 // ===== PROFIL HRÁČE =====
@@ -6941,7 +6948,7 @@ function renderDaily(){
       <p style="font-size:0.9em;">Poloha skákala nesmyslně rychle (auto, vlak nebo falešná GPS), takže se dnes za chůzi neplatí. Zítra se to samo obnoví.</p></div>`;
   }
 
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 function renderAdmin(){
@@ -7019,7 +7026,9 @@ function renderAdmin(){
     const bizs = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0).length;
     const nm = escapeHtml(u.name).replace(/'/g, "\\'");
     // Každý hráč je sbalený (jen jméno + jmění); rozklikne se kliknutím. Řeší nekonečné rolování.
-    html += `<details class="adminPlayer" data-name="${escapeHtml(u.name).toLowerCase()}" style="border:1px solid var(--border);border-radius:8px;margin-top:6px;">
+    const hrId = blokId('hrac_' + u.name);
+    const hrOtevren = otevreneBloky.has(hrId) ? ' open' : '';
+    html += `<details class="adminPlayer" id="${hrId}"${hrOtevren} ontoggle="ulozStavBloku('${hrId}', this.open)" data-name="${escapeHtml(u.name).toLowerCase()}" style="border:1px solid var(--border);border-radius:8px;margin-top:6px;">
       <summary style="padding:8px;cursor:pointer;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center;gap:8px;">
         <span>${escapeHtml(u.avatar||'🧑')} ${escapeHtml(u.name)}${u.pinHash?' 🔒':''}</span>
         <span style="font-size:0.8em;color:var(--gold);font-weight:600;white-space:nowrap;">${worth.toLocaleString('cs-CZ')} Kč</span>
@@ -7045,7 +7054,7 @@ function renderAdmin(){
     <div class="row" style="margin-top:8px;"><button class="secondary" onclick="lockAdmin()">Zamknout admin režim</button></div>
   </div>`;
 
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 let _erudaVisible = false;
@@ -7506,8 +7515,28 @@ function renameUserEverywhere(oldName, newName){
 // ===== NÁPOVĚDA "JAK TO FUNGUJE" (finanční gramotnost pro mladší hráče) =====
 // Rozbalovací vysvětlivka do panelů — nezabírá místo, dokud si ji hráč neotevře.
 // Používá se v každé obrazovce, ať hráč nemusí hledat v nápovědě.
+// Které rozbalovací bloky má hráč otevřené. Panel se překresluje při každé synchronizaci
+// a bez tohohle by se rozbalená vysvětlivka pokaždé sama zavřela.
+const otevreneBloky = new Set();
+// Přepíše obsah jen při skutečné změně. Zbytečné překreslení by zavřelo rozbalené
+// vysvětlivky a odscrollovalo hráče pryč uprostřed čtení.
+function setHtml(el, html){
+  if(!el) return;
+  if(el.innerHTML !== html) el.innerHTML = html;
+}
+function blokId(title){
+  return 'blk_' + String(title).replace(/[^a-zA-Z0-9]/g, '').slice(0, 32);
+}
+// Volá se, když hráč blok otevře nebo zavře
+function ulozStavBloku(id, otevreno){
+  if(otevreno) otevreneBloky.add(id); else otevreneBloky.delete(id);
+}
+
 function infoBox(title, bodyHtml){
-  return `<details class="infoBox">
+  const id = blokId(title);
+  const otevreno = otevreneBloky.has(id) ? ' open' : '';
+  // ontoggle zůstává jako záloha, hlavní práci dělá globální posluchač výš
+  return `<details class="infoBox" id="${id}"${otevreno} ontoggle="ulozStavBloku('${id}', this.open)">
     <summary>❓ ${title}</summary>
     <div class="infoBoxBody">${bodyHtml}</div>
   </details>`;
@@ -7785,7 +7814,7 @@ function renderStatDetail(which){
     </div>`;
   }
 
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 // ===== GLOBÁLNÍ CHAT =====
@@ -7952,7 +7981,7 @@ function renderNews(){
     <p><b>Dnešní událost.</b> Nahoře najdeš, co se dnes ve městě děje — jarmark, zdražení energií, výprodej stavebnin. Každá událost mění ekonomiku a vyplatí se podle ní plánovat.</p>
     <p><b>Náhodné události.</b> Občas tě potká něco nečekaného — rozbitá pračka, malé dědictví. Objeví se i tady, ať máš přehled, kam ti mizí peníze.</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 function countPlayers(){ return Object.keys(world.users||{}).length; }
 // "před X min/hod" z timestampu
@@ -8089,7 +8118,7 @@ function renderFinance(){
     <p><b>Složené úročení.</b> Peníze (i dluhy) rostou samy ze sebe. Proto se vyplatí <b>spořit brzy</b> a <b>splácet rychle</b> — čas pracuje buď pro tebe, nebo proti tobě.</p>
   `);
 
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 function renderGuide(){
@@ -8318,7 +8347,7 @@ function renderGuide(){
     <p>Právě proto se vyplatí mít <b>rezervu</b>. Kdo ji má, nečekaný výdaj v pohodě zvládne. Kdo ji nemá, musí si půjčit — a platit úrok.</p>
   `);
 
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 let profileViewTarget = null; // jméno hráče, jehož profil se má zobrazit; null = můj vlastní
@@ -8446,7 +8475,7 @@ function renderProfile(){
     <p><b>PIN.</b> Ochrání tvůj účet, kdyby hru otevřel někdo jiný na tomhle telefonu. Bez PINu se kdokoliv přihlásí jen zadáním tvojí přezdívky.</p>
   `);
 
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 // Skrytý vstup do admin režimu: 5× klepnutí na „verzi" v profilu → dotaz na heslo.
@@ -8529,7 +8558,7 @@ function renderLeaderboard(){
     <p><b>🚶 Nachozeno</b> — kolik kilometrů jsi ušel za celou hru. Tenhle žebříček se dá vyhrát bez jediné koruny — stačí chodit.</p>
     <p><b>Proč nejsi výš.</b> Jmění roste hlavně z nemovitostí, ne z hotovosti. Peníze ležící na účtu nevydělávají — dům ano.</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 function renderBank(){
@@ -8597,7 +8626,7 @@ function renderBank(){
       </div>`;
     }).join('');
   }
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 async function depositSavings(){
@@ -8941,7 +8970,7 @@ function renderBusinesses(){
     <p><b>Kolik koupit.</b> Podíly jsou po procentech, takže můžeš začít malým vkladem a přikupovat. Když je podnik vyprodaný, musíš počkat, až někdo prodá.</p>
     <p><b>Proč rozložit.</b> Mít všechno v jednom domě je riziko — nájemník odejde a příjem spadne na nulu. Kombinace domů a firem je stabilnější.</p>
   `);
-  el.innerHTML = html;
+  setHtml(el, html);
 }
 
 async function buyStake(bizId){
@@ -9246,6 +9275,13 @@ function setupInstallPrompt(){
   // Když appka jde na pozadí nebo se zavírá, odešleme rozpracované změny hned.
   // Na mobilu je to zásadní: hráč typicky udělá akci a do vteřiny zamkne telefon —
   // odložený zápis by se pak nikdy neprovedl a ostatní by změnu neviděli.
+  // Rozbalovací sekce (vysvětlivky, detaily hráčů) si pamatují, že jsou otevřené.
+  // Odchytáváme přes capture, protože událost "toggle" nebublá nahoru.
+  document.addEventListener('toggle', (e) => {
+    const el = e.target;
+    if(el && el.tagName === 'DETAILS' && el.id) ulozStavBloku(el.id, el.open);
+  }, true);
+
   document.addEventListener('visibilitychange', () => {
     if(document.visibilityState === 'hidden') flushCloudWrite();
   });
