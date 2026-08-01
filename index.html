@@ -4095,6 +4095,8 @@ function migrateWorld(){
       world.pickups.list = asArray(world.pickups.list);
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
       world.deletedMsgs = asArray(world.deletedMsgs); // id smazaných zpráv (moderace)
+      world.deletedPlayers = asArray(world.deletedPlayers); // jména hráčů smazaných adminem
+      if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object' || Array.isArray(world.seizedPlayers)) world.seizedPlayers = {};
       if(!world.renames || typeof world.renames !== 'object' || Array.isArray(world.renames)) world.renames = {};
       if(!world.gifts || typeof world.gifts !== 'object' || Array.isArray(world.gifts)) world.gifts = {};
       Object.keys(world.gifts).forEach(k => { world.gifts[k] = asArray(world.gifts[k]); });
@@ -4279,6 +4281,34 @@ function adoptWorld(incoming){
   // vyházet zprávy, které admin na kterémkoli zařízení smazal (přežije napříč sloučeními)
   const deleted = asArray(world.deletedMsgs);
   if(deleted.length) world.chat = world.chat.filter(m => !m.id || !deleted.includes(m.id));
+
+  // Znovu vynutit admin zásahy, které cizí (starší) verze světa nemusí znát.
+  // Bez tohohle by se smazaný hráč nebo zabavený majetek vrátily zpět, když
+  // dotyčný hráč (dosud aktivní na svém zařízení) pošle synchronizací svou verzi.
+  const smazaniHraci = asArray(world.deletedPlayers);
+  smazaniHraci.forEach(jmeno => {
+    if(world.users[jmeno]){
+      delete world.users[jmeno];
+      Object.values(world.parcels).forEach(p => {
+        if(p.owners && p.owners[jmeno] !== undefined) delete p.owners[jmeno];
+        if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+        (p.units || []).forEach(un => { if(un.tenant === jmeno) un.tenant = null; });
+      });
+      Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[jmeno] !== undefined) delete b.owners[jmeno]; });
+    }
+  });
+  const zabaveniHraci = world.seizedPlayers && typeof world.seizedPlayers === 'object' ? world.seizedPlayers : {};
+  Object.entries(zabaveniHraci).forEach(([jmeno, cas]) => {
+    Object.values(world.parcels).forEach(p => {
+      // zabavit jen podíly, které vznikly PŘED zásahem (mod chybí nebo je starší) —
+      // ať administrátor po zabavení nezablokoval hráči nákup nového domu
+      if(p.owners && p.owners[jmeno] !== undefined && (p.mod || 0) <= cas){
+        delete p.owners[jmeno];
+        if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+      }
+      (p.units || []).forEach(un => { if(un.tenant === jmeno && (p.mod||0) <= cas) un.tenant = null; });
+    });
+  });
 
   // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal).
   // U samotného účtu porovnáme AKTIVITU: když jsem naposledy hrál na jiném zařízení (cloud má
@@ -7397,31 +7427,36 @@ async function adminSetMoney(name){
   saveWorld(); renderAdmin();
   showAlert(`Hotovost hráče ${name} nastavena na ${n} Kč.\n\nPozor: když má hráč právě otevřenou hru, jeho zařízení může tuhle změnu přepsat. Spolehlivější je „🎁 Poslat peníze" — ty si vyzvedne sám.`);
 }
-async function adminClearProps(name){
-  if(!(await showConfirm(`Zabavit VŠECHEN majetek hráče „${name}"? (domy, podíly, nájmy) Peníze zůstanou.`))) return;
+// Zabaví majetek hráče a zaznamená to, ať se zabavení nevrátí zpátky, když hráč
+// (aktivní na svém zařízení) pošle synchronizací svou starou verzi domu.
+function seizeAssets(name){
   Object.values(world.parcels).forEach(p => {
-    if(p.owners && p.owners[name] !== undefined) delete p.owners[name];
+    if(p.owners && p.owners[name] !== undefined){ delete p.owners[name]; stampHouse(p); }
     if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
     (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
   });
   Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined) delete b.owners[name]; });
   Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) delete world.listings[id]; });
+  if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object') world.seizedPlayers = {};
+  world.seizedPlayers[name] = Date.now();
+}
+async function adminClearProps(name){
+  if(!(await showConfirm(`Zabavit VŠECHEN majetek hráče „${name}"? (domy, podíly, nájmy) Peníze zůstanou.`))) return;
+  seizeAssets(name);
   addNews('event', `🏚️ Vedení města zabavilo majetek hráče ${name}.`);
   saveWorld(); renderAdmin();
   showAlert(`Majetek hráče ${name} zabaven.`);
 }
 async function adminDeletePlayer(name){
   if(!(await showConfirm(`SMAZAT hráče „${name}" úplně? Zmizí i všechen jeho majetek. Nevratné!`))) return;
-  // uvolnit majetek
-  Object.values(world.parcels).forEach(p => {
-    if(p.owners && p.owners[name] !== undefined) delete p.owners[name];
-    if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
-    (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
-  });
-  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined) delete b.owners[name]; });
-  Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) delete world.listings[id]; });
+  seizeAssets(name);
   Object.values(world.jobs || {}).forEach(j => { if(j.holders) j.holders = j.holders.filter(h => h !== name); });
   delete world.users[name];
+  // Trvalý zápis, ať se smazaný hráč nevrátí, když jeho (dosud aktivní) zařízení
+  // pošle synchronizací svět, ve kterém ještě existuje.
+  if(!Array.isArray(world.deletedPlayers)) world.deletedPlayers = [];
+  if(!world.deletedPlayers.includes(name)) world.deletedPlayers.push(name);
+  if(world.deletedPlayers.length > 200) world.deletedPlayers = world.deletedPlayers.slice(-200);
   addNews('event', `🗑️ Hráč ${name} byl odstraněn z města.`);
   saveWorld(); renderAdmin();
   showAlert(`Hráč ${name} smazán.`);
