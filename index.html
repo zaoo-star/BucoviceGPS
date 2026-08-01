@@ -4051,6 +4051,7 @@ function migrateWorld(){
         u.worthHistory = asArray(u.worthHistory);
         u.worthFlags = asArray(u.worthFlags);
         u.encDone = asArray(u.encDone);
+        if(u.distOverrideSeen !== undefined && typeof u.distOverrideSeen !== 'number') u.distOverrideSeen = 0;
         if(u.missedInRow === undefined) u.missedInRow = 0;
         if(!u.loans) u.loans = [];
         u.loans = asArray(u.loans);
@@ -4097,6 +4098,7 @@ function migrateWorld(){
       world.deletedMsgs = asArray(world.deletedMsgs); // id smazaných zpráv (moderace)
       world.deletedPlayers = asArray(world.deletedPlayers); // jména hráčů smazaných adminem
       if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object' || Array.isArray(world.seizedPlayers)) world.seizedPlayers = {};
+      if(!world.distanceOverrides || typeof world.distanceOverrides !== 'object' || Array.isArray(world.distanceOverrides)) world.distanceOverrides = {};
       if(!world.renames || typeof world.renames !== 'object' || Array.isArray(world.renames)) world.renames = {};
       if(!world.gifts || typeof world.gifts !== 'object' || Array.isArray(world.gifts)) world.gifts = {};
       Object.keys(world.gifts).forEach(k => { world.gifts[k] = asArray(world.gifts[k]); });
@@ -4310,6 +4312,21 @@ function adoptWorld(incoming){
     });
   });
 
+  // Vynutit adminem nastavenou vzdálenost PŘESNĚ JEDNOU na každém zařízení — poznáme to podle
+  // "distOverrideSeen" (razítko posledního uplatněného zásahu u hráče). Bez téhle jednorázovosti
+  // by se stará hodnota buď vrátila zpět (kdyby se vynucovalo jen někdy), nebo by naopak reset
+  // natrvalo bránil hráči nachodit cokoliv dalšího (kdyby se vynucovalo pořád, když je vyšší
+  // než nastavená hodnota — o to jsme se tu totiž málem připravili).
+  const upravyVzdalenosti = world.distanceOverrides && typeof world.distanceOverrides === 'object' ? world.distanceOverrides : {};
+  Object.entries(upravyVzdalenosti).forEach(([jmeno, zasah]) => {
+    const hrac = world.users[jmeno];
+    if(hrac && hrac.distOverrideSeen !== zasah.ts){
+      hrac.totalDistance = zasah.value;
+      hrac.distanceToday = Math.min(hrac.distanceToday || 0, zasah.value);
+      hrac.distOverrideSeen = zasah.ts;
+    }
+  });
+
   // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal).
   // U samotného účtu porovnáme AKTIVITU: když jsem naposledy hrál na jiném zařízení (cloud má
   // novější verzi mého hráče), vezme se ta — jinak by staré zařízení vrátilo starší peníze/postup.
@@ -4319,6 +4336,18 @@ function adoptWorld(incoming){
     if(!cloudMe || localNewer){
       world.users[myName] = myUser; // moje lokální verze je novější (nebo cloud mě nezná)
     } // jinak: nechat verzi z cloudu (hrál jsem naposledy jinde)
+
+    // I na VLASTNÍM zařízení hráče musí platit admin reset vzdálenosti — jinak by si
+    // podvedený hráč svým vlastním (starým, nevynulovaným) lokálním záznamem reset okamžitě
+    // zase přepsal zpět, protože jeho zařízení je "aktivnější" než ten admin zásah.
+    // Stejná jednorázová logika (distOverrideSeen) jako výš, ať po prvním uplatnění
+    // nezůstane hráč navždy zaseknutý na nule a může si zase poctivě chodit.
+    const mujZasah = world.distanceOverrides && world.distanceOverrides[myName];
+    if(mujZasah && world.users[myName].distOverrideSeen !== mujZasah.ts){
+      world.users[myName].totalDistance = mujZasah.value;
+      world.users[myName].distanceToday = Math.min(world.users[myName].distanceToday || 0, mujZasah.value);
+      world.users[myName].distOverrideSeen = mujZasah.ts;
+    }
     Object.entries(myHouseShares).forEach(([id, pct]) => {
       const p = world.parcels[id];
       if(p){ if(!p.owners) p.owners = {}; if(!p.owners[myName]) p.owners[myName] = pct; }
@@ -5442,7 +5471,10 @@ function refreshAll(){
   safe(() => { const t=document.getElementById('tab-leaderboard'); if(t && t.classList.contains('active')) renderLeaderboard(); });
   safe(() => { const t=document.getElementById('tab-daily'); if(t && t.classList.contains('active')) renderDaily(); });
   safe(() => refreshRecommended());
-  safe(() => { const t=document.getElementById('tab-profile'); if(t && t.classList.contains('active') && currentUser) viewProfile(currentUser.name); });
+  // Při překreslení respektovat, čí profil je zrovna otevřený — dřív se tu vždycky
+  // vynutil ten VLASTNÍ, takže se prohlížený cizí profil při každé synchronizaci
+  // (několikrát za minutu) sám přepnul zpátky na tebe.
+  safe(() => { const t=document.getElementById('tab-profile'); if(t && t.classList.contains('active') && currentUser) viewProfile(profileViewTarget || currentUser.name); });
   safe(() => checkAchievements());
   // vrátit hráče tam, kde četl (chat si pozici řeší sám ve své funkci)
   if(sheet && scrollPred > 0) sheet.scrollTop = scrollPred;
@@ -7070,6 +7102,7 @@ function renderAdmin(){
           <button style="font-size:0.85em;background:var(--accent);color:#08130a;" onclick="adminSendMoney('${nm}')">🎁 Poslat peníze</button>
           <button class="secondary" style="font-size:0.85em;" onclick="adminSetMoney('${nm}')">💰 Nastavit hotovost</button>
           <button class="secondary" style="font-size:0.85em;" onclick="adminClearProps('${nm}')">🏚️ Zabavit majetek</button>
+          <button class="secondary" style="font-size:0.85em;" onclick="adminResetDistance('${nm}')">📏 Reset metrů</button>
           <button class="danger" style="font-size:0.85em;" onclick="adminDeletePlayer('${nm}')">🗑️ Smazat</button>
         </div>
       </div>
@@ -7414,6 +7447,26 @@ async function adminSendMoney(name){
   });
   saveWorld(); renderAdmin();
   showAlert(`Poslal jsi ${n.toLocaleString('cs-CZ')} Kč hráči ${name}. Vyzvedne si je, až otevře hru (nemůže se to ztratit ani přepsat).`);
+}
+
+// Vynuluje (nebo nastaví) nachozenou vzdálenost hráče. Zaznamená čas zásahu, ať se stará
+// hodnota nevrátí zpátky, když hráč (dosud aktivní na svém zařízení) pošle svou verzi.
+async function adminResetDistance(name){
+  const u = world.users[name];
+  if(!u) return;
+  const val = await showPrompt(`Nastav nachozeno pro „${name}" v metrech (teď ${Math.round(u.totalDistance||0)} m). Napiš 0 pro úplný reset:`, '0', true);
+  if(val === null) return;
+  const n = parseInt(val, 10);
+  if(isNaN(n) || n < 0){ showAlert('Zadej nezáporné číslo.'); return; }
+  u.totalDistance = n;
+  u.distanceToday = Math.min(u.distanceToday || 0, n);   // dnešní číslo nesmí být vyšší než celkové
+  const ted = Date.now();
+  u.distOverrideSeen = ted;   // na admin zařízení je zásah rovnou "viděný" (nemá se znovu vynucovat)
+  if(!world.distanceOverrides || typeof world.distanceOverrides !== 'object') world.distanceOverrides = {};
+  world.distanceOverrides[name] = { value: n, ts: ted };
+  addNews('event', `📏 Vedení města upravilo nachozenou vzdálenost hráče ${name}.`);
+  saveWorld(); renderAdmin();
+  showAlert(`Hráči ${name} nastaveno nachozeno na ${n} m.`);
 }
 
 async function adminSetMoney(name){
@@ -9210,7 +9263,13 @@ function closeSheet(){
 }
 
 document.querySelectorAll('.railBtn').forEach(btn => {
-  btn.addEventListener('click', () => openSheet(btn.dataset.tab));
+  btn.addEventListener('click', () => {
+    // Klik na ikonu profilu v railu = vždy MŮJ profil, i když jsem si předtím
+    // prohlížel někoho jiného (viewProfile nastavuje profileViewTarget, ale
+    // tenhle přímý vstup z railu ho musí přebít).
+    if(btn.dataset.tab === 'profile') profileViewTarget = null;
+    openSheet(btn.dataset.tab);
+  });
 });
 document.getElementById('sheetCloseBtn').addEventListener('click', closeSheet);
 
