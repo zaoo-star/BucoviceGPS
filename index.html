@@ -463,6 +463,7 @@ function showPrompt(message, defaultValue, numeric){
       : !!numeric;
     input.setAttribute('inputmode', isNum ? 'decimal' : 'text');
     input.style.display = 'block';
+    document.getElementById('modalCancelBtn').style.display = '';   // jde zrušit
     input.value = (defaultValue === undefined || defaultValue === null) ? '' : defaultValue;
     document.getElementById('customModal').classList.add('open');
     setTimeout(() => { input.focus(); input.select(); }, 50);
@@ -474,16 +475,30 @@ function showConfirm(message){
     modalResolve = resolve;
     document.getElementById('modalMessage').textContent = message;
     document.getElementById('modalInput').style.display = 'none';
+    document.getElementById('modalCancelBtn').style.display = '';   // volba ano/ne
     document.getElementById('customModal').classList.add('open');
   });
 }
 
+// Důležitá hláška — čeká na potvrzení tlačítkem. Dřív to byla mizející bublina (3,2 s),
+// takže delší text nikdo nestihl dočíst a hráč nevěděl, co se stalo ani co dělat dál.
 function showAlert(message){
+  return new Promise(resolve => {
+    modalResolve = resolve;
+    document.getElementById('modalMessage').textContent = message;
+    document.getElementById('modalInput').style.display = 'none';
+    document.getElementById('modalCancelBtn').style.display = 'none';   // jen OK, není co rušit
+    document.getElementById('customModal').classList.add('open');
+  });
+}
+
+// Krátké, nedůležité oznámení (např. „+12 Kč za chůzi") — zmizí samo, nepřerušuje hru.
+function showFlash(message){
   const toast = document.getElementById('customToast');
   toast.textContent = message;
   toast.classList.add('show');
-  clearTimeout(showAlert._t);
-  showAlert._t = setTimeout(() => toast.classList.remove('show'), 3200);
+  clearTimeout(showFlash._t);
+  showFlash._t = setTimeout(() => toast.classList.remove('show'), 3200);
   return Promise.resolve();
 }
 
@@ -741,6 +756,7 @@ function moveInNpc(npcId, houseId, unitIdx){
   if(!npc || !p || !p.units || !p.units[unitIdx]){ showAlert('Zájemce nebo byt už není k dispozici.'); return; }
   if(!iHaveMajority(p)){ showAlert('Nastěhovat nájemníka může jen správce domu (víc než 50 % podílu).'); return; }
   if(p.useType !== 'rental'){ showAlert('Dům není určený k pronájmu — nejdřív ho přepni na pronájem.'); return; }
+  if(asArray(p.units)[unitIdx] && asArray(p.units)[unitIdx].ownerOccupied){ showAlert('V tomhle bytě bydlíš ty — nejdřív se vystěhuj.'); return; }
   const u = p.units[unitIdx];
   if(!unitMeetsNpc(p, u, npc)){ showAlert('Tenhle byt nesplňuje požadavky zájemce (nájem, stav nebo vylepšení).'); return; }
   if(occupiedTenantNames().has(npc.name)){   // to samé jméno už mezitím obsadilo jiný byt
@@ -759,10 +775,15 @@ function moveInNpc(npcId, houseId, unitIdx){
   showAlert(`${npc.name} se nastěhoval! Bude platit ${u.rentPrice} Kč/den, dokud budeš byt udržovat.`);
 }
 // Vystěhovat NPC (kdyby chtěl hráč byt uvolnit)
-function evictNpc(houseId, unitIdx){
+async function evictNpc(houseId, unitIdx){
   const p = world.parcels[houseId];
   if(!p || !p.units || !p.units[unitIdx] || !p.units[unitIdx].npc) return;
   const name = p.units[unitIdx].npc.name;
+  const najem = p.units[unitIdx].rentPrice || 0;
+  if(!(await showConfirm(
+    `Vystěhovat nájemníka ${name}?\n\n` +
+    `Přijdeš o jistý příjem ${najem} Kč/den. Byt se pak pronajímá jen podle poptávky, ` +
+    `což bývá míň spolehlivé.\n\nNového nájemníka si musíš najít sám.`))) return;
   p.units[unitIdx].npc = null;
   stampHouse(p);
   addNews('rental', `📤 ${name} byl vystěhován z domu ${p.id.replace('h_','#')}.`);
@@ -898,7 +919,7 @@ function checkPickups(){
       got.push(pk.id);
       collectedAny = true;
       playSound('coin');
-      showAlert(`${pk.bonus?'🎁 Bonusový balík!':'💰 Balík peněz!'} Sebral jsi ${Math.round(pk.reward*inflationMult())} Kč.`);
+      showFlash(`${pk.bonus?'🎁 Bonusový balík!':'💰 Balík peněz!'} Sebral jsi ${Math.round(pk.reward*inflationMult())} Kč.`);
     }
   });
   if(collectedAny){ saveWorld(); updateHeaderStats(); renderPickupMarkers(); checkQuests(); }
@@ -1068,7 +1089,7 @@ function checkLandmarks(){
       got.push(lm.id);
       any = true;
       playSound('coin');
-      showAlert(`${lm.emoji} Navštívil jsi: ${lm.name}\n+${reward} Kč`);
+      showFlash(`${lm.emoji} Navštívil jsi: ${lm.name} · +${reward} Kč`);
     }
   });
   if(any){ saveWorld(); updateHeaderStats(); renderLandmarkMarkers(); checkQuests(); }
@@ -3658,8 +3679,10 @@ function housingHint(name){
 }
 
 function housingStatus(name){
-  // vlastník bydlení: má podíl v domě, který je určený jako bydlení
-  const ownsHome = Object.values(world.parcels).some(p => p.useType === 'residence' && (p.owners?.[name] || 0) > 0);
+  // vlastník bydlení: má podíl v domě určeném jako bydlení,
+  // NEBO si ve svém pronájmu vyhradil jeden byt pro sebe
+  const ownsHome = Object.values(world.parcels).some(p => p.useType === 'residence' && (p.owners?.[name] || 0) > 0)
+    || Object.values(world.parcels).some(p => (p.owners?.[name] || 0) > 50 && asArray(p.units).some(u => u && u.ownerOccupied));
   if(ownsHome) return 'owner';
   // nájemník: je zapsaný jako tenant v nějakém bytě
   const rents = Object.values(world.parcels).some(p => p.units && p.units.some(u => u.tenant === name));
@@ -4628,6 +4651,8 @@ function tick(){
             } else {
               collected = u.rentPrice;
             }
+          } else if(u.ownerOccupied){
+            collected = 0;   // v tomhle bytě bydlí sám majitel — nevydělává, ale ani neplatí nájem
           } else {
             // prázdný byt: anonymní NPC poptávka podle obsazenosti (nižší při přemrštěném nájmu)
             collected = u.rentPrice * unitOccupancy(p, u);
@@ -4639,7 +4664,7 @@ function tick(){
           });
         }
         // obsazený byt (hráč, NPC nebo poptávka) se opotřebovává; prázdný chátrá pomaleji
-        const occNow = (u.tenant || u.npc) ? 1 : (u.condition>0 ? unitOccupancy(p,u) : 0);
+        const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : (u.condition>0 ? unitOccupancy(p,u) : 0);
         let decayRate = RENT_DECAY * (occNow > 0 ? occNow : EMPTY_DECAY_FACTOR);
         if(hasUpgrade(p, 'renovation')) decayRate *= RENOVATION_DECAY_MULT;
         u.condition = Math.max(0, u.condition - decayRate * dayFraction);
@@ -5310,21 +5335,20 @@ function renderLandmarkMarkers(){
 }
 
 let lastReachHighlightAt = 0;
+// Zvýrazní domy v dosahu hráče. Prochází JEN markery, které na mapě opravdu jsou —
+// dřív se procházelo všech 2267 domů a volalo setIcon na každém, každou sekundu.
+// To byla hlavní příčina sekání a padání mapy na slabších telefonech.
 function updateReachHighlight(force){
   const now = Date.now();
   if(!force && now - lastReachHighlightAt < 1000) return; // max 1x/s, ať to nesekundá při rychlých GPS updatech
   lastReachHighlightAt = now;
-  Object.values(world.parcels).forEach(p => {
-    const m = markers[p.id];
-    if(!m) return;
-    if(playerPos){
-      const d = haversine(playerPos, {lat:p.lat, lng:p.lng});
-      if(d > HOUSE_VISIBLE_RADIUS){
-        if(map.hasLayer(m)) map.removeLayer(m);
-        return;
-      }
-    }
-    if(!map.hasLayer(m)) map.addLayer(m);
+  if(!map) return;
+  Object.keys(markers).forEach(id => {
+    const m = markers[id];
+    const p = world.parcels[id];
+    if(!m || !p || !map.hasLayer(m)) return;   // co není na mapě, nemá smysl překreslovat
+    // ikonu měníme jen u domů poblíž hráče — u vzdálených se stejně nic nemění
+    if(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) > HOUSE_VISIBLE_RADIUS) return;
     m.setIcon(iconFor(p));
   });
 }
@@ -5411,6 +5435,35 @@ function refreshRecommended(){
   recommendedStarterHouses(3).forEach(p => { recommendedIds[p.id] = true; });
 }
 
+// Vytvoří/odstraní markery domů podle toho, co je zrovna vidět na obrazovce.
+// Dřív se vykreslovalo všech 2267 domů naráz — mobil to nedal a mapa se nedala posouvat.
+function syncHouseMarkers(){
+  if(!map || !world || !world.parcels) return;
+  let bounds = null;
+  try { bounds = map.getBounds().pad(0.25); } catch(e){ return; }   // trochu za okraj, ať to neproblikává
+
+  let vytvoreno = 0;
+  const LIMIT_NOVYCH = 400;   // strop na jeden průchod, ať se appka nezasekne
+
+  Object.values(world.parcels).forEach(p => {
+    const viditelny = bounds.contains([p.lat, p.lng]);
+    const m = markers[p.id];
+    if(viditelny){
+      if(!m){
+        if(vytvoreno >= LIMIT_NOVYCH) return;   // zbytek se dokreslí při dalším posunu
+        const novy = L.marker([p.lat, p.lng], {icon: iconFor(p)}).addTo(map);
+        novy.on('click', (e) => { L.DomEvent.stopPropagation(e); selectParcel(p.id); });
+        markers[p.id] = novy;
+        vytvoreno++;
+      } else if(!map.hasLayer(m)){
+        map.addLayer(m);
+      }
+    } else if(m && map.hasLayer(m)){
+      map.removeLayer(m);   // mimo obrazovku → pryč z mapy (objekt si necháme pro příště)
+    }
+  });
+}
+
 function iconFor(p){
   let cls = 'p-empty', emoji = '🏚️';
   const owned = houseHasOwner(p);
@@ -5438,11 +5491,10 @@ function initMap(){
   L.marker(CITY_CENTER, {icon: L.divIcon({html:'<div class="parcelMarker p-cityhall">🏛️</div>', className:'', iconSize:[26,26]})})
     .addTo(map).bindTooltip('Radnice — místo pro městskou práci');
 
-  Object.values(world.parcels).forEach(p => {
-    const m = L.marker([p.lat, p.lng], {icon: iconFor(p)}).addTo(map);
-    m.on('click', (e) => { L.DomEvent.stopPropagation(e); selectParcel(p.id); });
-    markers[p.id] = m;
-  });
+  // Markery domů se NEVYTVÁŘEJÍ všechny najednou (2267 kusů zahltí mobil a mapa pak seká
+  // nebo appka spadne). Vznikají líně jen pro domy blízko hráče / středu mapy — viz syncHouseMarkers().
+  syncHouseMarkers();
+  map.on('moveend zoomend', () => syncHouseMarkers());
 
   let bizMarkers = {};
   Object.values(world.businesses).forEach(biz => {
@@ -5759,6 +5811,7 @@ function renderSelected(id){
       if(u.condition <= 0) occupantLine = '<span style="color:var(--danger)">Neobyvatelný — nutná oprava</span>';
       else if(u.tenant) occupantLine = iAmTenant ? `Bydlí zde: <b>${u.tenant}</b> (ty)` : `Bydlí zde: <b style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${u.tenant}')">${u.tenant}</b>`;
       else if(u.npc) occupantLine = `Bydlí zde: <b>${escapeHtml(u.npc.avatar||'🧑')} ${escapeHtml(u.npc.name)}</b> <span style="font-size:0.85em;color:var(--muted)">(platí spolehlivě plný nájem)</span>`;
+      else if(u.ownerOccupied) occupantLine = `<b style="color:var(--accent)">🏠 Bydlíš tu ty</b> <span style="font-size:0.85em;color:var(--muted)">(nevydělává, ale máš nižší náklady)</span>`;
       else if(occ > 0) occupantLine = `Obydleno městskými nájemníky (~${occPct} % obsazenost)`;
       else occupantLine = '<span style="color:var(--danger)">Prázdný — nikdo nemá zájem za tuhle cenu</span>';
       // srovnání s tržním nájmem
@@ -5781,6 +5834,8 @@ function renderSelected(id){
           ${u.condition < 100 ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit (${REPAIR_COST_PER_POINT} Kč/bod)</button>` : ''}
         </div>` : ''}
         ${iDecide && u.npc ? `<div class="row"><button class="danger" onclick="evictNpc('${p.id}',${idx})">Vystěhovat ${escapeHtml(u.npc.name)}</button></div>` : ''}
+        ${iDecide && u.ownerOccupied ? `<div class="row"><button class="secondary" onclick="leaveOwnUnit('${p.id}',${idx})">📤 Vystěhovat se (byt se zase pronajme)</button></div>` : ''}
+        ${iDecide && !u.ownerOccupied && !u.tenant && !u.npc ? `<div class="row"><button class="secondary" ${near?'':'disabled'} onclick="occupyOwnUnit('${p.id}',${idx})">🏠 Bydlet v tomhle bytě</button></div>` : ''}
         ${iDecide && !u.tenant && !u.npc && u.condition>0 ? npcApplicantsHtml(p, idx) : ''}
         ${canRent ? `<div class="row"><button ${near?'':'disabled'} onclick="rentUnit('${p.id}',${idx})">Najmout si tento byt (${u.rentPrice} Kč/den)</button></div>` : ''}
         ${iAmTenant ? `<div class="row"><button class="danger" onclick="endTenancy('${p.id}',${idx})">Dát výpověď z nájmu</button></div>` : ''}
@@ -5803,6 +5858,7 @@ function renderSelected(id){
     <p><b>Koupit podíl.</b> Domy se kupují po procentech. Musíš stát <b>u domu</b> (do ${INTERACTION_RADIUS} m). Cena za procento se odvíjí od hodnoty domu a mění se s tím, jak se ve městě kupuje.</p>
     <p><b>Kdo rozhoduje.</b> Majitel s <b>víc než 50 %</b> určuje, co s domem bude. Ostatní spoluvlastníci berou svůj podíl z výnosu, ale do rozhodování nemluví.</p>
     <p><b>Bydlení nebo pronájem.</b> Buď v domě bydlíš (poloviční životní náklady), nebo ho přestavíš na byty a pronajímáš. Obojí naráz nejde.</p>
+    <p><b>Chceš bydlet a zároveň pronajímat?</b> Nemusíš přepínat celý dům. U kteréhokoli volného bytu klepni na <b>„🏠 Bydlet v tomhle bytě"</b> — ten jeden přestane vydělávat, ale zbytek domu pronajímáš dál a klesnou ti životní náklady. To je skoro vždycky výhodnější než přepnout celý dům na bydlení.</p>
     <p><b>Přepínání tam a zpět.</b> Za přestavbu na pronájem platíš <b>jen jednou</b>. Když se pak rozhodneš, že v domě chceš bydlet, byty ti zůstanou zachované — jen se z nich vystěhují nájemníci. Kdykoliv později můžeš dům zase otevřít k pronájmu <b>zdarma</b>.</p>
     <p><b>Nájem za byt.</b> Nastavíš si cenu sám. Nad férovou cenou začnou nájemníci ubývat — hra ti u každého bytu ukáže, jak je obsazený.</p>
     <p><b>Stav bytu.</b> Obydlené byty chátrají. Pod hranicí, kterou nájemník snese, se odstěhuje. Oprava stojí ${REPAIR_COST_PER_POINT} Kč za bod.</p>
@@ -5972,6 +6028,13 @@ async function buyHouseStake(id){
   const cost = Math.round(pricePer * pct);
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert(`Nemáš dost peněz (potřeba ${cost} Kč).`); return; }
+  const budeMit = (p.owners?.[currentUser.name] || 0) + pct;
+  if(!(await showConfirm(
+    `Koupit ${pct.toFixed(1)} % domu ${p.id.replace('h_','#')}?\n\n` +
+    `Zaplatíš: ${cost.toLocaleString('cs-CZ')} Kč\n` +
+    `Zůstane ti: ${Math.round(me.balance - cost).toLocaleString('cs-CZ')} Kč\n` +
+    `Budeš vlastnit: ${budeMit.toFixed(1)} %` +
+    (budeMit > 50 ? ' — o domě budeš rozhodovat 👑' : ' (na rozhodování je potřeba přes 50 %)')))) return;
   me.balance -= cost;
   const wasEmpty = !houseHasOwner(p) || (p.owners[currentUser.name]||0) === 0;
   p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
@@ -6042,6 +6105,28 @@ async function sellHouseStake(id){
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
   const refund = Math.round(marketPer * pct * HOUSE_SELL_RATIO);
+  // Varování před prodejem — po prodeji většiny přijdeš o rozhodování a při prodeji
+  // celého podílu se ruší i byty (přestavba, kterou jsi zaplatil).
+  const zbyde = myPct - pct;
+  const ztratimVetsinu = myPct > 50 && zbyde <= 50;
+  const prodavamVse = zbyde <= 0.001;
+  const jePronajem = p.useType === 'rental' && asArray(p.units).length;
+  let varovani = `Prodat ${pct.toFixed(1)} % domu ${p.id.replace('h_','#')} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n`;
+  if(zbyde > 0.001) varovani += `Zůstane ti ${zbyde.toFixed(1)} % domu.\n`;
+  if(prodavamVse && jePronajem){
+    varovani += `\n⚠️ Prodáváš celý svůj podíl. Pokud v domě nezůstane žádný majitel, ZRUŠÍ SE i byty — přestavbu bys musel platit znovu.\n`;
+  } else if(ztratimVetsinu){
+    varovani += `\n⚠️ Klesneš pod 50 %, takže o domě přestaneš rozhodovat (nájem, opravy, vylepšení).\n`;
+  }
+  if(jePronajem && !prodavamVse){
+    const denni = asArray(p.units).reduce((s,un) => {
+      if(!un || un.ownerOccupied) return s;
+      const occ = un.condition > 0 ? ((un.tenant||un.npc) ? 1 : unitOccupancy(p, un)) : 0;
+      return s + (un.rentPrice||0) * occ;
+    }, 0);
+    if(denni > 0.5) varovani += `\nPřijdeš o část příjmu — teď ti dům nese ${Math.round(denni * myPct/100)} Kč/den.\n`;
+  }
+  if(!(await showConfirm(varovani + `\nProdat?`))) return;
   world.users[currentUser.name].balance += refund;
   p.owners[currentUser.name] -= pct;
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
@@ -6088,9 +6173,15 @@ async function listHouseStake(id){
   saveWorld(); refreshAll(); renderMarket();
 }
 
-function cancelListing(listingId){
+async function cancelListing(listingId){
   const l = world.listings[listingId];
   if(!l) return;
+  const jeAukce = l.type === 'auction';
+  if(!(await showConfirm(
+    `Stáhnout nabídku ${l.pct.toFixed(1)} % domu ${(l.houseId||'').replace('h_','#')}?` +
+    (jeAukce && l.highestBidder
+      ? `\n\n⚠️ V aukci už někdo přihodil ${l.currentBid.toLocaleString('cs-CZ')} Kč — peníze se mu vrátí a o nabídku přijdeš.`
+      : `\n\nPodíl ti zůstane, jen ho přestaneš nabízet.`)))) return;
   if(l.type==='auction' && l.highestBidder && world.users[l.highestBidder]){
     // vrátit zablokovanou nabídku poslednímu dražiteli
     world.users[l.highestBidder].balance += l.currentBid;
@@ -6153,6 +6244,11 @@ async function bidListing(listingId){
   const me = world.users[currentUser.name];
   if(me.balance < bid){ showAlert('Nemáš dost peněz na tuhle nabídku.'); return; }
   if(l.highestBidder === currentUser.name){ showAlert('Už vedeš v této aukci.'); return; }
+  if(!(await showConfirm(
+    `Přihodit ${bid.toLocaleString('cs-CZ')} Kč za ${l.pct.toFixed(1)} % domu?\n\n` +
+    `Peníze se ti hned zablokují (nebudeš je moct utratit), dokud aukce neskončí.\n` +
+    `Když tě někdo přebije, dostaneš je celé zpátky.\n\n` +
+    `Aukce končí den ${l.endsAtDay}. Zůstane ti volných ${Math.round(me.balance - bid).toLocaleString('cs-CZ')} Kč.`))) return;
   // vrátit peníze předchozímu vedoucímu, zablokovat u nového
   if(l.highestBidder && world.users[l.highestBidder]) world.users[l.highestBidder].balance += l.currentBid;
   me.balance -= bid;
@@ -6298,6 +6394,14 @@ async function takeLoan(){
   const amount = parseInt(await showPrompt(`Kolik si chceš půjčit? (banka ti dá max ${limit} Kč, úrok ${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)`, Math.min(5000, limit)), 10);
   if(isNaN(amount) || amount <= 0) return;
   if(amount > limit){ showAlert(`Banka ti tolik nepůjčí — max ${limit} Kč podle tvého majetku.`); return; }
+  const denniUrok = Math.round(amount * (LOAN_ANNUAL_RATE/DAYS_PER_YEAR));
+  const za90dni = Math.round(amount * Math.pow(1 + LOAN_ANNUAL_RATE/DAYS_PER_YEAR, 90));
+  if(!(await showConfirm(
+    `Půjčit si ${amount.toLocaleString('cs-CZ')} Kč?\n\n` +
+    `Úrok: ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně (~${denniUrok} Kč denně)\n` +
+    `Když nebudeš splácet, za 90 dní dlužíš ${za90dni.toLocaleString('cs-CZ')} Kč.\n\n` +
+    `Banka si bere splátky automaticky. Po ${LOAN_SEIZURE_MISSED_DAYS} dnech bez splátky ti zabaví majetek.\n\n` +
+    `Půjčit si vyplatí jen na něco, co vydělá víc než ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně.`))) return;
   const me = world.users[currentUser.name];
   if(!me.loans) me.loans = [];
   me.loans.push({id:'loan_'+Date.now(), type:'loan', houseId:null, principal:amount, balance:amount, dailyRate: LOAN_ANNUAL_RATE/DAYS_PER_YEAR, missedDays:0});
@@ -8753,6 +8857,48 @@ async function withdrawSavings(){
   showAlert(`Vybráno ${amount} Kč ze spoření na účet.`);
 }
 
+// Majitel se nastěhuje do jednoho ze svých bytů. Zbytek domu dál normálně vydělává —
+// dřív musel kvůli bydlení přepnout CELÝ dům a přišel o všechny nájemníky.
+async function occupyOwnUnit(id, idx){
+  const p = world.parcels[id];
+  if(!p || !currentUser) return;
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iHaveMajority(p)){ showAlert('Nastěhovat se může jen správce domu (víc než 50 % podílu).'); return; }
+  const u = asArray(p.units)[idx];
+  if(!u){ showAlert('Byt neexistuje.'); return; }
+  if(u.tenant || u.npc){ showAlert('V tomhle bytě už někdo bydlí. Nejdřív ho vystěhuj.'); return; }
+
+  // jinde už bydlí? (v jiném bytě nebo v domě určeném na bydlení)
+  const jinyByt = [];
+  Object.values(world.parcels).forEach(q => asArray(q.units).forEach((un, i) => {
+    if(un && un.ownerOccupied && !(q.id === p.id && i === idx)) jinyByt.push({ q, i });
+  }));
+  const jinyDum = Object.values(world.parcels).find(q => q.useType === 'residence' && (q.owners?.[currentUser.name] || 0) > 0);
+
+  let zprava = `Nastěhovat se do ${idx+1}. bytu?\n\nTenhle byt přestane vydělávat (${u.rentPrice} Kč/den), ale ostatní byty v domě pronajímáš dál.\n\nKlesnou ti životní náklady na ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.`;
+  if(jinyByt.length) zprava += `\n\nZ bytu, kde bydlíš teď, se odstěhuješ (zase začne vydělávat).`;
+  else if(jinyDum) zprava += `\n\nPozn.: pořád máš dům ${jinyDum.id.replace('h_','#')} určený k bydlení.`;
+  if(!(await showConfirm(zprava))) return;
+
+  jinyByt.forEach(({ q, i }) => { q.units[i].ownerOccupied = false; stampHouse(q); });
+  u.ownerOccupied = true;
+  stampHouse(p);
+  saveWorld(); refreshAll();
+  showAlert(`Nastěhoval ses do ${idx+1}. bytu. Ostatní byty vyděláváš dál — a klesly ti náklady na bydlení.`);
+}
+
+async function leaveOwnUnit(id, idx){
+  const p = world.parcels[id];
+  if(!p || !currentUser) return;
+  const u = asArray(p.units)[idx];
+  if(!u || !u.ownerOccupied) return;
+  if(!(await showConfirm(`Vystěhovat se z ${idx+1}. bytu?\n\nByt se zase začne pronajímat (${u.rentPrice} Kč/den), ale přijdeš o vlastní bydlení — životní náklady vzrostou na ${LIVING_COST} Kč/den, dokud si nenajdeš jiné.`))) return;
+  u.ownerOccupied = false;
+  stampHouse(p);
+  saveWorld(); refreshAll();
+  showAlert(`Vystěhoval ses. Byt se zase pronajímá.`);
+}
+
 async function setUseType(id, type){
   const p = world.parcels[id];
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
@@ -8765,13 +8911,28 @@ async function setUseType(id, type){
   if(type === 'residence' && p.useType === 'rental'){
     const byty = asArray(p.units);
     const obsazene = byty.filter(u => u && (u.tenant || u.npc));
-    if(obsazene.length){
-      const kdo = obsazene.map(u => u.tenant ? u.tenant : (u.npc && u.npc.name) || 'nájemník').join(', ');
+    // Skutečný denní příjem — byty vydělávají i bez konkrétního nájemníka (městská poptávka),
+    // takže dřív se u nich vůbec nevarovalo a hráč přišel o příjem bez upozornění.
+    const prijemZaDen = byty.reduce((s, u) => {
+      if(!u || u.ownerOccupied) return s;
+      const occ = u.condition > 0 ? ((u.tenant || u.npc) ? 1 : unitOccupancy(p, u)) : 0;
+      return s + (u.rentPrice || 0) * occ;
+    }, 0);
+
+    if(prijemZaDen > 0.5 || obsazene.length){
+      const kdo = obsazene.length
+        ? obsazene.map(u => u.tenant ? u.tenant : (u.npc && u.npc.name) || 'nájemník').join(', ')
+        : null;
+      const volnyByt = byty.findIndex(u => u && !u.tenant && !u.npc && !u.ownerOccupied);
       const ok = await showConfirm(
-        `V domě bydlí ${obsazene.length} ${obsazene.length===1?'nájemník':(obsazene.length<5?'nájemníci':'nájemníků')} (${kdo}).\n\n` +
-        `Když se sem nastěhuješ, budou se muset vystěhovat a přijdeš o nájem ` +
-        `${Math.round(obsazene.reduce((s,u)=>s+(u.rentPrice||0),0))} Kč/den.\n\n` +
-        `Byty ti zůstanou — kdykoliv můžeš dům zase přepnout na pronájem bez placení přestavby.\n\nPokračovat?`);
+        `⚠️ Opravdu se vzdát pronájmu?\n\n` +
+        `Dům ti teď vydělává ${Math.round(prijemZaDen)} Kč/den` +
+        (kdo ? ` a bydlí v něm: ${kdo}` : ` (byty jsou obsazené městskou poptávkou)`) + `.\n\n` +
+        `Když ho přepneš na bydlení, VŠECHNY byty přestanou vydělávat a nájemníci se vystěhují.\n\n` +
+        (volnyByt >= 0
+          ? `💡 Lepší řešení: nech dům jako pronájem a u ${volnyByt+1}. bytu klepni na „🏠 Bydlet v tomhle bytě" — budeš mít levné bydlení a zbytek domu ti bude vydělávat dál.\n\n`
+          : `💡 Tip: kdybys uvolnil jeden byt, můžeš bydlet přímo v něm a zbytek pronajímat dál.\n\n`) +
+        `Přesto přepnout celý dům na bydlení?`);
       if(!ok) return;
     }
     // vystěhovat všechny (hráče i NPC), byty ale necháme stát
@@ -8783,6 +8944,7 @@ async function setUseType(id, type){
         if(world.users[najemnik]) addNews('rental', `📤 ${najemnik} se musel vystěhovat z domu ${p.id.replace('h_','#')} — majitel se tam nastěhoval.`);
       }
       if(u.npc){ u.npc = null; }
+      u.ownerOccupied = false;   // celý dům je teď bydlení, jednotlivý byt už není potřeba
     });
   }
 
@@ -8821,6 +8983,13 @@ async function startRental(id){
   const suggestedRent = fairRentForHouse(p);
   const rent = parseInt(await showPrompt(`Zařízení ${numUnits} ${numUnits===1?'bytu':'bytů'} stojí ${setupCost} Kč. Nájemné za byt/den (Kč)? Odhadovaná tržní cena: ${rentEstimateRange(p)}.`, suggestedRent), 10);
   if(isNaN(rent) || rent <= 0) return;
+  // Poslední potvrzení před stržením — je to jedna z nejdražších akcí ve hře
+  if(!(await showConfirm(
+    `Přestavět dům na ${numUnits} ${numUnits===1?'byt':'bytů'}?\n\n` +
+    `Zaplatíš teď: ${setupCost.toLocaleString('cs-CZ')} Kč\n` +
+    `Nájem: ${rent} Kč za byt/den (celkem až ${rent*numUnits} Kč/den)\n` +
+    `Vrátí se ti to zhruba za ${Math.round(setupCost/(rent*numUnits))} dní.\n\n` +
+    `Zůstane ti ${Math.round(me.balance - setupCost).toLocaleString('cs-CZ')} Kč.`))) return;
   me.balance -= setupCost;
   p.useType = 'rental';
   p.units = Array.from({length: numUnits}, () => ({rentPrice: rent, condition: 100}));
@@ -8894,6 +9063,7 @@ async function rentUnit(id, idx){
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu, který si chceš najmout.'); return; }
   if(p.useType !== 'rental'){ showAlert('Tenhle dům se momentálně nepronajímá — majitel v něm bydlí.'); return; }
   const unit = p.units[idx];
+  if(unit.ownerOccupied){ showAlert('V tomhle bytě bydlí majitel domu.'); return; }
   if(unit.tenant){ showAlert('Tento byt už má nájemníka.'); return; }
   if(unit.condition <= 0){ showAlert('Byt je zchátralý, nedá se v něm bydlet.'); return; }
   if((p.owners?.[currentUser.name]||0) > 0){ showAlert('Ve vlastním domě si byt nenajímáš — jsi spoluvlastník.'); return; }
@@ -8954,8 +9124,15 @@ function takeJob(jobId){
   saveWorld(); renderJobs();
 }
 
-function quitJob(jobId){
+async function quitJob(jobId){
   const job = world.jobs[jobId];
+  const me0 = world.users[currentUser.name];
+  const staz = (me0 && me0.currentJobShifts) || 0;
+  if(!(await showConfirm(
+    `Dát výpověď z pozice ${job.name}?\n\n` +
+    `Přijdeš o plat ${job.salary} Kč za směnu.` +
+    (staz > 0 ? `\n\n⚠️ Ztratíš i příplatek za stáž (${staz} odpracovaných směn na téhle pozici). Na nové pozici začínáš od nuly.` : '') +
+    `\n\nMísto může mezitím obsadit někdo jiný.`))) return;
   if(job.holders) job.holders = job.holders.filter(n => n !== currentUser.name);
   const me = world.users[currentUser.name];
   if(me) delete me.jobStartDay;
@@ -9086,6 +9263,13 @@ async function buyStake(bizId){
   const cost = Math.round(pricePerPercent(biz) * pct);
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert('Nemáš dost peněz.'); return; }
+  const denne = biz.hourlyYield * inflationMult() * (pct/100) * 24;
+  if(!(await showConfirm(
+    `Koupit ${pct.toFixed(1)} % podniku ${biz.name}?\n\n` +
+    `Zaplatíš: ${cost.toLocaleString('cs-CZ')} Kč\n` +
+    `Ponese ti: ${Math.round(denne)} Kč/den\n` +
+    `Zaplatí se ti zhruba za ${denne > 0 ? Math.round(cost/denne) : '—'} dní.\n\n` +
+    `Zůstane ti ${Math.round(me.balance - cost).toLocaleString('cs-CZ')} Kč.`))) return;
   me.balance -= cost;
   biz.owners[currentUser.name] = (biz.owners[currentUser.name] || 0) + pct;
   addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${pct.toFixed(0)} % za ${cost} Kč).`);
@@ -9101,6 +9285,11 @@ async function sellStake(bizId){
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct){ showAlert('Tolik nevlastníš.'); return; }
   const refund = Math.round(pricePerPercent(biz) * pct * BUSINESS_SELL_RATIO);
+  const ztrataDenne = biz.hourlyYield * inflationMult() * (pct/100) * 24;
+  if(!(await showConfirm(
+    `Prodat ${pct.toFixed(1)} % podniku ${biz.name} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n` +
+    `Přijdeš o příjem ${Math.round(ztrataDenne)} Kč/den.\n` +
+    `Zpátky dostáváš jen ${Math.round(BUSINESS_SELL_RATIO*100)} % ceny — prodej se prodělává.`))) return;
   world.users[currentUser.name].balance += refund;
   biz.owners[currentUser.name] -= pct;
   if(biz.owners[currentUser.name] <= 0.001) delete biz.owners[currentUser.name];
