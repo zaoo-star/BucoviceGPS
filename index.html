@@ -842,6 +842,16 @@ const PICKUP_BONUS_MIN = 220, PICKUP_BONUS_MAX = 380; // bonusový balík
 const PICKUP_BONUS_CHANCE = 0.2;     // pravděpodobnost, že bod je bonusový
 
 // Vygeneruje/obnoví body na dnešní den (sdílí se přes Firebase, aby je viděli všichni stejně).
+// Posune bod o pár metrů náhodným směrem od domu. Bez tohohle se značka balíku/kolemjdoucího
+// vykreslila přesně na souřadnicích domu a splynula s jeho ikonou v jednu fleku.
+function jitterPoint(lat, lng, rnd, metry){
+  const uhel = rnd() * Math.PI * 2;
+  const vzdalenost = (metry || 12) + rnd() * (metry || 12);   // 12–24 m náhodným směrem
+  const dLat = (vzdalenost * Math.cos(uhel)) / 111000;
+  const dLng = (vzdalenost * Math.sin(uhel)) / (111000 * Math.cos(lat * Math.PI / 180));
+  return { lat: lat + dLat, lng: lng + dLng };
+}
+
 function ensurePickups(){
   const today = calendarDay();
   if(world.pickups && world.pickups.day === today && Array.isArray(world.pickups.list) && world.pickups.list.length) return;
@@ -857,7 +867,8 @@ function ensurePickups(){
     const reward = bonus
       ? Math.round(PICKUP_BONUS_MIN + rnd()*(PICKUP_BONUS_MAX-PICKUP_BONUS_MIN))
       : Math.round(PICKUP_MIN + rnd()*(PICKUP_MAX-PICKUP_MIN));
-    list.push({ id: 'pk_'+today+'_'+i, lat: h.lat, lng: h.lng, reward, bonus });
+    const bod = jitterPoint(h.lat, h.lng, rnd, 12);   // kousek od domu, ne přímo na něm
+    list.push({ id: 'pk_'+today+'_'+i, lat: bod.lat, lng: bod.lng, reward, bonus });
   }
   world.pickups = { day: today, list };
 }
@@ -5039,10 +5050,11 @@ function ensureEncounters(){
   for(let i = 0; i < ENCOUNTER_COUNT; i++){
     const dum = domy[Math.floor(rnd() * domy.length)];
     const typ = ENCOUNTER_TYPES[Math.floor(rnd() * ENCOUNTER_TYPES.length)];
+    const bod = jitterPoint(dum.lat, dum.lng, rnd, 12);   // kousek od domu, ne přímo na něm
     list.push({
       id: 'enc_' + dnes + '_' + i,
       typ,
-      lat: dum.lat, lng: dum.lng,
+      lat: bod.lat, lng: bod.lng,
       // připravené hodnoty, ať jsou u všech hráčů stejné
       bonus: Math.round(15 + rnd() * 20),        // % nad tržní cenu (kupec)
       najemBonus: Math.round(20 + rnd() * 25),   // % nad férový nájem (zájemce)
