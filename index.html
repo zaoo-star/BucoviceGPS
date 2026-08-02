@@ -749,7 +749,7 @@ function refreshNpcTenants(force){
 }
 
 // Nastěhuje NPC zájemce do konkrétního bytu hráčova domu (pokud byt splňuje požadavky).
-function moveInNpc(npcId, houseId, unitIdx){
+async function moveInNpc(npcId, houseId, unitIdx){
   refreshNpcTenants();
   const npc = (world.npcTenants.list || []).find(n => n.id === npcId);
   const p = world.parcels[houseId];
@@ -764,6 +764,13 @@ function moveInNpc(npcId, houseId, unitIdx){
     showAlert(`${npc.name} si mezitím našel bydlení jinde. Vyber jiného zájemce.`);
     refreshAll(); return;
   }
+  // Potvrzení — nastěhování je závazek: nájemník bude platit, ale musíš mu byt udržovat.
+  const ok = await showConfirm(
+    `Nastěhovat ${npc.avatar || '🧑'} ${npc.name} do ${unitIdx+1}. bytu?\n\n` +
+    `Bude ti platit ${u.rentPrice} Kč/den spolehlivě.\n\n` +
+    `⚠️ Odstěhuje se, když stav bytu klesne pod ${npc.minCondition} % (teď je ${Math.round(u.condition)} %).`);
+  if(!ok) return;
+
   u.npc = { name: npc.name, avatar: npc.avatar, minCondition: npc.minCondition };
   u.tenant = null;
   stampHouse(p);
@@ -865,17 +872,49 @@ const PICKUP_BONUS_CHANCE = 0.2;     // pravděpodobnost, že bod je bonusový
 // Vygeneruje/obnoví body na dnešní den (sdílí se přes Firebase, aby je viděli všichni stejně).
 // Posune bod o pár metrů náhodným směrem od domu. Bez tohohle se značka balíku/kolemjdoucího
 // vykreslila přesně na souřadnicích domu a splynula s jeho ikonou v jednu fleku.
+// Najde k domu místo, které je dost daleko od VŠECH okolních domů — aby značka balíku
+// nesplynula s ikonou domu. Nestačí posunout od jednoho domu: v hustě zastavěném městě
+// se tím snadno přiblížíme k sousednímu a překryv zůstane.
+const BOD_MIN_ODSTUP = 22;   // m — pod tím se ikony na mapě vizuálně překrývají
 function jitterPoint(lat, lng, rnd, metry){
-  const uhel = rnd() * Math.PI * 2;
-  const vzdalenost = (metry || 12) + rnd() * (metry || 12);   // 12–24 m náhodným směrem
-  const dLat = (vzdalenost * Math.cos(uhel)) / 111000;
-  const dLng = (vzdalenost * Math.sin(uhel)) / (111000 * Math.cos(lat * Math.PI / 180));
-  return { lat: lat + dLat, lng: lng + dLng };
+  const zaklad = metry || 30;
+  const parcels = (world && world.parcels) ? Object.values(world.parcels) : [];
+  let nejlepsi = null, nejlepsiOdstup = -1;
+
+  // Víc pokusů a postupně větší okruh: v hustě zastavěném centru je volné místo
+  // až o kus dál (ulice, dvůr, zahrada), blízko domu prostě žádné není.
+  for(let pokus = 0; pokus < 40; pokus++){
+    const uhel = rnd() * Math.PI * 2;
+    const rozsah = zaklad * (1 + Math.floor(pokus / 10));   // 30–60, pak 60–120, 90–180…
+    const vzdalenost = rozsah + rnd() * rozsah;
+    const dLat = (vzdalenost * Math.cos(uhel)) / 111000;
+    const dLng = (vzdalenost * Math.sin(uhel)) / (111000 * Math.cos(lat * Math.PI / 180));
+    const kandidat = { lat: lat + dLat, lng: lng + dLng };
+
+    // jak daleko je nejbližší dům? (hrubý filtr, ať neprocházíme všech 2267)
+    let minOdstup = Infinity;
+    for(const h of parcels){
+      if(Math.abs(h.lat - kandidat.lat) > 0.0012) continue;
+      if(Math.abs(h.lng - kandidat.lng) > 0.0018) continue;
+      const d = haversine(kandidat, {lat: h.lat, lng: h.lng});
+      if(d < minOdstup) minOdstup = d;
+      if(minOdstup < BOD_MIN_ODSTUP) break;
+    }
+
+    if(minOdstup > nejlepsiOdstup){ nejlepsiOdstup = minOdstup; nejlepsi = kandidat; }
+    if(minOdstup >= BOD_MIN_ODSTUP) return kandidat;
+  }
+  return nejlepsi;
 }
+
+// Verze rozmístění bodů. Když se změní pravidla generování (třeba posun od domů),
+// zvýšením čísla se stará data přegenerují hned — ne až s dalším dnem.
+const PICKUP_LAYOUT_VERSION = 2;
 
 function ensurePickups(){
   const today = calendarDay();
-  if(world.pickups && world.pickups.day === today && Array.isArray(world.pickups.list) && world.pickups.list.length) return;
+  if(world.pickups && world.pickups.day === today && world.pickups.v === PICKUP_LAYOUT_VERSION
+     && Array.isArray(world.pickups.list) && world.pickups.list.length) return;
   const houses = Object.values(world.parcels);
   if(!houses.length){ world.pickups = { day: today, list: [] }; return; }
   // deterministický generátor podle dne, aby všechna zařízení vygenerovala STEJNÉ body
@@ -891,7 +930,7 @@ function ensurePickups(){
     const bod = jitterPoint(h.lat, h.lng, rnd, 12);   // kousek od domu, ne přímo na něm
     list.push({ id: 'pk_'+today+'_'+i, lat: bod.lat, lng: bod.lng, reward, bonus });
   }
-  world.pickups = { day: today, list };
+  world.pickups = { day: today, v: PICKUP_LAYOUT_VERSION, list };
 }
 
 // Které body už dnes hráč sebral (reset o půlnoci).
@@ -4128,6 +4167,10 @@ function migrateWorld(){
       world.encounters.list = asArray(world.encounters.list);
       if(!world.pickups || typeof world.pickups !== 'object') world.pickups = { day:0, list:[] };
       world.pickups.list = asArray(world.pickups.list);
+      // Rozmístění ze starší verze (body přesně na domech) zahodit — jinak by se
+      // překrývající značky vracely od hráčů, kteří ještě neaktualizovali.
+      if(world.pickups.v !== PICKUP_LAYOUT_VERSION) world.pickups = { day:0, list:[] };
+      if(world.encounters && world.encounters.v !== PICKUP_LAYOUT_VERSION) world.encounters = { day:0, list:[] };
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
       world.deletedMsgs = asArray(world.deletedMsgs); // id smazaných zpráv (moderace)
       world.deletedPlayers = asArray(world.deletedPlayers); // jména hráčů smazaných adminem
@@ -5066,7 +5109,8 @@ const ENCOUNTER_DEFS = {
 // Vygeneruje setkání na dnešní den — deterministicky, aby je všichni měli stejná
 function ensureEncounters(){
   const dnes = calendarDay();
-  if(world.encounters && world.encounters.day === dnes && asArray(world.encounters.list).length) return;
+  if(world.encounters && world.encounters.day === dnes && world.encounters.v === PICKUP_LAYOUT_VERSION
+     && asArray(world.encounters.list).length) return;
   const domy = Object.values(world.parcels || {});
   if(!domy.length){ world.encounters = { day: dnes, list: [] }; return; }
   let seed = dnes * 4021 + 17;
@@ -5087,7 +5131,7 @@ function ensureEncounters(){
       nalez: Math.round(120 + rnd() * 380),      // Kč (peněženka)
     });
   }
-  world.encounters = { day: dnes, list };
+  world.encounters = { day: dnes, v: PICKUP_LAYOUT_VERSION, list };
 }
 
 // Která setkání už hráč dnes vyřídil
@@ -8692,7 +8736,9 @@ function adminTapCount(){
 }
 
 // Odhlásí hráče a zapomene uloženou přezdívku (vypne auto-login)
-function logout(){
+async function logout(){
+  const jmeno = currentUser ? currentUser.name : '';
+  if(!(await showConfirm(`Odhlásit se${jmeno ? ' z účtu „'+jmeno+'"' : ''}?\n\nTvůj postup zůstane uložený — kdykoliv se můžeš přihlásit zpátky stejnou přezdívkou.`))) return;
   try { localStorage.removeItem('bucovice_lastuser'); } catch(e){}
   currentUser = null;
   closeSheet();
@@ -9007,6 +9053,29 @@ async function setUnitRentPrice(id, idx){
   const fair = fairRentForHouse(p);
   const rent = parseInt(await showPrompt(`Nové nájemné za byt (${idx+1}. patro), Kč/den. Odhad trhu ${rentEstimateRange(p)} (vyšší = víc peněz, ale riziko prázdna):`, unit.rentPrice), 10);
   if(isNaN(rent) || rent <= 0) return;
+
+  // Varovat, když nová cena byt vylidní — spočítáme, kolik reálně vybere teď a kolik potom.
+  const occTed = unit.condition > 0 ? unitOccupancy(p, unit) : 0;
+  const occPotom = unit.condition > 0 ? unitOccupancy(p, {...unit, rentPrice: rent}) : 0;
+  const vyberTed = Math.round((unit.rentPrice || 0) * occTed);
+  const vyberPotom = Math.round(rent * occPotom);
+  if(vyberPotom < vyberTed && !unit.tenant && !unit.npc){
+    const ok = await showConfirm(
+      `⚠️ Za ${rent} Kč vyděláš MÍŇ, ne víc.\n\n` +
+      `Teď: ${unit.rentPrice} Kč × ${Math.round(occTed*100)} % obsazenost = ${vyberTed} Kč/den\n` +
+      `Potom: ${rent} Kč × ${Math.round(occPotom*100)} % obsazenost = ${vyberPotom} Kč/den\n\n` +
+      `Čím dražší nájem, tím míň lidí ho chce. Férová cena je kolem ${fair} Kč.\n\nOpravdu nastavit ${rent} Kč?`);
+    if(!ok) return;
+  }
+  // nájemníkovi se cena mění taky — ať o tom hráč ví
+  if((unit.tenant || unit.npc) && rent > (unit.rentPrice || 0)){
+    const kdo = unit.tenant || (unit.npc && unit.npc.name) || 'nájemník';
+    const ok = await showConfirm(
+      `V bytě bydlí ${kdo} a platí ${unit.rentPrice} Kč/den.\n\n` +
+      `Po zdražení na ${rent} Kč se může odstěhovat, pokud mu to nebude vyhovovat.\n\nZdražit?`);
+    if(!ok) return;
+  }
+
   unit.rentPrice = rent;
   stampHouse(p);
   saveWorld(); refreshAll();
