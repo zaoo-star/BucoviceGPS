@@ -673,7 +673,7 @@ const RENTAL_SETUP_RATIO = 0.15;  // zařízení bytu k pronájmu = 15 % ceny do
 // Každé má JINÝ efekt, ať se vyplatí kombinovat. Cíl: návratnost kolem 2-3 měsíců u pronajímaného domu.
 const HOUSE_UPGRADES = {
   insulation: { icon:'🌡️', name:'Zateplení',       costRatio:0.06,
-    desc:'Nižší účty za energie — nájemníci raději zůstávají. Zvýší obsazenost bytů.' },
+    desc:'Nižší účty za energie — byt je pro nájemníky lákavější, nastěhují se dřív.' },
   ac:         { icon:'❄️', name:'Klimatizace',      costRatio:0.08,
     desc:'Komfort navíc — dům snese vyšší nájem, aniž by se vyprázdnil.' },
   renovation: { icon:'🔧', name:'Rekonstrukce',     costRatio:0.10,
@@ -681,7 +681,7 @@ const HOUSE_UPGRADES = {
   solar:      { icon:'☀️', name:'Solární panely',   costRatio:0.08,
     desc:'Vlastní elektřina — každý byt ti nese něco navíc každý den, i když je prázdný.' },
 };
-const INSULATION_OCC_BONUS = 0.18;  // +18 % obsazenost
+const INSULATION_OCC_BONUS = 0.18;  // zaplní 18 % zbývající šance na nájemníka
 const AC_RENT_BONUS = 1.20;         // snese o 20 % vyšší férový nájem
 const RENOVATION_DECAY_MULT = 0.25; // chátrání na čtvrtinu (výrazná úspora za opravy)
 const RENOVATION_OCC_BONUS = 0.10;  // opravený dům je i o něco atraktivnější
@@ -3678,16 +3678,25 @@ function rentEstimateRange(p){
 }
 // Obsazenost bytu 0–1 podle poměru nastaveného a férového nájmu.
 // nájem ≤ férový → plno (1.0), férový×1 → ~0.9, férový×2 → ~0.2, výš → k nule.
+// Kolik času je byt obsazený (0–1). Čím dražší nájem nad férovou cenou, tím míň zájemců.
+// Pokles je PLYNULÝ: dřív se používala přímka, která držela 100 % a pak spadla skoro k nule
+// během pár korun — hráč pak měl pocit, že ho hra trestá za drobné zdražení.
+// Teď mírné zdražení pořád dává smysl a i výrazně přemrštěná cena někoho občas najde.
 function unitOccupancy(p, unit){
   const fair = fairRentForHouse(p) * eventMult('rentMult');   // dnešní poptávka po bydlení
   let occ;
-  if(unit.rentPrice <= fair) occ = 1;
+  if(unit.rentPrice <= fair) occ = 1;   // za férovou cenu (a míň) je plno vždycky
   else {
-    const ratio = unit.rentPrice / fair; // >1
-    occ = Math.max(0, 1.2 - 0.7 * ratio); // lineární pokles
+    const ratio = unit.rentPrice / fair;
+    // klesající křivka: 1,15× fair ≈ 92 %, 1,5× ≈ 62 %, 2× ≈ 31 %, 3× ≈ 12 %
+    occ = 1 / (1 + 2.2 * Math.pow(ratio - 1, 1.7));
   }
-  if(hasUpgrade(p, 'insulation')) occ += INSULATION_OCC_BONUS; // zateplení = atraktivnější bydlení
-  if(hasUpgrade(p, 'renovation')) occ += RENOVATION_OCC_BONUS; // opravený dům = atraktivnější
+  // Bonusy z vylepšení NÁSOBÍ zbývající neobsazenost — tím zůstanou citelné (zaplní část prázdna),
+  // ale nezruší celou mechaniku ceny. Kdyby se přičítaly, u plynulé křivky by i trojnásobný
+  // nájem držel 100 % a hráč by neměl důvod cenu vůbec řešit.
+  const zaplnPrazdno = (podil) => { occ = occ + (1 - occ) * podil; };
+  if(hasUpgrade(p, 'insulation')) zaplnPrazdno(INSULATION_OCC_BONUS);
+  if(hasUpgrade(p, 'renovation')) zaplnPrazdno(RENOVATION_OCC_BONUS);
   return Math.max(0, Math.min(1, occ));
 }
 
@@ -4697,8 +4706,7 @@ function tick(){
           } else if(u.ownerOccupied){
             collected = 0;   // v tomhle bytě bydlí sám majitel — nevydělává, ale ani neplatí nájem
           } else {
-            // prázdný byt: anonymní NPC poptávka podle obsazenosti (nižší při přemrštěném nájmu)
-            collected = u.rentPrice * unitOccupancy(p, u);
+            collected = 0;   // prázdný byt nevydělává nic — nájemník se nastěhuje sám (tryFillVacantUnits)
           }
         }
         if(collected > 0){
@@ -4707,7 +4715,7 @@ function tick(){
           });
         }
         // obsazený byt (hráč, NPC nebo poptávka) se opotřebovává; prázdný chátrá pomaleji
-        const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : (u.condition>0 ? unitOccupancy(p,u) : 0);
+        const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : 0;   // buď někdo bydlí, nebo ne
         let decayRate = RENT_DECAY * (occNow > 0 ? occNow : EMPTY_DECAY_FACTOR);
         if(hasUpgrade(p, 'renovation')) decayRate *= RENOVATION_DECAY_MULT;
         u.condition = Math.max(0, u.condition - decayRate * dayFraction);
@@ -4816,8 +4824,42 @@ function maybeRandomEvent(){
   }, 600);
 }
 
+// Volné byty si samy hledají nájemníky — podle toho, jak je nájem přijatelný.
+// Dřív se místo toho počítala "částečná obsazenost" (byt vydělával třeba 35 % nájmu),
+// což hráči nedávalo smysl: pronajímal jeden byt a nechápal, proč nemá 100 %.
+// Teď je to jednoznačné: byt buď nájemníka má a platí celý nájem, nebo ho nemá a nevydělává nic.
+function tryFillVacantUnits(){
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p || p.useType !== 'rental') return;
+    asArray(p.units).forEach((un, idx) => {
+      if(!un || un.tenant || un.npc || un.ownerOccupied) return;   // obsazený
+      if((un.condition || 0) <= 0) return;                          // zchátralý nikoho nezajímá
+      // šance na nastěhování = jak moc je cena přijatelná (stejná křivka jako dřív obsazenost)
+      const sance = unitOccupancy(p, un);
+      if(sance <= 0) return;
+      // deterministické podle domu, bytu a dne — ať to na všech zařízeních vyjde stejně
+      const den = calendarDay();
+      let seed = Math.abs((p.id.length * 7919 + idx * 104729 + den * 1299709)) % 2147483647;
+      seed = (seed * 9301 + 49297) % 233280;
+      if((seed / 233280) > sance) return;   // dnes se nikdo nenastěhoval
+
+      const typ = NPC_TENANT_TYPES[Math.abs(seed) % NPC_TENANT_TYPES.length];
+      const obsazena = occupiedTenantNames();
+      const volnaJmena = typ.names.filter(n => !obsazena.has(n));
+      if(!volnaJmena.length) return;
+      const jmeno = volnaJmena[Math.abs(seed >> 3) % volnaJmena.length];
+      un.npc = { name: jmeno, avatar: typ.avatar, minCondition: typ.minCondition };
+      stampHouse(p);
+      if(currentUser && (p.owners?.[currentUser.name] || 0) > 50){
+        addNews('rental', `📥 ${jmeno} se nastěhoval do domu ${p.id.replace('h_','#')} (${un.rentPrice} Kč/den).`);
+      }
+    });
+  });
+}
+
 function onNewDay(catchUp){
   if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
+  tryFillVacantUnits();          // volné byty si najdou nájemníky podle ceny
   const cev = todaysCityEvent();
   if(cev) addNews('event', `${cev.emoji} ${cev.name} — ${cev.desc}`);
   finishDueProjects();                                    // dokončit renovace, kterým vypršel čas
@@ -5781,7 +5823,7 @@ function renderSelected(id){
     const fair = fairRentForHouse(p);
     // reálně vybraný nájem celkem (po obsazenosti)
     const collectedTotal = p.units.reduce((s,u)=>{
-      const occ = u.condition>0 ? unitOccupancy(p,u) : 0;
+      const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;   // buď někdo bydlí, nebo ne
       return s + u.rentPrice * occ;
     }, 0);
     const myShare = collectedTotal * (myPct/100);
@@ -5837,18 +5879,22 @@ function renderSelected(id){
     }
 
     p.units.forEach((u, idx) => {
-      const occ = u.condition>0 ? unitOccupancy(p, u) : 0;
+      const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;   // buď někdo bydlí, nebo ne
       const occPct = Math.round(occ*100);
       const iAmTenant = u.tenant === currentUser?.name;
+      // Šance, že se do prázdného bytu někdo nastěhuje (podle ceny) — už NE "částečná obsazenost",
+      // ta hráče mátla: pronajímal jeden byt a nechápal, proč nemá 100 %.
+      const sanceNaNajemnika = (u.condition > 0 && !u.tenant && !u.npc && !u.ownerOccupied)
+        ? Math.round(unitOccupancy(p, u) * 100) : 0;
       let occLabel, occColor;
       if(u.condition <= 0){ occLabel='zchátralý — neobyvatelný'; occColor='var(--danger)'; }
       else if(u.tenant){ occLabel = iAmTenant ? 'bydlíš tu' : 'pronajato hráči'; occColor='var(--accent2)'; }
-      else if(u.npc){ occLabel='pronajato nájemníkovi'; occColor='var(--accent)'; }
-      else if(occ >= 0.85){ occLabel='obsazený (nájemníci města)'; occColor='var(--accent)'; }
-      else if(occ >= 0.4){ occLabel=`částečně obsazený (${occPct} %)`; occColor='var(--gold)'; }
-      else if(occ > 0){ occLabel=`skoro prázdný (${occPct} %)`; occColor='var(--orange)'; }
-      else { occLabel='prázdný — nájem moc vysoký'; occColor='var(--danger)'; }
-      const realCollected = (u.tenant || u.npc) ? u.rentPrice : u.rentPrice*occ;
+      else if(u.npc){ occLabel='pronajato — platí plný nájem'; occColor='var(--accent)'; }
+      else if(u.ownerOccupied){ occLabel='bydlíš tu ty'; occColor='var(--accent2)'; }
+      else if(sanceNaNajemnika >= 70){ occLabel='volný — zájemci se hlásí'; occColor='var(--gold)'; }
+      else if(sanceNaNajemnika >= 30){ occLabel='volný — zájem je slabší'; occColor='var(--orange)'; }
+      else { occLabel='volný — za tuhle cenu nikdo nechce'; occColor='var(--danger)'; }
+      const realCollected = (u.tenant || u.npc) ? u.rentPrice : 0;
       const canRent = !u.tenant && !u.npc && u.condition>0 && myPct===0 && housingStatus(currentUser?.name)==='homeless';
       // popis obyvatele bytu
       let occupantLine;
@@ -5856,8 +5902,8 @@ function renderSelected(id){
       else if(u.tenant) occupantLine = iAmTenant ? `Bydlí zde: <b>${u.tenant}</b> (ty)` : `Bydlí zde: <b style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${u.tenant}')">${u.tenant}</b>`;
       else if(u.npc) occupantLine = `Bydlí zde: <b>${escapeHtml(u.npc.avatar||'🧑')} ${escapeHtml(u.npc.name)}</b> <span style="font-size:0.85em;color:var(--muted)">(platí spolehlivě plný nájem)</span>`;
       else if(u.ownerOccupied) occupantLine = `<b style="color:var(--accent)">🏠 Bydlíš tu ty</b> <span style="font-size:0.85em;color:var(--muted)">(nevydělává, ale máš nižší náklady)</span>`;
-      else if(occ > 0) occupantLine = `Obydleno městskými nájemníky (~${occPct} % obsazenost)`;
-      else occupantLine = '<span style="color:var(--danger)">Prázdný — nikdo nemá zájem za tuhle cenu</span>';
+      else if(sanceNaNajemnika > 0) occupantLine = `<span style="color:var(--muted)">Zatím prázdný</span> — každý den je <b>${sanceNaNajemnika}% šance</b>, že se někdo nastěhuje`;
+      else occupantLine = '<span style="color:var(--danger)">Prázdný — za tuhle cenu se nikdo nenastěhuje</span>';
       // srovnání s tržním nájmem
       const ratio = u.rentPrice / fair;
       let priceNote;
@@ -5868,9 +5914,16 @@ function renderSelected(id){
       html += `<div class="card">
         <h3>Byt ${idx+1}. patro <span class="badge" style="background:transparent;color:${occColor};border:1px solid ${occColor}">${occLabel}</span></h3>
         <p style="font-size:1em;">${occupantLine}</p>
-        <p>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(odhad trhu ${rentEstimateRange(p)})</span></p>
+        <p>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(férová cena ${fair} Kč)</span></p>
         <p style="font-size:0.92em;">${priceNote}</p>
-        ${iDecide?`<p style="font-size:0.92em;color:var(--muted)">Reálně z tohoto bytu vybíráš ${realCollected.toFixed(0)} Kč/den${myPct<100?` (tvůj podíl ${myPct.toFixed(0)} % z toho: ${(realCollected*myPct/100).toFixed(0)} Kč)`:''}</p>`:''}
+        ${iDecide ? `<div style="background:var(--panel);border-left:3px solid ${occColor};border-radius:6px;padding:7px 9px;margin:6px 0;">
+          ${(u.tenant || u.npc)
+            ? `<p style="margin:0;font-size:0.9em;">Vydělává ti <b style="color:var(--gold)">${u.rentPrice} Kč/den</b></p>
+               <p style="margin:2px 0 0 0;font-size:0.85em;color:var(--accent)">Nájemník platí celý nájem každý den, dokud mu byt udržuješ.</p>`
+            : `<p style="margin:0;font-size:0.9em;">Teď vydělává <b style="color:var(--danger)">0 Kč/den</b> — je prázdný.</p>
+               <p style="margin:2px 0 0 0;font-size:0.85em;color:var(--muted)">Až se někdo nastěhuje, bude platit ${u.rentPrice} Kč/den. Čím nižší nájem, tím dřív se to stane.</p>`}
+          ${myPct < 100 ? `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Tvůj podíl je ${myPct.toFixed(0)} %, takže z toho máš <b>${(realCollected*myPct/100).toFixed(0)} Kč/den</b>.</p>` : ''}
+        </div>` : ''}
         <p>Stav bytu: ${Math.round(u.condition)}%</p>
         <div class="condBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':'var(--accent)'}"></div></div>
         ${iDecide ? `<div class="row">
@@ -5887,10 +5940,30 @@ function renderSelected(id){
     });
   }
 
+  html += infoBox('Jak funguje pronájem a čekání na nájemníka?', `
+    <p><b>Byt buď někdo obývá, nebo ne.</b> Žádné poloviny: když máš nájemníka, platí ti <b>celý nájem každý den</b>. Když je byt prázdný, nevydělává <b>nic</b>.</p>
+    <p><b>Jak se nájemník objeví.</b> Každý den se hra podívá na tvoje volné byty a rozhodne, jestli se do nich někdo nastěhuje. Šance závisí na ceně:</p>
+    <p style="margin:2px 0;">• za <b>férovou cenu</b> se někdo nastěhuje prakticky hned<br>
+       • o čtvrtinu dráž → počkáš pár dní<br>
+       • dvojnásobek → čekání i týdny<br>
+       • trojnásobek → skoro nikdo nepřijde</p>
+    <div class="ex"><b>Férová cena 74 Kč</b><br>
+    74 Kč → nájemník hned, vyděláváš 74 Kč/den<br>
+    85 Kč → počkáš ~1 den, pak 85 Kč/den ← nejvýhodnější<br>
+    110 Kč → počkáš ~2 dny, pak 110 Kč/den<br>
+    150 Kč → čekáš ~3 dny, a mezitím nemáš nic</div>
+    <p><b>Kde je optimum?</b> Kousek nad férovou cenou. Krátké čekání se vyplatí, protože pak vyděláváš víc každý den. Ale od zhruba dvojnásobku už proděláváš — byt stojí prázdný déle, než kolik ti vyšší nájem přinese.</p>
+    <p><b>Férovou cenu</b> ti hra ukazuje u každého bytu. Odvíjí se od hodnoty domu a počtu bytů.</p>
+    <p><b>Nájemník má nároky.</b> Odstěhuje se, když stav bytu klesne pod jeho mez. Pak čekáš na dalšího — proto se vyplatí opravovat včas.</p>
+    <p><b>Co pomáhá:</b> 🌡️ zateplení a 🔧 rekonstrukce zvyšují šanci, že se někdo nastěhuje. ❄️ klimatizace zvedne férovou cenu, takže si můžeš říct víc.</p>
+  `);
+
   html += infoBox('Co znamenají čísla u bytů?', `
-    <p><b>Nájem (Kč/den).</b> Kolik ti byt vydělá, když je obsazený. Nastavuješ si ho sám.</p>
-    <p><b>Obsazenost (%).</b> Jak často je byt pronajatý. Není to buď/anebo — při 70 % ti chodí 70 % nájmu. Klesá, když si řekneš víc než férovou cenu.</p>
-    <div class="ex">Nájem 90 Kč při obsazenosti 60 % ti vydělá 54 Kč/den. Nájem 60 Kč při 100 % vydělá 60 Kč — méně chtít se vyplatí.</div>
+    <p><b>Nájem (Kč/den).</b> Cena, kterou si říkáš. Nastavuješ ji sám. Když je byt obsazený, dostáváš ji <b>celou každý den</b>.</p>
+    <p><b>Šance na nastěhování (%).</b> U prázdného bytu — jak velká je každý den naděje, že se někdo nastěhuje. Čím dražší nájem, tím nižší šance a delší čekání.</p>
+    <div class="ex">Byt za 74 Kč (férová cena): nájemník se nastěhuje prakticky hned, pak vyděláváš 74 Kč každý den.<br>
+    Byt za 148 Kč: čekáš v průměru 3 dny, ale pak vyděláváš 148 Kč denně.<br>
+    Byt za 222 Kč: čekáš i 8 dnů — a mezitím nemáš nic.</div>
     <p><b>Stav (%).</b> V jakém je byt stavu. Nový má 100 %, každý den obydlení klesá o kousek. Nájemníci mají svoje nároky — když stav klesne pod jejich mez, <b>odstěhují se</b>.</p>
     <p style="margin:2px 0;">• <b style="color:var(--accent)">70–100 %</b> — v pořádku, bydlí se dobře<br>
        • <b style="color:var(--gold)">40–70 %</b> — začíná to být znát, náročnější nájemníci odejdou<br>
@@ -5922,7 +5995,7 @@ function renderMine(){
   mine.forEach(p => {
     if(p.useType==='rental' && p.units){
       const collected = p.units.reduce((s,u)=>{
-        const occ = u.condition>0 ? (u.tenant?1:unitOccupancy(p,u)) : 0;
+        const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;
         return s + u.rentPrice*occ;
       },0);
       totalRentShare += collected * (myHousePct(p)/100);
@@ -5949,8 +6022,10 @@ function renderMine(){
       <p><b>Dva způsoby využití:</b></p>
       <p>• <b>Bydlení</b> — sám v něm bydlíš a klesnou ti životní náklady na polovinu. Nevydělává, ale šetří.<br>
          • <b>Pronájem</b> — dům se rozdělí na byty a nájemníci ti platí každý den. Vydělává, ale sám tam bydlet nemůžeš.</p>
-      <p><b>Kolik si říct za nájem.</b> Hra počítá <b>férovou cenu</b> podle hodnoty domu. Když si řekneš míň, byt je pořád plný. Když víc, nájemníci ubývají — a prázdný byt nevydělává nic.</p>
-      <div class="ex">Férový nájem 60 Kč: při 60 Kč máš plno. Při 90 Kč zaplatíš jen část času — a vyjde to hůř než levnější, ale plný byt.</div>
+      <p><b>Kolik si říct za nájem.</b> Hra počítá <b>férovou cenu</b> podle hodnoty domu. Za tu se byt pronajme prakticky hned. Čím víc si řekneš, tím déle čekáš na nájemníka — a <b>prázdný byt nevydělává nic</b>.</p>
+      <div class="ex">Férová cena 74 Kč: nájemník hned → 74 Kč/den.<br>
+      Za 93 Kč počkáš ~1 den → pak 93 Kč/den (nejvýhodnější).<br>
+      Za 222 Kč čekáš ~8 dnů → většinu času nemáš nic.</div>
       <p><b>Byty chátrají.</b> Každý den se stav obydleného bytu zhorší. Když spadne pod to, co nájemník snese, <b>odstěhuje se</b>. Proto se vyplatí opravovat dřív, než odejde.</p>
       <p><b>Daň z nemovitosti.</b> Z hodnoty tvých podílů platíš každý den malou daň — i z domů, které nic nevydělávají. Prázdný drahý dům tě tedy stojí peníze.</p>
       <p><b>Gentrifikace.</b> Když se v okolí kupuje a staví, hodnota tvých domů roste. Proto se vyplatí kupovat tam, kde je živo.</p>
@@ -6165,7 +6240,7 @@ async function sellHouseStake(id){
   if(jePronajem && !prodavamVse){
     const denni = asArray(p.units).reduce((s,un) => {
       if(!un || un.ownerOccupied) return s;
-      const occ = un.condition > 0 ? ((un.tenant||un.npc) ? 1 : unitOccupancy(p, un)) : 0;
+      const occ = (un.condition > 0 && (un.tenant||un.npc)) ? 1 : 0;
       return s + (un.rentPrice||0) * occ;
     }, 0);
     if(denni > 0.5) varovani += `\nPřijdeš o část příjmu — teď ti dům nese ${Math.round(denni * myPct/100)} Kč/den.\n`;
@@ -6353,14 +6428,16 @@ function financeBreakdown(name){
   Object.values(world.parcels).forEach(p => {
     if(p.useType==='rental' && p.units){
       const collected = p.units.reduce((s,un)=>{
-        const occ = un.condition>0 ? (un.tenant?1:unitOccupancy(p,un)) : 0;
+        const occ = (un.condition>0 && (un.tenant||un.npc)) ? 1 : 0;
         return s + un.rentPrice*occ;
       },0);
       rentIncome += collected * ((p.owners?.[name]||0)/100);
       solarIncome += solarBonusForHouse(p) * ((p.owners?.[name]||0)/100);
     }
   });
-  if(rentIncome>0) income.push({label:'🏘️ Nájem z bytů', amount: rentIncome});
+  // Popisek říká "reálně vybráno", ať je jasné, že to není součet nastavených nájmů —
+  // prázdné byty nevydělávají nic, takže součet nastavených nájmů by byl zavádějící.
+  if(rentIncome>0) income.push({label:'🏘️ Nájem z bytů (reálně vybráno)', amount: rentIncome});
   if(solarIncome>0) income.push({label:'☀️ Solární panely', amount: solarIncome});
   // podniky
   let bizIncome = 0;
@@ -6409,7 +6486,7 @@ function financeBreakdown(name){
     // dům nesoucí příjem (pronájem) = aktivum; nevyužitý/bydlení jen s daní = spíš pasivum
     let dayFlow = 0;
     if(p.useType==='rental' && p.units){
-      const collected = p.units.reduce((s,un)=>{const occ=un.condition>0?(un.tenant?1:unitOccupancy(p,un)):0; return s+un.rentPrice*occ;},0);
+      const collected = p.units.reduce((s,un)=>{const occ=(un.condition>0&&(un.tenant||un.npc))?1:0; return s+un.rentPrice*occ;},0);
       dayFlow += collected*(pct/100);
     }
     dayFlow -= value*PROPERTY_TAX_RATE/DAYS_PER_YEAR; // daň
@@ -8961,7 +9038,7 @@ async function setUseType(id, type){
     // takže dřív se u nich vůbec nevarovalo a hráč přišel o příjem bez upozornění.
     const prijemZaDen = byty.reduce((s, u) => {
       if(!u || u.ownerOccupied) return s;
-      const occ = u.condition > 0 ? ((u.tenant || u.npc) ? 1 : unitOccupancy(p, u)) : 0;
+      const occ = (u.condition > 0 && (u.tenant || u.npc)) ? 1 : 0;
       return s + (u.rentPrice || 0) * occ;
     }, 0);
 
@@ -9051,7 +9128,20 @@ async function setUnitRentPrice(id, idx){
   if(!iAmDecider(p)){ showAlert('Nájemné nastavuje jen největší podílník.'); return; }
   const unit = p.units[idx];
   const fair = fairRentForHouse(p);
-  const rent = parseInt(await showPrompt(`Nové nájemné za byt (${idx+1}. patro), Kč/den. Odhad trhu ${rentEstimateRange(p)} (vyšší = víc peněz, ale riziko prázdna):`, unit.rentPrice), 10);
+  // Ukázat konkrétní tabulku, co která cena udělá — hráč jinak netuší, že dražší nájem
+  // může znamenat MENŠÍ výdělek, protože byt většinu času stojí prázdný.
+  const ukazky = [fair, Math.round(fair*1.15), Math.round(fair*1.4), Math.round(fair*1.8)]
+    .filter((x,i,a) => a.indexOf(x) === i)
+    .map(cena => {
+      const o = unitOccupancy(p, {...unit, rentPrice: cena});
+      const dni = o > 0 ? Math.max(1, Math.round(1/o)) : null;
+      return `  ${cena} Kč → ${dni ? 'nájemník do ~'+dni+' '+(dni===1?'dne':(dni<5?'dnů':'dnů')) : 'nikdo se nenastěhuje'}`;
+    }).join('\n');
+  const rent = parseInt(await showPrompt(
+    `Nájemné za ${idx+1}. byt (Kč/den)\n\n` +
+    `Férová cena je ${fair} Kč — za tu se byt pronajme hned. Čím dráž, tím déle čekáš, ` +
+    `než se někdo nastěhuje. Prázdný byt nevydělává nic.\n\n` +
+    `Jak dlouho budeš čekat:\n${ukazky}\n\nKolik chceš?`, unit.rentPrice), 10);
   if(isNaN(rent) || rent <= 0) return;
 
   // Varovat, když nová cena byt vylidní — spočítáme, kolik reálně vybere teď a kolik potom.
@@ -9059,12 +9149,14 @@ async function setUnitRentPrice(id, idx){
   const occPotom = unit.condition > 0 ? unitOccupancy(p, {...unit, rentPrice: rent}) : 0;
   const vyberTed = Math.round((unit.rentPrice || 0) * occTed);
   const vyberPotom = Math.round(rent * occPotom);
-  if(vyberPotom < vyberTed && !unit.tenant && !unit.npc){
+  if(occPotom < occTed * 0.6 && !unit.tenant && !unit.npc){
+    const dniTed = occTed > 0 ? Math.max(1, Math.round(1/occTed)) : null;
+    const dniPotom = occPotom > 0 ? Math.max(1, Math.round(1/occPotom)) : null;
     const ok = await showConfirm(
-      `⚠️ Za ${rent} Kč vyděláš MÍŇ, ne víc.\n\n` +
-      `Teď: ${unit.rentPrice} Kč × ${Math.round(occTed*100)} % obsazenost = ${vyberTed} Kč/den\n` +
-      `Potom: ${rent} Kč × ${Math.round(occPotom*100)} % obsazenost = ${vyberPotom} Kč/den\n\n` +
-      `Čím dražší nájem, tím míň lidí ho chce. Férová cena je kolem ${fair} Kč.\n\nOpravdu nastavit ${rent} Kč?`);
+      `⚠️ Za ${rent} Kč budeš na nájemníka čekat mnohem déle.\n\n` +
+      `Teď (${unit.rentPrice} Kč): ${dniTed ? 'nájemník do ~'+dniTed+' dnů' : 'nikdo'}\n` +
+      `Potom (${rent} Kč): ${dniPotom ? 'nájemník až za ~'+dniPotom+' dnů' : 'nenastěhuje se nikdo'}\n\n` +
+      `Prázdný byt nevydělává nic. Férová cena je kolem ${fair} Kč.\n\nOpravdu nastavit ${rent} Kč?`);
     if(!ok) return;
   }
   // nájemníkovi se cena mění taky — ať o tom hráč ví
