@@ -686,6 +686,10 @@ const AC_RENT_BONUS = 1.20;         // snese o 20 % vyšší férový nájem
 const RENOVATION_DECAY_MULT = 0.25; // chátrání na čtvrtinu (výrazná úspora za opravy)
 const RENOVATION_OCC_BONUS = 0.10;  // opravený dům je i o něco atraktivnější
 const SOLAR_RENT_RATIO = 0.30;      // solár nese 30 % férového nájmu/byt/den navíc
+// Vylepšení dávají smysl i v domě, ve kterém sám bydlíš — nejen v pronájmu.
+const INSULATION_LIVING_SAVE = 0.15;  // zateplení: −15 % životních nákladů (nižší účty)
+const AC_LIVING_SAVE = 0.05;          // klimatizace: −5 % (komfort, ale i spotřeba)
+const SOLAR_LIVING_SAVE = 0.20;       // solár: −20 % (vlastní elektřina)
 
 function hasUpgrade(p, key){ return !!(p.upgrades && p.upgrades[key]); }
 
@@ -833,8 +837,10 @@ function npcNeedsText(npc){
 function houseUpgradeCost(p, key){ return Math.round(effectiveHousePrice(p) * HOUSE_UPGRADES[key].costRatio); }
 // Solární bonus za celý dům/den (nezávisí na obsazenosti)
 function solarBonusForHouse(p){
-  if(!hasUpgrade(p, 'solar') || !p.units) return 0;
-  return fairRentForHouse(p) * SOLAR_RENT_RATIO * p.units.length;
+  if(!hasUpgrade(p, 'solar')) return 0;
+  // I dům bez bytů (vlastní bydlení) vyrábí elektřinu — počítáme podle počtu pater.
+  const jednotek = (p.units && p.units.length) || p.levels || 1;
+  return fairRentForHouse(p) * SOLAR_RENT_RATIO * jednotek;
 }
 
 // Férové (tržní) nájemné bytu ~0,26 % hodnoty domu. Vyladěno tak, aby pronájem dával rozumný výnos
@@ -3737,6 +3743,21 @@ function housingStatus(name){
   if(rents) return 'tenant';
   return 'homeless';
 }
+// O kolik procent sníží vylepšení životní náklady v domě, kde hráč bydlí.
+// Zateplení a solár sníží účty za energie — stejně jako ve skutečnosti.
+function livingCostDiscountFromUpgrades(name){
+  // dům určený k bydlení, nebo byt v pronájmu, který si hráč vyhradil pro sebe
+  const domov = Object.values(world.parcels || {}).find(p => p &&
+    ((p.useType === 'residence' && (p.owners?.[name] || 0) > 0) ||
+     ((p.owners?.[name] || 0) > 50 && asArray(p.units).some(u => u && u.ownerOccupied))));
+  if(!domov) return 0;
+  let sleva = 0;
+  if(hasUpgrade(domov, 'insulation')) sleva += INSULATION_LIVING_SAVE;
+  if(hasUpgrade(domov, 'ac')) sleva += AC_LIVING_SAVE;
+  if(hasUpgrade(domov, 'solar')) sleva += SOLAR_LIVING_SAVE;
+  return Math.min(0.4, sleva);   // strop 40 %, ať to nespadne k nule
+}
+
 // Kolik hráč platí za bydlení celkem/den (životní složka + případný nájem)
 function dailyHousingCost(name){
   const status = housingStatus(name);
@@ -4667,6 +4688,7 @@ function tick(){
     cost *= (1 + (Math.random() - 0.5) * 2 * LIVING_COST_VARIATION);
     cost *= inflationMult(); // ceny rostou s inflací (stejně jako mzdy níže)
     cost *= eventMult('livingMult');     // dnešní událost ve městě (např. zdražení energií)
+    cost *= (1 - livingCostDiscountFromUpgrades(u.name));   // zateplení/solár v domě, kde bydlím
     if(isNewbieProtected(u)) cost = 0;   // nováček má prvních pár dní klid
     u.balance -= cost * dayFraction;
 
@@ -4720,13 +4742,14 @@ function tick(){
         if(hasUpgrade(p, 'renovation')) decayRate *= RENOVATION_DECAY_MULT;
         u.condition = Math.max(0, u.condition - decayRate * dayFraction);
       });
-      // solární panely: příjem navíc za celý dům, nezávisle na obsazenosti
-      const solar = solarBonusForHouse(p);
-      if(solar > 0){
-        Object.entries(p.owners||{}).forEach(([owner, pct]) => {
-          if(world.users[owner]) world.users[owner].balance += solar * (pct/100) * dayFraction;
-        });
-      }
+    }
+    // Solární panely vydělávají u KAŽDÉHO domu — i toho, ve kterém majitel bydlí.
+    // Dřív to bylo uvnitř bloku pro pronájem, takže u vlastního bydlení se nepřipsalo nic.
+    const solar = solarBonusForHouse(p);
+    if(solar > 0){
+      Object.entries(p.owners||{}).forEach(([owner, pct]) => {
+        if(world.users[owner]) world.users[owner].balance += solar * (pct/100) * dayFraction;
+      });
     }
   });
 
@@ -5818,6 +5841,41 @@ function renderSelected(id){
   }
   html += `</div>`; // konec hlavní karty
 
+  // --- Vylepšení domu (platí pro pronájem I vlastní bydlení) ---
+  const upKeys = Object.keys(HOUSE_UPGRADES);
+  const ownedUps = upKeys.filter(k => hasUpgrade(p, k));
+  if(iDecide || ownedUps.length){
+    // U domu, ve kterém sám bydlím, mají vylepšení jiný smysl než u pronájmu —
+    // šetří na účtech místo toho, aby lákala nájemníky.
+    const bydlimTu = p.useType === 'residence' || asArray(p.units).some(u => u && u.ownerOccupied);
+    html += `<div class="card"><h3>🛠️ Vylepšení domu</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Jednorázová investice, která dům trvale zlepší.${bydlimTu ? ' V domě, kde bydlíš, ti sníží účty za energie.' : ' Vrátí se ti kolem 2-3 měsíců.'}</p>`;
+    upKeys.forEach(k => {
+      const up = HOUSE_UPGRADES[k];
+      const has = hasUpgrade(p, k);
+      const cost = houseUpgradeCost(p, k);
+      // co konkrétně to udělá v tomhle domě
+      let efekt = up.desc;
+      if(bydlimTu){
+        if(k === 'insulation') efekt = `Nižší účty za energie — ušetříš <b>${Math.round(INSULATION_LIVING_SAVE*100)} %</b> životních nákladů.`;
+        else if(k === 'ac') efekt = `Komfort navíc — ušetříš <b>${Math.round(AC_LIVING_SAVE*100)} %</b> životních nákladů.${p.useType === 'rental' ? ' U pronajímaných bytů zvedne snesitelný nájem.' : ''}`;
+        else if(k === 'solar') efekt = `Vlastní elektřina — ušetříš <b>${Math.round(SOLAR_LIVING_SAVE*100)} %</b> životních nákladů a dům ti navíc <b>vydělává každý den</b>.`;
+        else if(k === 'renovation') efekt = p.useType === 'rental' ? up.desc : 'Kvalitní materiály — dům chátrá pomaleji a má vyšší hodnotu.';
+      }
+      html += `<div style="border:1px solid ${has?'var(--accent)':'var(--border)'};border-radius:8px;padding:8px;margin-top:6px;">
+        <p style="margin:0;font-weight:600;color:${has?'var(--accent)':'var(--text)'}">${up.icon} ${up.name} ${has?'✓ máš':''}</p>
+        <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${efekt}</p>
+        ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
+      </div>`;
+    });
+    if(bydlimTu){
+      const sleva = livingCostDiscountFromUpgrades(currentUser ? currentUser.name : '');
+      if(sleva > 0) html += `<p style="font-size:0.88em;color:var(--accent);margin-top:8px;">✓ Díky vylepšením platíš o <b>${Math.round(sleva*100)} %</b> nižší životní náklady.</p>`;
+    }
+    html += `</div>`;
+  }
+
+
   // --- Byty (pronájem) ---
   if(p.useType === 'rental' && p.units){
     const fair = fairRentForHouse(p);
@@ -5832,25 +5890,6 @@ function renderSelected(id){
       <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
       ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
     </div>`;
-
-    // --- Vylepšení domu ---
-    const upKeys = Object.keys(HOUSE_UPGRADES);
-    const ownedUps = upKeys.filter(k => hasUpgrade(p, k));
-    if(iDecide || ownedUps.length){
-      html += `<div class="card"><h3>🛠️ Vylepšení domu</h3>
-        <p style="font-size:0.9em;color:var(--muted)">Jednorázová investice, která dům trvale zlepší. Vrátí se ti kolem 2-3 měsíců.</p>`;
-      upKeys.forEach(k => {
-        const up = HOUSE_UPGRADES[k];
-        const has = hasUpgrade(p, k);
-        const cost = houseUpgradeCost(p, k);
-        html += `<div style="border:1px solid ${has?'var(--accent)':'var(--border)'};border-radius:8px;padding:8px;margin-top:6px;">
-          <p style="margin:0;font-weight:600;color:${has?'var(--accent)':'var(--text)'}">${up.icon} ${up.name} ${has?'✓ máš':''}</p>
-          <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${up.desc}</p>
-          ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
-        </div>`;
-      });
-      html += `</div>`;
-    }
 
     // --- Renovační projekty (větší investice s návratností) ---
     if(iDecide || p.project){
@@ -5956,6 +5995,7 @@ function renderSelected(id){
     <p><b>Férovou cenu</b> ti hra ukazuje u každého bytu. Odvíjí se od hodnoty domu a počtu bytů.</p>
     <p><b>Nájemník má nároky.</b> Odstěhuje se, když stav bytu klesne pod jeho mez. Pak čekáš na dalšího — proto se vyplatí opravovat včas.</p>
     <p><b>Co pomáhá:</b> 🌡️ zateplení a 🔧 rekonstrukce zvyšují šanci, že se někdo nastěhuje. ❄️ klimatizace zvedne férovou cenu, takže si můžeš říct víc.</p>
+    <p><b>A v domě, kde bydlíš sám?</b> Vylepšení dávají smysl i tam — jen jinak. Zateplení ušetří 15 % životních nákladů, solár 20 % (a ještě ti vydělává každý den), klimatizace 5 %. Dohromady až 40 %.</p>
   `);
 
   html += infoBox('Co znamenají čísla u bytů?', `
@@ -6458,6 +6498,7 @@ function financeBreakdown(name){
   let living = status==='owner' ? LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT) : (status==='tenant'?TENANT_LIVING_COST:LIVING_COST);
   living *= inflationMult();
   living *= eventMult('livingMult');            // dnešní událost ve městě
+  living *= (1 - livingCostDiscountFromUpgrades(name));   // vylepšení v mém domě
   if(isNewbieProtected(u)) living = 0;          // nováček v ochranné lhůtě zatím neplatí
   if(living > 0) expense.push({label:'🧾 Život a bydlení', amount: living});
   if(status==='tenant'){
