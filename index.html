@@ -9508,6 +9508,9 @@ function sanitizeName(raw){
   let n = (raw || '').trim();
   // odstranit HTML-nebezpečné znaky a řídicí znaky
   n = n.replace(/[<>&"'`/\\{}]/g, '').replace(/[\u0000-\u001f]/g, '');
+  // Firebase zakazuje v klíčích znaky . $ # [ ] — jméno hráče je přímo klíč v databázi,
+  // takže s takovým jménem by se hráč vůbec neuložil do cloudu.
+  n = n.split('.').join('').split('$').join('').split('#').join('').split('[').join('').split(']').join('');
   n = n.slice(0, 20).trim();
   return n;
 }
