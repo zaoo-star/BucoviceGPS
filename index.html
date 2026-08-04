@@ -3641,12 +3641,15 @@ function houseMarketPricePerPercent(p){
 }
 
 // Rozhodující podílník = ten s největším podílem (při shodě ten první podle jména)
+// Kdo o domě rozhoduje. Vrací jméno jen při NADPOLOVIČNÍM podílu — všechny akce
+// (přestavba, nájem, vylepšení) vyžadují víc než 50 %, takže dřív hra u největšího
+// menšinového vlastníka tvrdila "rozhoduješ", ale nic mu nešlo.
 function houseDecider(p){
   let best = null, bestPct = 0;
   Object.entries(p.owners||{}).forEach(([name, pct]) => {
     if(pct > bestPct){ bestPct = pct; best = name; }
   });
-  return best;
+  return bestPct > 50 ? best : null;   // pod 50 % nerozhoduje nikdo
 }
 function iAmDecider(p){ return currentUser && houseDecider(p) === currentUser.name; }
 // Zásadní změny (změna využití domu) vyžadují nadpoloviční podíl
@@ -4193,6 +4196,7 @@ function migrateWorld(){
       });
       if(!world.npcTenants || typeof world.npcTenants !== 'object') world.npcTenants = { list:[], refreshedTs:0 };
       world.npcTenants.list = asArray(world.npcTenants.list);
+      if(!world.heat || typeof world.heat !== 'object' || Array.isArray(world.heat)) world.heat = {};
       if(!world.encounters || typeof world.encounters !== 'object') world.encounters = { day:0, list:[] };
       world.encounters.list = asArray(world.encounters.list);
       if(!world.pickups || typeof world.pickups !== 'object') world.pickups = { day:0, list:[] };
@@ -4880,12 +4884,61 @@ function tryFillVacantUnits(){
   });
 }
 
+// ===== DOMY DLOUHO NEAKTIVNÍCH HRÁČŮ =====
+// Kdo přestane hrát, drží domy, ke kterým se ostatní nedostanou. Po delší době je proto
+// hra sama nabídne na tržišti — ale peníze z prodeje jdou původnímu majiteli, takže o nic
+// nepřijde. Když se vrátí dřív, než se prodají, nabídky se automaticky zruší.
+const DORMANT_DAYS = 60;              // po kolika dnech bez přihlášení se domy nabídnou
+const DORMANT_WARN_DAYS = 50;         // odkdy hráče varovat v poště
+const DORMANT_PRICE_RATIO = 0.85;     // sleva proti tržní ceně, ať se to prodá
+
+function daysSinceActive(u){
+  if(!u || !u.lastActive) return 0;
+  return Math.max(0, Math.floor((Date.now() - u.lastActive) / GAME_DAY_MS));
+}
+
+// Nabídne na tržiště domy hráčů, kteří dlouho nehráli. Volá se při přechodu dne.
+function listDormantPlayersHouses(){
+  if(!world.listings || typeof world.listings !== 'object') world.listings = {};
+  Object.values(world.users || {}).forEach(u => {
+    if(!u || !u.name) return;
+    const dni = daysSinceActive(u);
+    if(dni < DORMANT_DAYS) return;
+
+    Object.values(world.parcels || {}).forEach(p => {
+      const pct = p.owners?.[u.name] || 0;
+      if(pct <= 0.001) return;
+      // už je tenhle podíl nabízený?
+      const uzNabizeno = Object.values(world.listings).some(l => l && l.houseId === p.id && l.seller === u.name);
+      if(uzNabizeno) return;
+      const cena = Math.round(houseMarketPricePerPercent(p) * pct * DORMANT_PRICE_RATIO);
+      if(cena <= 0) return;
+      const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'');
+      world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct,
+        type: 'fixed', price: cena, dormant: true };
+      addNews('market', `🏚️ Dům ${p.id.replace('h_','#')} je znovu na prodej — ${u.name} dlouho nehraje (${pct.toFixed(0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`);
+    });
+  });
+}
+
+// Když se hráč vrátí, jeho automatické nabídky zmizí — domy si nechá.
+function cancelDormantListingsFor(name){
+  if(!world.listings || !name) return 0;
+  let zruseno = 0;
+  Object.keys(world.listings).forEach(id => {
+    const l = world.listings[id];
+    if(l && l.dormant && l.seller === name){ delete world.listings[id]; zruseno++; }
+  });
+  return zruseno;
+}
+
 function onNewDay(catchUp){
   if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
   tryFillVacantUnits();          // volné byty si najdou nájemníky podle ceny
   const cev = todaysCityEvent();
   if(cev) addNews('event', `${cev.emoji} ${cev.name} — ${cev.desc}`);
   finishDueProjects();                                    // dokončit renovace, kterým vypršel čas
+  listDormantPlayersHouses();                             // uvolnit domy hráčů, kteří dlouho nehrají
   // snímek jmění všem — díky tomu vidí admin vývoj u každého, ne jen u sebe
   Object.values(world.users || {}).forEach(x => { if(x) safeCall(() => recordWorthSnapshot(x)); });
   tickMarketCycle(1);
@@ -5043,6 +5096,7 @@ function onPosition(pos){
   // uložit pozici ke hráči (pro zobrazení ostatních; s Firebase se to synchronizuje mezi zařízeními)
   if(currentUser && world.users[currentUser.name]){
     world.users[currentUser.name].lastPos = {lat:newPos.lat, lng:newPos.lng, at: Date.now()};
+    recordHeat(newPos);   // agregovaná statistika pohybu (bez identity)
   }
   updatePlayerMarker(newPos, accuracy);
   if(!hasCenteredOnPlayer){
@@ -5091,6 +5145,80 @@ function updatePlayerMarker(pos, accuracy){
   }
   updateReachHighlight();
   checkPickups(); // sebrat balík, pokud u něj stojíš
+}
+
+// ===== TEPLOTNÍ MAPA POHYBU (jen pro správce) =====
+// Sbírá se AGREGOVANĚ do mřížky — ukládá se jen "v téhle buňce byl někdo Nkrát",
+// žádná jména ani časy. Nedá se z toho vyčíst, kudy chodí konkrétní hráč,
+// jen kde je ve městě živo. Slouží k rozmístění balíků a míst zájmu.
+const HEAT_CELL_M = 50;        // velikost buňky mřížky v metrech
+const HEAT_MAX_CELLS = 3000;   // strop, ať data nerostou donekonečna
+const HEAT_MIN_INTERVAL = 30000; // zapisujeme nejvýš jednou za 30 s
+
+let lastHeatWrite = 0;
+function heatKey(lat, lng){
+  // zaokrouhlení na mřížku ~50 m
+  const kLat = HEAT_CELL_M / 111000;
+  const kLng = HEAT_CELL_M / (111000 * Math.cos(lat * Math.PI / 180));
+  return Math.round(lat / kLat) + '_' + Math.round(lng / kLng);
+}
+function heatKeyToLatLng(key){
+  const [a, b] = String(key).split('_').map(Number);
+  const lat = a * (HEAT_CELL_M / 111000);
+  const lng = b * (HEAT_CELL_M / (111000 * Math.cos(lat * Math.PI / 180)));
+  return { lat, lng };
+}
+function recordHeat(pos){
+  if(!pos || !world) return;
+  const ted = Date.now();
+  if(ted - lastHeatWrite < HEAT_MIN_INTERVAL) return;
+  lastHeatWrite = ted;
+  if(!world.heat || typeof world.heat !== 'object' || Array.isArray(world.heat)) world.heat = {};
+  const key = heatKey(pos.lat, pos.lng);
+  world.heat[key] = (world.heat[key] || 0) + 1;
+  // když je buněk moc, zahodíme ty nejméně navštívené
+  const klice = Object.keys(world.heat);
+  if(klice.length > HEAT_MAX_CELLS){
+    klice.sort((a, b) => world.heat[a] - world.heat[b]);
+    klice.slice(0, klice.length - HEAT_MAX_CELLS).forEach(k => delete world.heat[k]);
+  }
+}
+
+// Vykreslení teplotní mapy na mapu — barevné čtverce podle návštěvnosti.
+let heatLayer = null;
+let heatVisible = false;
+function toggleHeatmap(){
+  if(!isAdmin || !map) return;
+  heatVisible = !heatVisible;
+  renderHeatmap();
+  try { renderAdmin(); } catch(e){}
+  if(heatVisible){
+    const bunky = Object.keys(world.heat || {}).length;
+    if(!bunky) showAlert('Zatím žádná data. Teplotní mapa se plní, jak hráči chodí po městě — vrať se za pár dní.');
+  }
+}
+function renderHeatmap(){
+  if(heatLayer){ map.removeLayer(heatLayer); heatLayer = null; }
+  if(!heatVisible || !world.heat) return;
+  const data = world.heat;
+  const hodnoty = Object.values(data);
+  if(!hodnoty.length) return;
+  const max = Math.max(...hodnoty);
+  heatLayer = L.layerGroup();
+  const kLat = HEAT_CELL_M / 111000;
+  Object.entries(data).forEach(([key, pocet]) => {
+    const p = heatKeyToLatLng(key);
+    if(!isFinite(p.lat) || !isFinite(p.lng)) return;
+    const podil = pocet / max;                       // 0–1
+    // barva od modré (málo) přes žlutou po červenou (hodně)
+    const barva = podil > 0.66 ? '#ef4444' : (podil > 0.33 ? '#fbbf24' : '#38bdf8');
+    const kLng = HEAT_CELL_M / (111000 * Math.cos(p.lat * Math.PI / 180));
+    L.rectangle([[p.lat - kLat/2, p.lng - kLng/2], [p.lat + kLat/2, p.lng + kLng/2]], {
+      color: barva, weight: 1, fillColor: barva,
+      fillOpacity: 0.15 + podil * 0.45, interactive: true
+    }).bindTooltip(pocet + '× tudy někdo prošel').addTo(heatLayer);
+  });
+  heatLayer.addTo(map);
 }
 
 // Markery ostatních hráčů. Čte pozice z world.users[*].lastPos.
@@ -5774,17 +5902,25 @@ function renderSelected(id){
   const iMajority = iHaveMajority(p);
   html += `<p style="font-size:0.92em;color:var(--muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">`;
   if(myPct > 0){
-    if(iDecide && iMajority){
+    if(iMajority){
       html += `Vlastníš ${myPct.toFixed(1)} % (většina) — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájmu i opravách. Výnos se dělí všem podle podílů.`;
-    } else if(iDecide){
-      html += `Vlastníš ${myPct.toFixed(1)} % a máš největší podíl, takže jsi <b style="color:var(--accent)">správce</b> — nastavuješ nájem a objednáváš opravy. Ale <b>změnit využití domu</b> (bydlení ↔ pronájem) může jen vlastník s víc než 50 %. Dokup podíl nad polovinu, ať můžeš přestavovat.`;
+    } else if(decider){
+      const chybi = Math.max(0, 50.1 - myPct);
+      html += `Vlastníš ${myPct.toFixed(1)} %, ale rozhoduje <b>${decider}</b> (má přes polovinu). Bereš svůj podíl z nájmu, ale o domě nerozhoduješ.`;
+      if(free > chybi) html += ` Kdybys dokoupil ${chybi.toFixed(1)} %, převzal bys rozhodování ty.`;
     } else {
-      html += `Vlastníš ${myPct.toFixed(1)} %, ale spravuje ho <b>${decider}</b> (má víc). Bereš svůj podíl z nájmu, správu ani využití neurčuješ. Získej větší podíl než ${decider}, ať se staneš správcem.`;
+      // nikdo nemá většinu — dům je zablokovaný, dokud ji někdo nezíská
+      const chybi = Math.max(0, 50.1 - myPct);
+      html += `Vlastníš ${myPct.toFixed(1)} %, ale <b style="color:var(--orange)">nikdo tu nemá většinu</b>, takže o domě zatím nikdo nerozhoduje — nedá se přestavět ani nastavit nájem.`;
+      if(free >= chybi) html += ` Dokup ${chybi.toFixed(1)} % z volných ${free.toFixed(1)} % a rozhodování převezmeš ty.`;
+      else html += ` Musel bys odkoupit podíl od někoho dalšího.`;
     }
   } else if(owned){
-    html += `Dům spravuje <b>${decider}</b>. ${free>0 ? `Můžeš odkoupit část z volných ${free.toFixed(1)} % a stát se spoluvlastníkem.` : 'Všechny podíly jsou rozebrané.'}`;
+    html += decider
+      ? `Dům spravuje <b>${decider}</b>. ${free>0 ? `Můžeš odkoupit část z volných ${free.toFixed(1)} % a stát se spoluvlastníkem.` : 'Všechny podíly jsou rozebrané.'}`
+      : `Dům má víc menšinových vlastníků a <b style="color:var(--orange)">nikdo nemá většinu</b> — nikdo o něm nerozhoduje. ${free>0 ? `Kdo dokoupí přes 50 %, převezme rozhodování. Volných je ${free.toFixed(1)} %.` : 'Všechny podíly jsou rozebrané.'}`;
   } else {
-    html += `Volný dům. Kup si podíl — kdo bude mít největší podíl, spravuje ho; kdo přesáhne 50 %, může měnit i využití (přestavět na byty).`;
+    html += `Volný dům. Kup si podíl — kdo získá <b>víc než 50 %</b>, rozhoduje o využití, nájmu i opravách.`;
   }
   html += `</p>`;
 
@@ -6052,8 +6188,22 @@ function renderMine(){
       const iDecide = iAmDecider(p);
       return `<div class="card">
       <h3>Dům ${p.id.replace('h_','#')} ${badgeFor(p)}</h3>
-      <p>Tvůj podíl: <b>${myHousePct(p).toFixed(1)} %</b>${iDecide ? ' 👑 <span style="color:var(--accent)">rozhoduješ</span>' : ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${houseDecider(p)}')">${houseDecider(p)}</span>`}</p>
-      ${p.useType==='rental' && p.units ? `<p>${p.units.length} ${p.units.length===1?'byt':'bytů'} · Nájem celkem: ${p.units.filter(u=>u.condition>0).reduce((s,u)=>s+u.rentPrice,0)} Kč/den</p>` : ''}
+      <p>Tvůj podíl: <b>${myHousePct(p).toFixed(1)} %</b>${
+        iDecide ? ' 👑 <span style="color:var(--accent)">rozhoduješ</span>'
+        : (houseDecider(p)
+            ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${houseDecider(p)}')">${houseDecider(p)}</span>`
+            : ' · <span style="color:var(--orange)">nikdo nemá většinu — dokup podíl nad 50 %, ať můžeš rozhodovat</span>')}</p>
+      ${p.useType==='rental' && p.units ? (() => {
+        const byty = asArray(p.units);
+        const obsazene = byty.filter(u => u && (u.tenant || u.npc));
+        const vydelava = obsazene.reduce((s,u) => s + (u.rentPrice||0), 0);
+        const prazdne = byty.filter(u => u && !u.tenant && !u.npc && !u.ownerOccupied && (u.condition||0) > 0).length;
+        const rozbite = byty.filter(u => u && (u.condition||0) <= 40).length;
+        let radky = `<p>${byty.length} ${byty.length===1?'byt':'bytů'} · obsazeno ${obsazene.length} · vyděláváš <b style="color:var(--gold)">${vydelava} Kč/den</b></p>`;
+        if(prazdne > 0) radky += `<p style="font-size:0.88em;color:var(--orange);margin:2px 0;">⚠️ ${prazdne} ${prazdne===1?'byt stojí prázdný':'bytů stojí prázdných'} — zvaž nižší nájem</p>`;
+        if(rozbite > 0) radky += `<p style="font-size:0.88em;color:var(--danger);margin:2px 0;">🔧 ${rozbite} ${rozbite===1?'byt potřebuje opravit':'bytů potřebuje opravit'}</p>`;
+        return radky;
+      })() : ''}
       <div class="row"><button class="secondary" onclick="flyToParcel('${p.id}')">Zobrazit na mapě</button></div>
     </div>`;
     }).join('')
@@ -6661,6 +6811,7 @@ function renderMarket(){
     <p><b>Tržní cena.</b> Za kolik se ten podíl kupuje od města. Když někdo prodává výrazně pod ní, je to dobrá koupě — ale zkontroluj proč (rozbité byty, žádní nájemníci).</p>
     <p><b>Končí den X.</b> U aukcí — kdy se vyhodnotí. Po půlnoci toho dne vyhrává nejvyšší nabídka.</p>
     <p><b>Prodává.</b> Kdo nabídku vypsal. Klepnutím na jméno si zobrazíš jeho profil.</p>
+    <p><b>🏚️ Oranžové nabídky</b> vypsalo město za hráče, který dlouho nehrál — aby domy nezůstaly zablokované. Bývají levnější, takže se vyplatí. Peníze z prodeje dostane původní majitel, takže o nic nepřijde. Kdyby se vrátil dřív, než nabídku někdo koupí, sama zmizí.</p>
   `);
 
   html += infoBox('Jak funguje tržiště?', `
@@ -6702,8 +6853,9 @@ function renderMarket(){
       </div>`;
     } else {
       return `<div class="card">
-        <h3>🏷️ ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
+        <h3>${l.dormant?"🏚️":"🏷️"} ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
         <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.seller}')">${l.seller}</span>`}</p>
+        ${l.dormant ? `<p style="font-size:0.88em;color:var(--orange);margin:2px 0;">Majitel dlouho nehraje — město dům nabídlo levněji. Peníze dostane on.</p>` : ''}
         <p>Cena: <b style="color:var(--gold)">${l.price} Kč</b> <span style="font-size:0.92em;color:var(--muted)">(${Math.round(l.price/l.pct)} Kč/1 %)</span></p>
         ${!mine ? `<div class="row"><button onclick="buyListing('${l.id}')">Koupit</button><button class="secondary" onclick="flyToParcel('${l.houseId}')">Na mapě</button></div>`
                 : `<div class="row"><button class="danger" onclick="cancelListing('${l.id}')">Stáhnout nabídku</button></div>`}
@@ -6718,6 +6870,7 @@ function renderMarket(){
     <p><b>Tržní cena.</b> Za kolik se ten podíl kupuje od města. Když někdo prodává výrazně pod ní, je to dobrá koupě — ale zkontroluj proč (rozbité byty, žádní nájemníci).</p>
     <p><b>Končí den X.</b> U aukcí — kdy se vyhodnotí. Po půlnoci toho dne vyhrává nejvyšší nabídka.</p>
     <p><b>Prodává.</b> Kdo nabídku vypsal. Klepnutím na jméno si zobrazíš jeho profil.</p>
+    <p><b>🏚️ Oranžové nabídky</b> vypsalo město za hráče, který dlouho nehrál — aby domy nezůstaly zablokované. Bývají levnější, takže se vyplatí. Peníze z prodeje dostane původní majitel, takže o nic nepřijde. Kdyby se vrátil dřív, než nabídku někdo koupí, sama zmizí.</p>
   `);
   html += infoBox('Jak funguje tržiště?', `
     <p><b>K čemu je.</b> Tady prodáváš a kupuješ podíly v domech <b>od ostatních hráčů</b> — na rozdíl od mapy, kde kupuješ od města za pevnou cenu.</p>
@@ -7291,6 +7444,37 @@ function renderDaily(){
   setHtml(el, html);
 }
 
+// Souhrn teplotní mapy — kde je živo, kde ne, a jestli tam sedí balíky a místa zájmu.
+function heatSummary(){
+  const data = (world.heat && typeof world.heat === 'object') ? world.heat : {};
+  const klice = Object.keys(data);
+  if(!klice.length) return null;
+  const hodnoty = klice.map(k => data[k]);
+  const celkem = hodnoty.reduce((a,b) => a+b, 0);
+  const max = Math.max(...hodnoty);
+  // nejrušnější místa
+  const top = klice.slice().sort((a,b) => data[b] - data[a]).slice(0, 5).map(k => {
+    const p = heatKeyToLatLng(k);
+    // nejbližší dům pro orientaci
+    let nejbliz = null, minD = Infinity;
+    Object.values(world.parcels || {}).forEach(h => {
+      const d = haversine(p, {lat:h.lat, lng:h.lng});
+      if(d < minD){ minD = d; nejbliz = h; }
+    });
+    return { pocet: data[k], p, dum: nejbliz, vzdalenost: minD,
+             odCentra: haversine(p, {lat:CITY_CENTER[0], lng:CITY_CENTER[1]}) };
+  });
+  // kolik balíků a míst leží v navštěvovaných buňkách
+  const navstivene = new Set(klice);
+  const balikyVZive = asArray(world.pickups && world.pickups.list)
+    .filter(pk => navstivene.has(heatKey(pk.lat, pk.lng))).length;
+  const mistaVZive = allLandmarks()
+    .filter(lm => navstivene.has(heatKey(lm.lat, lm.lng))).length;
+  return { bunky: klice.length, celkem, max, top,
+           balikyVZive, balikyCelkem: asArray(world.pickups && world.pickups.list).length,
+           mistaVZive, mistaCelkem: allLandmarks().length };
+}
+
 function renderAdmin(){
   const el = document.getElementById('adminContent');
   if(!isAdmin){ el.innerHTML = '<div class="empty-state">Nemáš admin oprávnění.</div>'; return; }
@@ -7308,6 +7492,34 @@ function renderAdmin(){
     <h3>🐞 Mobilní konzole (ladění)</h3>
     <p style="font-size:0.85em;color:var(--muted)">Zobrazí vývojářskou konzoli přímo na displeji — chyby, requesty, síť. Užitečné, když nemáš PC po ruce.</p>
     <div class="row"><button class="secondary" onclick="adminToggleConsole()">${window.eruda ? 'Skrýt/zobrazit konzoli' : '🐞 Zapnout mobilní konzoli'}</button></div>
+  </div>`;
+
+  const heat = heatSummary();
+  html += `<div class="card">
+    <h3>🔥 Kudy hráči chodí</h3>`;
+  if(!heat){
+    html += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Zatím se nenasbírala žádná data. Mapa se plní sama, jak hráči chodí po městě — každých 30 vteřin se zaznamená, ve které části města někdo je.</p>
+      <p style="font-size:0.82em;color:var(--muted);margin:2px 0;">Ukládá se jen počet průchodů na čtverec 50×50 m, žádná jména ani časy.</p>`;
+  } else {
+    html += `<p style="font-size:0.88em;margin:2px 0;">Navštívených míst: <b>${heat.bunky}</b> · záznamů celkem: <b>${heat.celkem.toLocaleString('cs-CZ')}</b></p>
+      <p style="font-size:0.85em;color:var(--muted);margin:4px 0 2px 0;">Nejrušnější místa:</p>`;
+    heat.top.forEach((t, i) => {
+      const kde = t.vzdalenost < 80 ? ('u domu ' + t.dum.id.replace('h_','#')) : (Math.round(t.odCentra) + ' m od náměstí');
+      html += `<p style="margin:1px 0 1px 10px;font-size:0.83em;color:var(--muted);">${i+1}. ${kde} — <b>${t.pocet}×</b></p>`;
+    });
+    // jestli jsou balíky tam, kde je živo
+    const balikPomer = heat.balikyCelkem ? Math.round(heat.balikyVZive / heat.balikyCelkem * 100) : 0;
+    const mistoPomer = heat.mistaCelkem ? Math.round(heat.mistaVZive / heat.mistaCelkem * 100) : 0;
+    html += `<p style="font-size:0.85em;color:var(--muted);margin:6px 0 2px 0;">Leží v navštěvovaných místech:</p>
+      <p style="margin:1px 0 1px 10px;font-size:0.83em;color:${balikPomer>=50?'var(--accent)':'var(--orange)'}">💰 balíky: ${heat.balikyVZive}/${heat.balikyCelkem} (${balikPomer} %)</p>
+      <p style="margin:1px 0 1px 10px;font-size:0.83em;color:${mistoPomer>=50?'var(--accent)':'var(--orange)'}">📍 místa zájmu: ${heat.mistaVZive}/${heat.mistaCelkem} (${mistoPomer} %)</p>`;
+    if(mistoPomer < 50) html += `<p style="font-size:0.82em;color:var(--orange);margin-top:4px;">💡 Většina míst zájmu leží mimo trasy, kudy lidi chodí. Zvaž přesunout je blíž k rušným místům.</p>`;
+  }
+  html += `<div class="row" style="gap:4px;flex-wrap:wrap;">
+      <button class="secondary" onclick="toggleHeatmap()">${heatVisible ? '🔥 Skrýt z mapy' : '🔥 Zobrazit na mapě'}</button>
+      ${heat ? `<button class="secondary" onclick="adminClearHeat()">Vymazat data</button>` : ''}
+    </div>
+    <p style="font-size:0.8em;color:var(--muted);margin-top:6px;">Modrá = málo, žlutá = středně, červená = nejvíc. Klepnutím na čtverec uvidíš počet.</p>
   </div>`;
 
   html += `<div class="card">
@@ -7692,6 +7904,16 @@ async function adminSwitchCity(){
     hideCityLoading();
     showAlert('Vyhledávání se nepodařilo — zkontroluj připojení.');
   }
+}
+
+async function adminClearHeat(){
+  if(!isAdmin) return;
+  if(!(await showConfirm('Vymazat nasbíraná data o pohybu?\n\nZačne se sbírat znovu od nuly.'))) return;
+  world.heat = {};
+  heatVisible = false;
+  renderHeatmap();
+  saveWorld(); renderAdmin();
+  showAlert('Data o pohybu vymazána.');
 }
 
 function adminBroadcast(){
@@ -9598,6 +9820,22 @@ function doLogin(name, pinHash){
   }
   startGeoTracking();
   setTimeout(maybeShowTutorial, 400);
+
+  // Vrátil se po dlouhé odmlce? Zrušit automatické nabídky jeho domů — o nic nepřijde.
+  const dniPryc = daysSinceActive(u);
+  const vraceno = cancelDormantListingsFor(name);
+  if(vraceno > 0){
+    setTimeout(() => showAlert(
+      `Vítej zpátky! Byl jsi pryč ${dniPryc} dní, tak město mezitím nabídlo ${vraceno} ` +
+      `${vraceno===1?'tvůj podíl':(vraceno<5?'tvoje podíly':'tvých podílů')} k prodeji.\n\n` +
+      `Nabídky jsem stáhl — domy jsou zase jenom tvoje.`), 900);
+  } else if(dniPryc >= DORMANT_WARN_DAYS){
+    const zbyva = Math.max(0, DORMANT_DAYS - dniPryc);
+    if(zbyva > 0) setTimeout(() => showAlert(
+      `Vítej zpátky! Nebyl jsi tu ${dniPryc} dní.\n\n` +
+      `Kdybys nehrál dalších ${zbyva} dní, město by tvoje domy nabídlo ostatním — ` +
+      `peníze z prodeje bys ale dostal ty.`), 900);
+  }
 
   recordWorthSnapshot(u);   // snímek jmění pro graf vývoje
 
