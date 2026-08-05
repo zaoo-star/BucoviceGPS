@@ -534,7 +534,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '1.1';
+const APP_VERSION = '1.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3668,6 +3668,39 @@ function iHaveMajority(p){ return myHousePct(p) > 50; }
 // Spolehlivější než porovnávat aktivitu hráče (ta se mění i bez dotyku domu).
 function stampHouse(p){ if(p) p.mod = Date.now(); }
 
+// Razítko poslední změny VLASTNICTVÍ (podílů). Je schválně ODDĚLENÉ od `mod`, protože
+// při slučování světů se o podílech rozhoduje jinak než o vybavení domu:
+//   - podíly patří tomu, kdo je změnil naposledy (koupě, prodej, aukce, exekuce),
+//   - byty/vylepšení/přestavbu řídí správce domu (většinový podílník).
+// Bez tohohle razítka vypadal dům po prodeji jako "nezměněný" a zařízení hráče, který
+// byl týden pryč, ho při první synchronizaci vrátilo původnímu majiteli — přesně ten bug,
+// kdy se lidem po návratu objevily jiné domy/byty, než jaké měli.
+function stampOwners(p){ if(p) p.omod = Date.now(); }
+// Stálé ID bytu. Byty se dřív rozlišovaly jen pořadím v poli, takže po přestavbě domu
+// (nebo po vestavbě podkroví) ukazoval uložený index na jiný byt — nájemníkům se měnily byty.
+function newUnitId(){ return 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+// ID nabídky na tržišti. Dřív jen 'lst_'+Date.now() — dva hráči, kteří nabídli ve stejnou
+// milisekundu, dostali stejné ID a jedna nabídka tu druhou přepsala.
+function newListingId(){ return 'lst_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7); }
+
+// Uzavření nabídky (prodáno / zrušeno / vydraženo). Kromě smazání si uložíme "náhrobek",
+// aby ji nevzkřísilo zařízení, které o uzavření ještě neví. Bez toho se aukce vyhodnotila
+// znovu a podíl se převedl (a prodejci zaplatilo) dvakrát.
+const CLOSED_LISTINGS_MAX = 200;
+function closeListing(id){
+  if(!id) return;
+  if(!world.closedListings || typeof world.closedListings !== 'object' || Array.isArray(world.closedListings)) world.closedListings = {};
+  world.closedListings[id] = Date.now();
+  const klice = Object.keys(world.closedListings);
+  if(klice.length > CLOSED_LISTINGS_MAX){
+    klice.sort((a,b) => world.closedListings[a] - world.closedListings[b])
+         .slice(0, klice.length - CLOSED_LISTINGS_MAX)
+         .forEach(k => delete world.closedListings[k]);
+  }
+  if(world.listings) delete world.listings[id];
+}
+function stampBizOwners(b){ if(b) b.omod = Date.now(); }
+
 // Férové (tržní) nájemné bytu podle hodnoty domu a počtu bytů — reaguje i na tržní cyklus
 function fairRentForHouse(p){
   const numUnits = (p.units && p.units.length) || p.levels || 1;
@@ -4180,10 +4213,15 @@ function migrateWorld(){
         }
         delete p.condition; delete p.rentPrice; // přesunuto do units
         if(p.units) p.units = asArray(p.units);
+        // Doplnit stálá ID bytům ze starších verzí. Odvozená z ID domu a pořadí, aby
+        // vyšla STEJNĚ na všech zařízeních — jinak by si každý telefon vyrobil vlastní
+        // a slučování by je považovalo za různé byty.
+        if(p.units) p.units.forEach((un, i) => { if(un && !un.uid) un.uid = p.id + '_u' + i; });
         if(p.salesHistory) p.salesHistory = asArray(p.salesHistory);
       });
       if(!world.businesses) world.businesses = generateBusinesses();
       if(!world.listings) world.listings = {};
+      if(!world.closedListings || typeof world.closedListings !== 'object' || Array.isArray(world.closedListings)) world.closedListings = {};
       if(!world.news) world.news = [];
       world.news = asArray(world.news);
       if(!world.chat) world.chat = [];
@@ -4293,6 +4331,14 @@ function applyKnownRenames(){
     const newName = r.to;
     if(!world.users) return;
     const stary = world.users[oldName];
+    // POJISTKA: přezdívku po přejmenování může obsadit někdo úplně jiný. Když je účet pod
+    // starým jménem NOVĚJŠÍ než samotné přejmenování, není to tentýž člověk — je to nový hráč
+    // a nesmíme mu sebrat účet ani domy ve prospěch toho, kdo se kdysi přejmenoval.
+    // (Přesně tak by se dalo cizí majetek "zdědit": přejmenovat se a počkat, až jméno někdo vezme.)
+    if(stary && typeof stary === 'object' && (stary.joinedRealDate || 0) > (r.ts || 0)){
+      delete world.renames[oldName];   // jméno má nového majitele, záznam už neplatí
+      return;
+    }
     if(stary && typeof stary === 'object'){
       const novy = world.users[newName];
       if(!novy){
@@ -4346,17 +4392,28 @@ function adoptWorld(incoming){
   // takže na rozdíl od majetku (kde vlastníkem pravdy je vždy hráč sám) je tady potřeba
   // SLOUČIT obě verze, ne jednu zahodit — jinak zpráva zapsaná jinde może zmizet.
   let myUser = null;
-  const myHouseShares = {};   // parcelId -> pct (podíly ve VŠECH domech, kde něco mám)
+  const mojeVlastnictvi = {}; // parcelId -> {omod, owners} — celá mapa podílů + kdy se naposled měnila
   const myManagedHouses = {}; // parcelId -> celý stav domu, kde jsem SPRÁVCE (>50 %)
   const mojeRazitka = {};     // parcelId -> {mod, dum} pro VŠECHNY domy s razítkem změny
-  const myBizShares = {};     // bizId -> pct
-  const myTenancies = [];     // {parcelId, unitIdx}
+  const mojeBizVlastnictvi = {}; // bizId -> {omod, owners}
+  const myTenancies = [];     // {id, uid, idx} — pronajaté byty (uid je stálý, index se přestavbou mění)
   const myNews = world.news || [];
   const myChat = world.chat || [];
+  // Nabídky na tržišti se DŘÍV braly celé z cloudu. Nabídka nebo příhoz vytvořené těsně
+  // předtím, než dorazil starší snapshot, prostě zmizely — a u aukce s nimi i peníze
+  // dražitele, které se strhávají hned při přihození. Proto je zálohujeme a slučujeme.
+  const myListings = JSON.parse(JSON.stringify(world.listings || {}));
+  const myClosed = Object.assign({}, world.closedListings || {});
   if(myName && world.users){
     myUser = world.users[myName];
     Object.entries(world.parcels || {}).forEach(([id, p]) => {
-      if(p.owners && p.owners[myName]) myHouseShares[id] = p.owners[myName];
+      if(!p) return;
+      // Podíly zálohujeme VŽDY i s razítkem `omod`. Při obnově pak rozhoduje razítko,
+      // ne to, že "jsem to já" — jinak by týden staré zařízení vrátilo zpátky podíly,
+      // které mezitím legálně změnily majitele (tržiště, aukce, exekuce banky).
+      if(p.owners && Object.keys(p.owners).length){
+        mojeVlastnictvi[id] = { omod: p.omod || 0, owners: JSON.parse(JSON.stringify(p.owners)) };
+      }
       // Kde mám většinu, jsem správce → moje verze domu je ta pravá (přestavba, byty,
       // vylepšení, nájemníci). Zazálohujeme CELÝ dům, ať ho cizí zápis nevrátí do starého stavu.
       // (Tohle řešilo bug: "přestavěl jsem na pronájem, ono se to vrátilo a peníze pryč".)
@@ -4366,10 +4423,12 @@ function adoptWorld(incoming){
       // Razítko si pamatujeme u KAŽDÉHO domu, i cizího. Když někdo pošle starší verzi domu
       // (typicky hráč, který ještě nedostal cizí změnu), nepřijdeme o novější stav.
       if(p && p.mod) mojeRazitka[id] = { mod: p.mod, dum: JSON.parse(JSON.stringify(p)) };
-      (p.units || []).forEach((u, idx) => { if(u.tenant === myName) myTenancies.push({id, idx}); });
+      asArray(p.units).forEach((u, idx) => { if(u && u.tenant === myName) myTenancies.push({id, uid: u.uid, idx}); });
     });
     Object.entries(world.businesses || {}).forEach(([id, b]) => {
-      if(b.owners && b.owners[myName]) myBizShares[id] = b.owners[myName];
+      if(b && b.owners && Object.keys(b.owners).length){
+        mojeBizVlastnictvi[id] = { omod: b.omod || 0, owners: JSON.parse(JSON.stringify(b.owners)) };
+      }
     });
   }
 
@@ -4394,6 +4453,22 @@ function adoptWorld(incoming){
   // vyházet zprávy, které admin na kterémkoli zařízení smazal (přežije napříč sloučeními)
   const deleted = asArray(world.deletedMsgs);
   if(deleted.length) world.chat = world.chat.filter(m => !m.id || !deleted.includes(m.id));
+
+  // 2c) TRŽIŠTĚ: sjednotit nabídky z obou stran. U stejného ID vyhraje ta s novějším
+  // razítkem `mod` (razítkuje se při založení i při každém příhozu), takže se neztratí
+  // ani nabídka, ani poslední přihození. Uzavřené nabídky drží "náhrobky" v closedListings,
+  // aby je zařízení, které o prodeji ještě neví, nevzkřísilo a nevyhodnotilo podruhé.
+  if(!world.closedListings || typeof world.closedListings !== 'object' || Array.isArray(world.closedListings)) world.closedListings = {};
+  Object.entries(myClosed).forEach(([id, ts]) => {
+    if(!world.closedListings[id] || ts > world.closedListings[id]) world.closedListings[id] = ts;
+  });
+  if(!world.listings || typeof world.listings !== 'object' || Array.isArray(world.listings)) world.listings = {};
+  Object.entries(myListings).forEach(([id, l]) => {
+    if(!l || typeof l !== 'object') return;
+    const cloudL = world.listings[id];
+    if(!cloudL || (l.mod || 0) > (cloudL.mod || 0)) world.listings[id] = l;
+  });
+  Object.keys(world.closedListings).forEach(id => { delete world.listings[id]; });
 
   // Znovu vynutit admin zásahy, které cizí (starší) verze světa nemusí znát.
   // Bez tohohle by se smazaný hráč nebo zabavený majetek vrátily zpět, když
@@ -4443,10 +4518,28 @@ function adoptWorld(incoming){
   // novější verzi mého hráče), vezme se ta — jinak by staré zařízení vrátilo starší peníze/postup.
   if(myName && myUser){
     const cloudMe = world.users[myName];
-    const localNewer = (myUser.lastActive || 0) >= ((cloudMe && cloudMe.lastActive) || 0);
+    // OSTŘE větší, ne >=. `lastActive` se u offline hráče nemění, takže po návratu na stejném
+    // telefonu byly obě hodnoty STEJNÉ a vyhrál lokál — čímž se zahodilo všechno, co s účtem
+    // mezitím udělal svět (zaplacený nájem, daně, úrok z půjčky, exekuce). Majitelé nájem
+    // inkasovali, ale nájemníkovi se odečet vrátil = peníze vznikaly z ničeho.
+    const localNewer = (myUser.lastActive || 0) > ((cloudMe && cloudMe.lastActive) || 0);
     if(!cloudMe || localNewer){
       world.users[myName] = myUser; // moje lokální verze je novější (nebo cloud mě nezná)
     } // jinak: nechat verzi z cloudu (hrál jsem naposledy jinde)
+
+    // 7) Jednorázové akce se nesmí vrátit ani při prohraném souboji o záznam. Značky typu
+    // "dnes jsem odpracoval" a počítadla postupu bereme vždy tou vyšší hodnotou z obou stran,
+    // jinak si jde na druhém (staršího stavu) telefonu odpracovat směna podruhé.
+    if(cloudMe){
+      const ja = world.users[myName];
+      const vyssi = (k) => { const a = ja[k], b = cloudMe[k];
+        if(typeof a === 'number' || typeof b === 'number') ja[k] = Math.max(a || 0, b || 0); };
+      ['lastWorkedCalDay','lastWorkedDay','totalShifts','currentJobShifts','totalDistance',
+       'questBonusDay','streakDay','streakBest','peakWorth'].forEach(vyssi);
+      // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
+      const darky = new Set([...asArray(ja.claimedGifts), ...asArray(cloudMe.claimedGifts)]);
+      ja.claimedGifts = Array.from(darky).slice(-100);
+    }
 
     // I na VLASTNÍM zařízení hráče musí platit admin reset vzdálenosti — jinak by si
     // podvedený hráč svým vlastním (starým, nevynulovaným) lokálním záznamem reset okamžitě
@@ -4459,9 +4552,30 @@ function adoptWorld(incoming){
       world.users[myName].distanceToday = Math.min(world.users[myName].distanceToday || 0, mujZasah.value);
       world.users[myName].distOverrideSeen = mujZasah.ts;
     }
-    Object.entries(myHouseShares).forEach(([id, pct]) => {
-      const p = world.parcels[id];
-      if(p){ if(!p.owners) p.owners = {}; if(!p.owners[myName]) p.owners[myName] = pct; }
+    // PODÍLY: rozhoduje razítko `omod`, ne to, čí je zařízení. Vyhraje ta mapa podílů,
+    // která se měnila naposledy. Dřív se tady moje stará mapa vracela natvrdo zpátky
+    // ("if(!p.owners[myName]) p.owners[myName] = pct"), takže hráč po delší pauze dostal
+    // zpět domy, které mezitím někdo koupil, a naopak mu zmizely nově nakoupené podíly.
+    Object.entries(mojeVlastnictvi).forEach(([id, zaloha]) => {
+      const cloudP = world.parcels[id];
+      if(!cloudP) return;
+      const cloudOmod = cloudP.omod || 0;
+      if((zaloha.omod || 0) > cloudOmod){
+        cloudP.owners = JSON.parse(JSON.stringify(zaloha.owners));
+        cloudP.omod = zaloha.omod;
+        if(!houseHasOwner(cloudP)){ cloudP.useType = null; delete cloudP.units; }
+      }
+      // Když jsou obě strany bez razítka (data ze starší verze hry), nemám jak rozhodnout.
+      // Nechám cloud a jen doplním sebe, kdyby mě tam vůbec neznal — to je bezpečnější
+      // než přepsat cizí nákupy.
+      else if(!cloudOmod && !(zaloha.omod || 0)){
+        const mujStary = zaloha.owners[myName] || 0;
+        if(mujStary > 0 && !(cloudP.owners && cloudP.owners[myName])){
+          if(!cloudP.owners) cloudP.owners = {};
+          const obsazeno = Object.values(cloudP.owners).reduce((a, b) => a + b, 0);
+          if(obsazeno + mujStary <= 100.001) cloudP.owners[myName] = mujStary;
+        }
+      }
     });
     // Nejdřív obecně: u KAŽDÉHO domu vyhraje verze s novějším razítkem změny.
     // Bez toho by hráč, který má zastaralá data, mohl svým zápisem smazat cizí přestavbu.
@@ -4473,7 +4587,8 @@ function adoptWorld(incoming){
         // (podíly mohl mezitím legitimně změnit někdo jiný koupí/prodejem)
         world.parcels[id] = Object.assign({}, zaloha.dum, {
           lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels,
-          owners: cloudP.owners || zaloha.dum.owners
+          owners: cloudP.owners || zaloha.dum.owners,
+          omod: cloudP.omod || zaloha.dum.omod   // razítko podílů patří k `owners`, ne k vybavení domu
         });
       }
     });
@@ -4487,18 +4602,46 @@ function adoptWorld(incoming){
       if(!stillMine) return;   // dům mi mezitím někdo přebral → nechat verzi z cloudu
       const myMod = saved.mod || 0;
       const cloudMod = cloudP.mod || 0;
-      // Moje verze vyhraje, když je stejně stará nebo novější (u shody držím svou — je to můj dům).
-      if(myMod >= cloudMod){
-        world.parcels[id] = Object.assign({}, saved, { lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels });
+      // Moje verze vyhraje jen když je OPRAVDU novější. Dřív tu bylo >=, takže při shodě
+      // (typicky dům, kterého se dlouho nikdo nedotkl) přepsala stará záloha čerstvý cloud.
+      // A hlavně: `owners` se bere VŽDY z cloudu — podíly řeší razítko `omod` o kus výš,
+      // ne tahle větev. Jinak se spoluvlastníkům, kteří přikoupili, mazaly podíly.
+      if(myMod > cloudMod){
+        world.parcels[id] = Object.assign({}, saved, {
+          lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels,
+          owners: cloudP.owners || saved.owners,
+          omod: cloudP.omod || saved.omod
+        });
       }
     });
-    Object.entries(myBizShares).forEach(([id, pct]) => {
+    // Podíly v podnicích: stejné pravidlo jako u domů — rozhoduje razítko, ne zařízení.
+    Object.entries(mojeBizVlastnictvi).forEach(([id, zaloha]) => {
       const b = world.businesses[id];
-      if(b){ if(!b.owners) b.owners = {}; if(!b.owners[myName]) b.owners[myName] = pct; }
+      if(!b) return;
+      const cloudOmod = b.omod || 0;
+      if((zaloha.omod || 0) > cloudOmod){
+        b.owners = JSON.parse(JSON.stringify(zaloha.owners));
+        b.omod = zaloha.omod;
+      } else if(!cloudOmod && !(zaloha.omod || 0)){
+        const mujStary = zaloha.owners[myName] || 0;
+        if(mujStary > 0 && !(b.owners && b.owners[myName])){
+          if(!b.owners) b.owners = {};
+          const obsazeno = Object.values(b.owners).reduce((a, c) => a + c, 0);
+          if(obsazeno + mujStary <= 100.001) b.owners[myName] = mujStary;
+        }
+      }
     });
-    myTenancies.forEach(({id, idx}) => {
+    // Nájem se obnovuje podle STÁLÉHO ID bytu (uid), ne podle pořadí v poli. Když majitel
+    // mezitím dům přestavěl nebo přidal byt (projekt "podkroví"), index ukazoval na úplně
+    // jiný byt — hráč se probudil v cizím bytě. Bez uid (data ze starší verze) radši nic.
+    myTenancies.forEach(({id, uid, idx}) => {
       const p = world.parcels[id];
-      if(p && p.units && p.units[idx] && !p.units[idx].tenant) p.units[idx].tenant = myName;
+      const units = p && asArray(p.units);
+      if(!units || !units.length) return;
+      let cil = null;
+      if(uid) cil = units.find(u => u && u.uid === uid);
+      else if(units[idx] && !units[idx].uid) cil = units[idx];   // starý svět bez uid: nouzově podle indexu
+      if(cil && !cil.tenant && !cil.npc && !cil.ownerOccupied) cil.tenant = myName;
     });
   }
   // POJISTKA: přihlášený hráč nesmí po sloučení chybět (jinak "Profil nenalezen" a nic nejede).
@@ -4522,7 +4665,10 @@ function worldForCloud(){
     const owned = p.owners && Object.keys(p.owners).length > 0;
     const modified = owned || p.useType || (p.units && p.units.length) || p.upgrades ||
                      (p.gentrifyMult && p.gentrifyMult !== 1) || p.popularity || p.salesHistory ||
-                     p.mod || p.project;
+                     p.mod || p.omod || p.project;
+    // POZOR na `p.omod`: dům, ze kterého majitel prodal úplně všechno, nemá vlastníka ani byty.
+    // Bez razítka podílů by vypadal jako "nedotčený", nešel by do cloudu — a ostatní zařízení
+    // by ho dál zobrazovala jako cizí majetek, protože by se o prodeji nikdy nedozvěděla.
     if(modified) slim[id] = p;
   }
   return { ...world, parcels: slim };
@@ -4914,7 +5060,7 @@ function listDormantPlayersHouses(){
       const cena = Math.round(houseMarketPricePerPercent(p) * pct * DORMANT_PRICE_RATIO);
       if(cena <= 0) return;
       const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'');
-      world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct,
+      world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct, mod: Date.now(),
         type: 'fixed', price: cena, dormant: true };
       addNews('market', `🏚️ Dům ${p.id.replace('h_','#')} je znovu na prodej — ${u.name} dlouho nehraje (${pct.toFixed(0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`);
     });
@@ -4927,7 +5073,7 @@ function cancelDormantListingsFor(name){
   let zruseno = 0;
   Object.keys(world.listings).forEach(id => {
     const l = world.listings[id];
-    if(l && l.dormant && l.seller === name){ delete world.listings[id]; zruseno++; }
+    if(l && l.dormant && l.seller === name){ closeListing(id); zruseno++; }
   });
   return zruseno;
 }
@@ -5889,7 +6035,7 @@ function renderSelected(id){
     Object.entries(p.owners).sort((a,b)=>b[1]-a[1]).forEach(([name, pct]) => {
       const isDec = name === decider;
       const isMeOwner = name===currentUser?.name;
-      html += `<p style="font-size:1em;margin:2px 0;">${isDec ? '👑 ' : '• '}<b ${isMeOwner?'':'style="cursor:pointer;text-decoration:underline;"'} ${isMeOwner?'':`onclick="viewProfile('${name}')"`}>${escapeHtml(name)}</b>: ${pct.toFixed(1)} %${isDec ? ' <span style="color:var(--muted)">(rozhoduje)</span>' : ''}${isMeOwner ? ' <span style="color:var(--accent)">(ty)</span>' : ''}</p>`;
+      html += `<p style="font-size:1em;margin:2px 0;">${isDec ? '👑 ' : '• '}<b ${isMeOwner?'':'style="cursor:pointer;text-decoration:underline;"'} ${isMeOwner?'':profileAttr(name)}>${escapeHtml(name)}</b>: ${pct.toFixed(1)} %${isDec ? ' <span style="color:var(--muted)">(rozhoduje)</span>' : ''}${isMeOwner ? ' <span style="color:var(--accent)">(ty)</span>' : ''}</p>`;
     });
     if(free > 0) html += `<p style="font-size:1em;color:var(--muted);margin:2px 0;">Volných ${free.toFixed(1)} % k odkupu</p>`;
     if(myPct > 0){
@@ -6074,7 +6220,7 @@ function renderSelected(id){
       // popis obyvatele bytu
       let occupantLine;
       if(u.condition <= 0) occupantLine = '<span style="color:var(--danger)">Neobyvatelný — nutná oprava</span>';
-      else if(u.tenant) occupantLine = iAmTenant ? `Bydlí zde: <b>${u.tenant}</b> (ty)` : `Bydlí zde: <b style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${u.tenant}')">${u.tenant}</b>`;
+      else if(u.tenant) occupantLine = iAmTenant ? `Bydlí zde: <b>${u.tenant}</b> (ty)` : `Bydlí zde: <b style="cursor:pointer;text-decoration:underline;" ${profileAttr(u.tenant)}>${escapeHtml(u.tenant)}</b>`;
       else if(u.npc) occupantLine = `Bydlí zde: <b>${escapeHtml(u.npc.avatar||'🧑')} ${escapeHtml(u.npc.name)}</b> <span style="font-size:0.85em;color:var(--muted)">(platí spolehlivě plný nájem)</span>`;
       else if(u.ownerOccupied) occupantLine = `<b style="color:var(--accent)">🏠 Bydlíš tu ty</b> <span style="font-size:0.85em;color:var(--muted)">(nevydělává, ale máš nižší náklady)</span>`;
       else if(sanceNaNajemnika > 0) occupantLine = `<span style="color:var(--muted)">Zatím prázdný</span> — každý den je <b>${sanceNaNajemnika}% šance</b>, že se někdo nastěhuje`;
@@ -6191,7 +6337,7 @@ function renderMine(){
       <p>Tvůj podíl: <b>${myHousePct(p).toFixed(1)} %</b>${
         iDecide ? ' 👑 <span style="color:var(--accent)">rozhoduješ</span>'
         : (houseDecider(p)
-            ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${houseDecider(p)}')">${houseDecider(p)}</span>`
+            ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" ${profileAttr(houseDecider(p))}>${escapeHtml(houseDecider(p))}</span>`
             : ' · <span style="color:var(--orange)">nikdo nemá většinu — dokup podíl nad 50 %, ať můžeš rozhodovat</span>')}</p>
       ${p.useType==='rental' && p.units ? (() => {
         const byty = asArray(p.units);
@@ -6298,7 +6444,7 @@ function renderJobs(){
       <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult())} Kč</b> / směna${j.reqShifts>0?` · praxe: ${j.reqShifts} směn`:''} · míst: ${j.slots}</p>
       ${lockNote}
       ${!full && !current && !locked && ban===0 ? `<div class="row"><button ${nearCityHall?'':'disabled'} onclick="takeJob('${j.id}')">Nastoupit</button></div>` : ''}
-      ${taken>0 ? `<p style="font-size:0.92em;color:var(--muted)">Zaměstnanci: ${holders.map(h=>`<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${h}')">${h}</span>`).join(', ')}</p>` : ''}
+      ${taken>0 ? `<p style="font-size:0.92em;color:var(--muted)">Zaměstnanci: ${holders.map(h=>`<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(h)}>${escapeHtml(h)}</span>`).join(', ')}</p>` : ''}
     </div>`;
     }).join('');
 
@@ -6347,6 +6493,7 @@ async function buyHouseStake(id){
   me.balance -= cost;
   const wasEmpty = !houseHasOwner(p) || (p.owners[currentUser.name]||0) === 0;
   p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
+  stampOwners(p);
 
   // Gentrifikace: nákup dočasně zvedne ceny i oblíbenost okolních domů (do 150 m) úměrně velikosti nákupu.
   // Bez dalších nákupů v okolí efekt postupně odezní (viz GENTRIFY_DECAY_PER_DAY v ticku).
@@ -6392,8 +6539,9 @@ async function claimStarterHome(id){
     if(!ok) return;
   }
   p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
+  stampOwners(p);
   me.starterHomeAvailable = false;
-  if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; } // hned kde bydlet
+  if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; stampHouse(p); } // hned kde bydlet
 
   addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} zdarma.`);
   saveWorld(); refreshAll();
@@ -6439,7 +6587,8 @@ async function sellHouseStake(id){
   world.users[currentUser.name].balance += refund;
   p.owners[currentUser.name] -= pct;
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
-  if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+  stampOwners(p);
+  if(!houseHasOwner(p)){ p.useType = null; delete p.units; stampHouse(p); }
   addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${refund} Kč.`);
   saveWorld(); refreshAll();
   playSound('sell');
@@ -6466,16 +6615,16 @@ async function listHouseStake(id){
   if(isAuction){
     const startBid = parseInt(await showPrompt(`Vyvolávací cena aukce za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
     if(isNaN(startBid) || startBid <= 0) return;
-    const lid = 'lst_'+Date.now();
-    world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction',
+    const lid = newListingId();
+    world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction', mod: Date.now(),
       startBid, currentBid:startBid, highestBidder:null, endsAtDay: world.day + AUCTION_DURATION_DAYS};
     addNews('market', `🔨 ${currentUser.name} vydražuje ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} (od ${startBid} Kč).`);
     showAlert(`Aukce spuštěna — končí za ${AUCTION_DURATION_DAYS} herní dny.`);
   } else {
     const price = parseInt(await showPrompt(`Pevná cena za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
     if(isNaN(price) || price <= 0) return;
-    const lid = 'lst_'+Date.now();
-    world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price};
+    const lid = newListingId();
+    world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price, mod: Date.now()};
     addNews('market', `🏷️ ${currentUser.name} nabízí ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${price} Kč.`);
     showAlert(`Podíl nabídnut na tržišti za ${price} Kč.`);
   }
@@ -6495,7 +6644,7 @@ async function cancelListing(listingId){
     // vrátit zablokovanou nabídku poslednímu dražiteli
     world.users[l.highestBidder].balance += l.currentBid;
   }
-  delete world.listings[listingId];
+  closeListing(listingId);
   saveWorld(); refreshAll(); renderMarket();
   showAlert('Nabídka zrušena.');
 }
@@ -6526,7 +6675,7 @@ async function buyListing(listingId){
   const p = world.parcels[l.houseId];
   const seller = world.users[l.seller];
   // ověřit, že prodejce pořád podíl má
-  if((p.owners?.[l.seller]||0) < l.pct - 0.001){ showAlert('Prodejce už podíl nemá, nabídka je neplatná.'); delete world.listings[listingId]; saveWorld(); renderMarket(); return; }
+  if((p.owners?.[l.seller]||0) < l.pct - 0.001){ showAlert('Prodejce už podíl nemá, nabídka je neplatná.'); closeListing(listingId); saveWorld(); renderMarket(); return; }
   if(!(await showConfirm(`Koupit ${l.pct.toFixed(1)} % domu ${l.houseId.replace('h_','#')} od ${l.seller} za ${l.price} Kč?`))) return;
   const fee = Math.round(l.price * MARKET_FEE);
   me.balance -= l.price;
@@ -6534,9 +6683,10 @@ async function buyListing(listingId){
   p.owners[l.seller] -= l.pct;
   if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
   p.owners[currentUser.name] = (p.owners[currentUser.name]||0) + l.pct;
+  stampOwners(p);
   recordSale(p, l.price, l.pct); // reálný prodej posune hodnotu domu
   addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} od hráče ${l.seller} za ${l.price} Kč.`);
-  delete world.listings[listingId];
+  closeListing(listingId);
   saveWorld(); refreshAll(); renderMarket();
   playSound('buy');
   showAlert(`Koupeno ${l.pct.toFixed(1)} % za ${l.price} Kč.`);
@@ -6563,6 +6713,7 @@ async function bidListing(listingId){
   me.balance -= bid;
   l.currentBid = bid;
   l.highestBidder = currentUser.name;
+  l.mod = Date.now();   // razítko, ať se příhoz při slučování neztratí pod starší kopií nabídky
   saveWorld(); refreshAll(); renderMarket();
   showAlert(`Přihozeno ${bid} Kč. Vedeš aukci.`);
 }
@@ -6570,6 +6721,10 @@ async function bidListing(listingId){
 // Vyřešení skončených aukcí (voláno na začátku nového dne)
 function resolveAuctions(){
   Object.values(world.listings||{}).filter(l => l.type==='auction' && world.day >= l.endsAtDay).forEach(l => {
+    // Přechod dne zpracovává KAŽDÉ zapnuté zařízení ze své vlastní kopie světa. Bez téhle
+    // pojistky se aukce vyhodnotila na každém z nich zvlášť — podíl se převedl vícekrát
+    // a prodejci se zaplatilo vícekrát.
+    if(world.closedListings && world.closedListings[l.id]) { delete world.listings[l.id]; return; }
     const p = world.parcels[l.houseId];
     if(l.highestBidder && p && (p.owners?.[l.seller]||0) >= l.pct - 0.001){
       // převod podílu, prodejci jde cena minus provize (blokované peníze už jsou stržené kupci)
@@ -6578,13 +6733,14 @@ function resolveAuctions(){
       p.owners[l.seller] -= l.pct;
       if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
       p.owners[l.highestBidder] = (p.owners[l.highestBidder]||0) + l.pct;
+      stampOwners(p);
       recordSale(p, l.currentBid, l.pct); // vydražená cena posune hodnotu domu
       addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${l.currentBid} Kč.`);
     } else if(l.highestBidder && world.users[l.highestBidder]){
       // prodej se nekonal (prodejce už podíl nemá) — vrátit dražiteli peníze
       world.users[l.highestBidder].balance += l.currentBid;
     }
-    delete world.listings[l.id];
+    closeListing(l.id);
   });
 }
 
@@ -6616,18 +6772,32 @@ function financeBreakdown(name){
   // nájem z domů (reálný výběr po obsazenosti × podíl) + solární bonus
   let rentIncome = 0, solarIncome = 0;
   Object.values(world.parcels).forEach(p => {
+    const mujPodil = (p.owners?.[name] || 0) / 100;
+    if(mujPodil <= 0) return;
     if(p.useType==='rental' && p.units){
-      const collected = p.units.reduce((s,un)=>{
-        const occ = (un.condition>0 && (un.tenant||un.npc)) ? 1 : 0;
-        return s + un.rentPrice*occ;
+      const collected = asArray(p.units).reduce((s,un)=>{
+        const occ = (un && un.condition>0 && (un.tenant||un.npc)) ? 1 : 0;
+        return s + (un.rentPrice||0)*occ;
       },0);
-      rentIncome += collected * ((p.owners?.[name]||0)/100);
-      solarIncome += solarBonusForHouse(p) * ((p.owners?.[name]||0)/100);
+      rentIncome += collected * mujPodil;
     }
+    // Solár se v tick() vyplácí u KAŽDÉHO domu, i toho, ve kterém majitel bydlí.
+    // Dřív se tady počítal jen uvnitř větve pro pronájem, takže rozpočet ukazoval
+    // míň, než hráči reálně chodilo, a čísla „neseděla".
+    solarIncome += solarBonusForHouse(p) * mujPodil;
   });
   // Popisek říká "reálně vybráno", ať je jasné, že to není součet nastavených nájmů —
   // prázdné byty nevydělávají nic, takže součet nastavených nájmů by byl zavádějící.
-  if(rentIncome>0) income.push({label:'🏘️ Nájem z bytů (reálně vybráno)', amount: rentIncome});
+  if(rentIncome>0){
+    // Hráči nechápali, proč jim z nájmu 90 Kč chodí 16 — je to jejich PODÍL v domě.
+    // Popisek to teď říká rovnou, ať nemusí hádat.
+    const podily = Object.values(world.parcels)
+      .filter(p => p.useType==='rental' && (p.owners?.[name]||0) > 0)
+      .map(p => p.owners[name]);
+    const prumer = podily.length ? podily.reduce((a,b)=>a+b,0)/podily.length : 100;
+    const popis = prumer < 99.5 ? ` — tvůj podíl ${prumer.toFixed(0)} %` : '';
+    income.push({label:`🏘️ Nájem z bytů (reálně vybráno${popis})`, amount: rentIncome});
+  }
   if(solarIncome>0) income.push({label:'☀️ Solární panely', amount: solarIncome});
   // podniky
   let bizIncome = 0;
@@ -6640,8 +6810,16 @@ function financeBreakdown(name){
   const savingsInterest = (u.savings||0) * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR;
   if(savingsInterest>0.5) income.push({label:'🐷 Úrok ze spoření', amount: savingsInterest});
   // práce (pokud má) — orientačně 1 směna/den
+  // Plat počítáme jen tehdy, když se dnes do práce OPRAVDU dá jít. Dřív se započítával
+  // i o víkendu (zavřeno) a i po odpracované směně, takže předpověď "za kolik dní ti dojdou
+  // peníze" byla optimističtější než realita.
   const job = getCurrentJob(name);
-  if(job) income.push({label:'💼 Plat (1 směna/den)', amount: job.job.salary * inflationMult()});
+  if(job){
+    const dnesJesteMuze = !isWeekend() && u.lastWorkedCalDay !== calendarDay();
+    const plat = job.job.salary * inflationMult() * eventMult('wageMult');
+    if(dnesJesteMuze) income.push({label:'💼 Plat (1 směna/den)', amount: plat});
+    else income.push({label: isWeekend() ? '💼 Plat (o víkendu zavřeno)' : '💼 Plat (dnes už odpracováno)', amount: 0});
+  }
 
   // VÝDAJE
   const status = housingStatus(name);
@@ -6677,9 +6855,10 @@ function financeBreakdown(name){
     // dům nesoucí příjem (pronájem) = aktivum; nevyužitý/bydlení jen s daní = spíš pasivum
     let dayFlow = 0;
     if(p.useType==='rental' && p.units){
-      const collected = p.units.reduce((s,un)=>{const occ=(un.condition>0&&(un.tenant||un.npc))?1:0; return s+un.rentPrice*occ;},0);
+      const collected = asArray(p.units).reduce((s,un)=>{const occ=(un && un.condition>0&&(un.tenant||un.npc))?1:0; return s+(un.rentPrice||0)*occ;},0);
       dayFlow += collected*(pct/100);
     }
+    dayFlow += solarBonusForHouse(p)*(pct/100);       // panely nesou i u domu, kde bydlím
     dayFlow -= value*PROPERTY_TAX_RATE/DAYS_PER_YEAR; // daň
     const item = {label:`Dům ${p.id.replace('h_','#')}`, value, dayFlow};
     if(dayFlow >= 0) assets.push(item); else liabilities.push(item);
@@ -6745,7 +6924,15 @@ async function repayLoan(loanId){
 // nejdřív podíl v domě (60 % ceny), jinak podíl v podniku (70 % ceny)
 function seizeAssetForDebt(user, loan){
   const owner = user.name;
-  const house = Object.values(world.parcels).find(p => (p.owners?.[owner] || 0) > 0);
+  // Vybíráme NEJMENŠÍ podíl, který dluh ještě pokryje — a když žádný nestačí, ten nejmenší vůbec.
+  // Dřív se bral první dům v pořadí `Object.values`, takže se kvůli pár stovkám dluhu klidně
+  // zabavil ten nejcennější dům, zatímco vedle ležel malý podíl, který by stačil.
+  const kandidati = Object.values(world.parcels)
+    .filter(p => (p.owners?.[owner] || 0) > 0)
+    .map(p => ({ p, hodnota: housePricePerPercent(p) * p.owners[owner] * HOUSE_SELL_RATIO }))
+    .sort((a, b) => a.hodnota - b.hodnota);
+  const dluh = loan.balance || 0;
+  const house = (kandidati.find(k => k.hodnota >= dluh) || kandidati[0] || {}).p || null;
   let seizedDesc = null;
 
   if(house){
@@ -6754,7 +6941,8 @@ function seizeAssetForDebt(user, loan){
     seizedDesc = `${pct.toFixed(1)} % domu ${house.id.replace('h_','#')} (výplata ${proceeds} Kč)`;
     applySeizureProceeds(user, loan, proceeds);
     delete house.owners[owner];
-    if(!houseHasOwner(house)){ house.useType = null; delete house.units; }
+    stampOwners(house);
+    if(!houseHasOwner(house)){ house.useType = null; delete house.units; stampHouse(house); }
   } else {
     const biz = Object.values(world.businesses).find(b => (b.owners[owner] || 0) > 0);
     if(biz){
@@ -6763,6 +6951,7 @@ function seizeAssetForDebt(user, loan){
       seizedDesc = `${pct.toFixed(1)} % podílu v ${biz.name} (výplata ${proceeds} Kč)`;
       applySeizureProceeds(user, loan, proceeds);
       delete biz.owners[owner];
+      stampBizOwners(biz);
     }
   }
 
@@ -6791,10 +6980,14 @@ function renderMarket(){
   // úklid neplatných nabídek (prodejce už podíl nemá)
   let cleaned = false;
   Object.values(world.listings||{}).forEach(l => {
+    // Pozor: tenhle úklid běží na KAŽDÉM zařízení, které otevře tržiště. Bez náhrobku
+    // (closedListings) by stejnou aukci "uklidil" každý telefon zvlášť a dražiteli by se
+    // zablokované peníze vrátily tolikrát, kolik lidí se zrovna dívalo na tržiště.
+    if(world.closedListings && world.closedListings[l.id]){ delete world.listings[l.id]; cleaned = true; return; }
     const p = world.parcels[l.houseId];
     if(!p || (p.owners?.[l.seller]||0) < l.pct - 0.001){
       if(l.type==='auction' && l.highestBidder && world.users[l.highestBidder]) world.users[l.highestBidder].balance += l.currentBid;
-      delete world.listings[l.id];
+      closeListing(l.id);
       cleaned = true;
     }
   });
@@ -6845,8 +7038,8 @@ function renderMarket(){
       const daysLeft = Math.max(0, l.endsAtDay - world.day);
       return `<div class="card">
         <h3>🔨 Aukce — ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
-        <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.seller}')">${l.seller}</span>`}</p>
-        <p>Aktuální nabídka: <b style="color:var(--gold)">${l.currentBid} Kč</b>${l.highestBidder?` (vede ${leads?'ty':`<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.highestBidder}')">${l.highestBidder}</span>`})`:' – zatím nikdo'}</p>
+        <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(l.seller)}>${escapeHtml(l.seller)}</span>`}</p>
+        <p>Aktuální nabídka: <b style="color:var(--gold)">${l.currentBid} Kč</b>${l.highestBidder?` (vede ${leads?'ty':`<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(l.highestBidder)}>${escapeHtml(l.highestBidder)}</span>`})`:' – zatím nikdo'}</p>
         <p style="font-size:0.92em;color:var(--muted)">Končí za ${daysLeft} ${daysLeft===1?'den':'dní'} (den ${l.endsAtDay})</p>
         ${!mine ? `<div class="row"><button onclick="bidListing('${l.id}')">Přihodit</button><button class="secondary" onclick="flyToParcel('${l.houseId}')">Na mapě</button></div>`
                 : `<div class="row"><button class="danger" onclick="cancelListing('${l.id}')">Zrušit aukci</button></div>`}
@@ -6854,7 +7047,7 @@ function renderMarket(){
     } else {
       return `<div class="card">
         <h3>${l.dormant?"🏚️":"🏷️"} ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
-        <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" onclick="viewProfile('${l.seller}')">${l.seller}</span>`}</p>
+        <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(l.seller)}>${escapeHtml(l.seller)}</span>`}</p>
         ${l.dormant ? `<p style="font-size:0.88em;color:var(--orange);margin:2px 0;">Majitel dlouho nehraje — město dům nabídlo levněji. Peníze dostane on.</p>` : ''}
         <p>Cena: <b style="color:var(--gold)">${l.price} Kč</b> <span style="font-size:0.92em;color:var(--muted)">(${Math.round(l.price/l.pct)} Kč/1 %)</span></p>
         ${!mine ? `<div class="row"><button onclick="buyListing('${l.id}')">Koupit</button><button class="secondary" onclick="flyToParcel('${l.houseId}')">Na mapě</button></div>`
@@ -7040,7 +7233,7 @@ const PROJECT_DEFS = {
     desc:'Přidá domu další byt k pronájmu.',
     apply:(p) => {
       if(!p.units) p.units = [];
-      p.units.push({ rentPrice: fairRentForHouse(p), condition: 100 });
+      p.units.push({ uid: newUnitId(), rentPrice: fairRentForHouse(p), condition: 100 });
     }
   },
   fasada: {
@@ -7984,12 +8177,12 @@ async function adminSetMoney(name){
 // (aktivní na svém zařízení) pošle synchronizací svou starou verzi domu.
 function seizeAssets(name){
   Object.values(world.parcels).forEach(p => {
-    if(p.owners && p.owners[name] !== undefined){ delete p.owners[name]; stampHouse(p); }
+    if(p.owners && p.owners[name] !== undefined){ delete p.owners[name]; stampHouse(p); stampOwners(p); }
     if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
     (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
   });
-  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined) delete b.owners[name]; });
-  Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) delete world.listings[id]; });
+  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined){ delete b.owners[name]; stampBizOwners(b); } });
+  Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) closeListing(id); });
   if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object') world.seizedPlayers = {};
   world.seizedPlayers[name] = Date.now();
 }
@@ -8427,7 +8620,6 @@ function renderChat(forceScroll){
   }
   el.innerHTML = msgs.map(m => {
     const mine = currentUser && m.name === currentUser.name;
-    const safeName = escapeHtml(m.name).replace(/'/g, "\\'");
     // citace (odpověď na jinou zprávu)
     let quote = '';
     if(m.replyTo && m.replyTo.name){
@@ -8439,7 +8631,7 @@ function renderChat(forceScroll){
     return `<div style="margin-bottom:10px;padding:8px 10px;border-radius:12px;background:${mine?'rgba(74,222,128,0.12)':'var(--panel2)'};">
       ${quote}
       <div style="display:flex;align-items:center;gap:6px;">
-        <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" onclick="viewProfile('${safeName}')">${escapeHtml(m.avatar||'🧑')} ${escapeHtml(m.name)}</span>
+        <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" ${profileAttr(m.name)}>${escapeHtml(m.avatar||'🧑')} ${escapeHtml(m.name)}</span>
         <span style="font-size:0.72em;color:var(--muted);">${timeAgo(m.ts)}</span>
       </div>
       <div style="font-size:0.95em;margin-top:2px;word-break:break-word;">${escapeHtml(m.text)}</div>
@@ -8940,6 +9132,19 @@ function renderGuide(){
 
 let profileViewTarget = null; // jméno hráče, jehož profil se má zobrazit; null = můj vlastní
 
+// Otevře profil podle atributu data-name. Přezdívka se tak NIKDY nedostane do JS kódu
+// uvnitř onclick="" — dřív se tam vkládala jako řetězec a HTML si entity (&#39;) v atributu
+// zpátky dekódovalo, takže apostrof v přezdívce znamenal spuštění cizího kódu.
+// Drželo to jen díky tomu, že sanitizeName apostrofy maže; teď to drží samo o sobě.
+function viewProfileEl(el){
+  if(!el) return;
+  const n = el.getAttribute('data-name');
+  if(n) viewProfile(n);
+}
+function profileAttr(name){
+  return `data-name="${escapeHtml(name)}" onclick="viewProfileEl(this)"`;
+}
+
 function viewProfile(name){
   profileViewTarget = name;
   openSheet('profile');
@@ -9122,7 +9327,7 @@ function renderLeaderboard(){
   html += players.map((pl, i) => {
     const isMe = pl.name === currentUser?.name;
     const rank = medals[i] || `${i+1}.`;
-    return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':`onclick="viewProfile('${pl.name}')"`}>
+    return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':profileAttr(pl.name)}>
       <h3>${rank} ${escapeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}</h3>
       <p><b style="color:var(--gold)">${m.fmt(pl[m.key])}</b></p>
       <p style="font-size:0.92em;color:var(--muted)">Jmění ${Math.round(pl.worth).toLocaleString('cs-CZ')} Kč · ${pl.houses} ${pl.houses===1?'dům':'domů'} · ${(pl.distance/1000).toFixed(1).replace('.',',')} km</p>
@@ -9378,7 +9583,7 @@ async function startRental(id){
     `Zůstane ti ${Math.round(me.balance - setupCost).toLocaleString('cs-CZ')} Kč.`))) return;
   me.balance -= setupCost;
   p.useType = 'rental';
-  p.units = Array.from({length: numUnits}, () => ({rentPrice: rent, condition: 100}));
+  p.units = Array.from({length: numUnits}, () => ({uid: newUnitId(), rentPrice: rent, condition: 100}));
   stampHouse(p);
   addNews('rental', `🏘️ ${currentUser.name} otevřel pronájem v domě ${p.id.replace('h_','#')} (${numUnits} ${numUnits===1?'byt':'bytů'}, nájem ${rent} Kč).`);
   saveWorld(); refreshAll();
@@ -9696,6 +9901,7 @@ async function buyStake(bizId){
     `Zůstane ti ${Math.round(me.balance - cost).toLocaleString('cs-CZ')} Kč.`))) return;
   me.balance -= cost;
   biz.owners[currentUser.name] = (biz.owners[currentUser.name] || 0) + pct;
+  stampBizOwners(biz);
   addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${pct.toFixed(0)} % za ${cost} Kč).`);
   saveWorld(); refreshAll();
   showAlert(`Koupeno ${pct.toFixed(1)} % podílu za ${cost} Kč.`);
@@ -9717,6 +9923,7 @@ async function sellStake(bizId){
   world.users[currentUser.name].balance += refund;
   biz.owners[currentUser.name] -= pct;
   if(biz.owners[currentUser.name] <= 0.001) delete biz.owners[currentUser.name];
+  stampBizOwners(biz);
   saveWorld(); refreshAll();
   playSound('sell');
   showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
@@ -9749,6 +9956,13 @@ function hashPin(s){
 async function login(){
   const rawName = sanitizeName(document.getElementById('nameInput').value) || 'Host' + Math.floor(Math.random()*9999);
   const existing = world.users[rawName];
+
+  // Přezdívka, kterou někdo opustil přejmenováním, je zamluvená. Kdyby si ji vzal nový hráč,
+  // slučování světů (applyKnownRenames) by jeho účet i s majetkem přiřadilo původnímu hráči.
+  if(!existing && world.renames && world.renames[rawName] && world.renames[rawName].to){
+    showAlert(`Přezdívku „${rawName}" už dřív někdo používal a přejmenoval se. Vyber si prosím jinou.`);
+    return;
+  }
 
   if(existing){
     // Přihlášení k EXISTUJÍCÍ přezdívce — pokud má nastavený PIN, musí ho zadat.
