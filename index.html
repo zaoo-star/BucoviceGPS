@@ -534,7 +534,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '1.6';
+const APP_VERSION = '1.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4246,6 +4246,18 @@ function migrateWorld(){
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
       world.deletedLandmarks = asArray(world.deletedLandmarks).filter(Boolean); // id smazaných míst
       world.deletedMsgs = asArray(world.deletedMsgs).filter(Boolean); // klíče smazaných zpráv (moderace)
+      // Jednorázový úklid novin: vyhodit duplicity, které tam nasypal starý dopočet dnů
+      // (tatáž zpráva ke stejnému hernímu dni). Necháváme vždy tu první (nejnovější).
+      if(Array.isArray(world.news)){
+        const videno = new Set();
+        world.news = world.news.filter(n => {
+          if(!n) return false;
+          const k = (n.day || 0) + '|' + (n.text || '');
+          if(videno.has(k)) return false;
+          videno.add(k);
+          return true;
+        });
+      }
       if(typeof world.chatClearedTs !== 'number') world.chatClearedTs = 0;
       world.deletedPlayers = asArray(world.deletedPlayers); // jména hráčů smazaných adminem
       if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object' || Array.isArray(world.seizedPlayers)) world.seizedPlayers = {};
@@ -4869,6 +4881,11 @@ const NEWS_MAX = 60;
 const DELETED_MSGS_MAX = 500;
 function addNews(type, text){
   if(!world.news) world.news = [];
+  // Pojistka proti duplicitám: tentýž text ke stejnému hernímu dni se do novin nepřidá
+  // podruhé. Přechod dne totiž může zpracovat víc zařízení najednou (a před verzí 1.5
+  // dokonce i opakovaně pro už zpracovaný den).
+  const jeUz = world.news.some(n => n && n.day === world.day && n.text === text);
+  if(jeUz) return;
   world.news.unshift({ type, text, day: world.day, ts: Date.now() });
   if(world.news.length > NEWS_MAX) world.news.length = NEWS_MAX;
   // nevoláme saveWorld zde — volající už obvykle ukládá; ať se to nezdvojuje
@@ -5062,6 +5079,13 @@ function tick(){
   world.dayProgress = clock.dayProgress;
   const targetDay = clock.day;
   if(typeof world.lastProcessedDay !== 'number') world.lastProcessedDay = world.day || 1;
+  // Strop dopočtu: po dlouhé odmlce (nebo když se svět kvůli chybě rozjel) nemá smysl
+  // přehrávat desítky dnů po jednom — trvá to a stejně se do novin nic nepíše.
+  // Zbytek se přeskočí a den se srovná na cílový.
+  const MAX_DOPOCET = 10;
+  if(targetDay - world.lastProcessedDay > MAX_DOPOCET){
+    world.lastProcessedDay = targetDay - MAX_DOPOCET;
+  }
   const daysToAdvance = Math.max(0, targetDay - world.lastProcessedDay);
   let advanced = 0;
   while(world.lastProcessedDay < targetDay){
@@ -5192,8 +5216,10 @@ function cancelDormantListingsFor(name){
 function onNewDay(catchUp){
   if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
   tryFillVacantUnits();          // volné byty si najdou nájemníky podle ceny
-  const cev = todaysCityEvent();
-  if(cev) addNews('event', `${cev.emoji} ${cev.name} — ${cev.desc}`);
+  // Při dopočítávání zameškaných dnů se událost nevypisuje — hráč u toho nebyl a noviny
+  // by zaplavilo několik hlášení najednou. Píše se jen ta k dnešnímu dni.
+  const cev = todaysCityEvent(world.day);
+  if(cev && !catchUp) addNews('event', `${cev.emoji} ${cev.name} — ${cev.desc}`);
   finishDueProjects();                                    // dokončit renovace, kterým vypršel čas
   listDormantPlayersHouses();                             // uvolnit domy hráčů, kteří dlouho nehrají
   // snímek jmění všem — díky tomu vidí admin vývoj u každého, ne jen u sebe
@@ -6323,6 +6349,27 @@ function renderSelected(id){
     }</p>`;
   }
   if(free > 0) html += `<button ${near?'':'disabled'} onclick="buyHouseStake('${p.id}')">Koupit podíl${near?'':' (musíš být u domu)'}</button>`;
+  html += `</div>`;
+  // Návratnost: bez ní hráč nemá jak poznat, jestli je dům dobrá koupě. Cena za procento
+  // se totiž mezi domy liší víc než nájem, takže levnější dům bývá lepší investice.
+  if(free > 0){
+    const cenaZaProcento = houseMarketPricePerPercent(p);
+    const najemDenne = (p.useType === 'rental' && p.units && p.units.length)
+      ? asArray(p.units).reduce((s2, un) => s2 + ((un && un.condition > 0) ? (un.rentPrice || 0) : 0), 0)
+      : fairRentForHouse(p) * Math.max(1, p.levels || 1);
+    const vynosNaProcento = najemDenne / 100;
+    const dan = effectiveHousePrice(p) * PROPERTY_TAX_RATE / DAYS_PER_YEAR / 100;
+    const cisty = vynosNaProcento - dan;
+    if(cisty > 0){
+      const dni = Math.round(cenaZaProcento / cisty);
+      const rocne = Math.round(cisty * DAYS_PER_YEAR / cenaZaProcento * 100);
+      html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
+        📈 Za plně obsazený dům: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
+        Zaplatí se za <b>${dni} dní</b> — to je ${rocne} % ročně.
+        ${p.useType !== 'rental' ? ' <i>Platí, až dům předěláš na pronájem.</i>' : ''}</p>`;
+    }
+  }
+  html += `<div class="row">`;
   if(myPct > 0) html += `<button class="danger" onclick="sellHouseStake('${p.id}')">Prodat městu (${Math.round(HOUSE_SELL_RATIO*100)} %)</button>`;
   html += `</div>`;
   if(myPct > 0){
@@ -6474,13 +6521,23 @@ function renderSelected(id){
         <p style="font-size:1em;">${occupantLine}</p>
         <p>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(férová cena ${fair} Kč)</span></p>
         <p style="font-size:0.92em;">${priceNote}</p>
-        ${iDecide ? `<div style="background:var(--panel);border-left:3px solid ${occColor};border-radius:6px;padding:7px 9px;margin:6px 0;">
+        ${myPct > 0 ? `<div style="background:var(--panel);border-left:3px solid ${occColor};border-radius:6px;padding:7px 9px;margin:6px 0;">
           ${(u.tenant || u.npc)
-            ? `<p style="margin:0;font-size:0.9em;">Vydělává ti <b style="color:var(--gold)">${u.rentPrice} Kč/den</b></p>
-               <p style="margin:2px 0 0 0;font-size:0.85em;color:var(--accent)">Nájemník platí celý nájem každý den, dokud mu byt udržuješ.</p>`
+            ? `<p style="margin:0;font-size:0.9em;">Nájemník platí <b style="color:var(--gold)">${u.rentPrice} Kč/den</b></p>`
             : `<p style="margin:0;font-size:0.9em;">Teď vydělává <b style="color:var(--danger)">0 Kč/den</b> — je prázdný.</p>
                <p style="margin:2px 0 0 0;font-size:0.85em;color:var(--muted)">Až se někdo nastěhuje, bude platit ${u.rentPrice} Kč/den. Čím nižší nájem, tím dřív se to stane.</p>`}
-          ${myPct < 100 ? `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Tvůj podíl je ${myPct.toFixed(0)} %, takže z toho máš <b>${(realCollected*myPct/100).toFixed(0)} Kč/den</b>.</p>` : ''}
+          ${myPct < 100 ? `<p style="margin:3px 0 0 0;font-size:0.9em;">
+              Rozpad: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${myPct.toFixed(0)} %</b> =
+              <b style="color:var(--gold)">${(realCollected*myPct/100).toFixed(0)} Kč/den pro tebe</b></p>`
+            : `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům, takže máš <b style="color:var(--gold)">${realCollected.toFixed(0)} Kč/den</b>.</p>`}
+          ${(() => {
+            // Nájemník platí VŽDY celý nájem, ale rozdělí se jen mezi vlastníky podílů.
+            // Neprodaná část domu patří městu a jeho díl nájmu propadne — hráče to mátlo.
+            const volne = houseFreePct(p);
+            if(volne < 1 || !realCollected) return '';
+            return `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Zbylých ${volne.toFixed(0)} % domu patří městu, takže ${(realCollected*volne/100).toFixed(0)} Kč/den jde jemu. Když podíl dokoupíš, poputují tobě.</p>`;
+          })()}
+          ${(u.tenant || u.npc) && iDecide ? `<p style="margin:2px 0 0 0;font-size:0.85em;color:var(--accent)">Nájemník platí každý den, dokud mu byt udržuješ.</p>` : ''}
         </div>` : ''}
         <p>Stav bytu: ${Math.round(u.condition)}%</p>
         <div class="condBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':'var(--accent)'}"></div></div>
@@ -6530,6 +6587,14 @@ function renderSelected(id){
     <p><b>Oprava</b> stojí ${REPAIR_COST_PER_POINT} Kč za každý chybějící bod. Vyplatí se opravovat průběžně — spravit z 90 % je levnější než nechat byt spadnout na 20 % a přijít mezitím o nájemné.</p>
   `);
 
+  html += infoBox('Kolik stojí bydlení', `
+    <p>Životní náklady platíš každý den a záleží jen na tom, kde bydlíš:</p>
+    <p>🏠 <b>Vlastník bydlení</b> — ${Math.round(LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT))} Kč/den. Nejlevnější varianta, navíc ti dům roste na hodnotě.</p>
+    <p>🔑 <b>Nájemník</b> — ${TENANT_LIVING_COST} Kč/den <i>plus nájem majiteli</i>. Levnější než bydlet na ulici, ale peníze jdou někomu jinému.</p>
+    <p>🚶 <b>Bez bydlení</b> — ${LIVING_COST} Kč/den. Nejdražší, protože všechno řešíš draze a nárazově.</p>
+    <p>Vylepšení domu (zateplení, solár, klimatizace) ti účty srazí ještě níž — ale jen v domě, kde <b>opravdu bydlíš</b>.</p>
+  `);
+
   html += infoBox('Co s tímhle domem můžu dělat?', `
     <p><b>Koupit podíl.</b> Domy se kupují po procentech. Musíš stát <b>u domu</b> (do ${INTERACTION_RADIUS} m). Cena za procento se odvíjí od hodnoty domu a mění se s tím, jak se ve městě kupuje.</p>
     <p><b>Kdo rozhoduje.</b> Majitel s <b>víc než 50 %</b> určuje, co s domem bude. Ostatní spoluvlastníci berou svůj podíl z výnosu, ale do rozhodování nemluví.</p>
@@ -6537,6 +6602,7 @@ function renderSelected(id){
     <p><b>Chceš bydlet a zároveň pronajímat?</b> Nemusíš přepínat celý dům. U kteréhokoli volného bytu klepni na <b>„🏠 Bydlet v tomhle bytě"</b> — ten jeden přestane vydělávat, ale zbytek domu pronajímáš dál a klesnou ti životní náklady. To je skoro vždycky výhodnější než přepnout celý dům na bydlení.</p>
     <p><b>Přepínání tam a zpět.</b> Za přestavbu na pronájem platíš <b>jen jednou</b>. Když se pak rozhodneš, že v domě chceš bydlet, byty ti zůstanou zachované — jen se z nich vystěhují nájemníci. Kdykoliv později můžeš dům zase otevřít k pronájmu <b>zdarma</b>.</p>
     <p><b>Nájem za byt.</b> Nastavíš si cenu sám. Nad férovou cenou začnou nájemníci ubývat — hra ti u každého bytu ukáže, jak je obsazený.</p>
+    <p><b>Kam jde nájem.</b> Nájemník platí <b>celou</b> částku, ale rozdělí se mezi majitele podle podílů. Máš-li 18 % domu, z nájmu 90 Kč ti přijde 16 Kč. Neprodaná část domu patří městu a jeho díl nájmu propadne — proto se vyplatí podíl dokupovat.</p>
     <p><b>Stav bytu.</b> Obydlené byty chátrají. Pod hranicí, kterou nájemník snese, se odstěhuje. Oprava stojí ${REPAIR_COST_PER_POINT} Kč za bod.</p>
     <p><b>Vylepšení.</b> Jednorázová investice, která dům trvale zlepší (zateplení, klimatizace, rekonstrukce, solár). Vrátí se za pár měsíců.</p>
     <p><b>Projekty.</b> Větší stavby, které pár dní trvají — podkroví přidá byt, fasáda a zahrada zvednou hodnotu.</p>
@@ -7672,10 +7738,13 @@ const CITY_EVENTS = [
    desc:'Po městě se dnes válí víc peněz než jindy — balíky jsou štědřejší.',
    pickupMult:1.5},
 ];
-function todaysCityEvent(){
-  const den = calendarDay();
-  // deterministický výběr podle dne (stejný pro všechna zařízení)
-  let seed = den * 2654435761 % 2147483647;
+// Losuje se podle HERNÍHO dne, ne podle kalendářního. Herní den je odvozený z pevného
+// počátku hry, takže vyjde stejně na všech zařízeních — a hlavně se mění i při dopočítávání
+// zameškaných dnů. Dřív se tu bral calendarDay(), který je při dopočtu pořád stejný, takže
+// se do novin sedmkrát za sebou napsala tatáž událost ("Zdražily energie" pro dny 13–19).
+function todaysCityEvent(den){
+  const d = (typeof den === 'number') ? den : (world && world.day) || 1;
+  let seed = d * 2654435761 % 2147483647;
   const idx = Math.abs(seed) % CITY_EVENTS.length;
   return CITY_EVENTS[idx];
 }
