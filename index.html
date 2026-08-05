@@ -534,7 +534,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '1.3';
+const APP_VERSION = '1.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4244,7 +4244,9 @@ function migrateWorld(){
       if(world.pickups.v !== PICKUP_LAYOUT_VERSION) world.pickups = { day:0, list:[] };
       if(world.encounters && world.encounters.v !== PICKUP_LAYOUT_VERSION) world.encounters = { day:0, list:[] };
       world.landmarks = asArray(world.landmarks);   // vlastní místa zájmu přidaná adminem
-      world.deletedMsgs = asArray(world.deletedMsgs); // id smazaných zpráv (moderace)
+      world.deletedLandmarks = asArray(world.deletedLandmarks).filter(Boolean); // id smazaných míst
+      world.deletedMsgs = asArray(world.deletedMsgs).filter(Boolean); // klíče smazaných zpráv (moderace)
+      if(typeof world.chatClearedTs !== 'number') world.chatClearedTs = 0;
       world.deletedPlayers = asArray(world.deletedPlayers); // jména hráčů smazaných adminem
       if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object' || Array.isArray(world.seizedPlayers)) world.seizedPlayers = {};
       if(!world.distanceOverrides || typeof world.distanceOverrides !== 'object' || Array.isArray(world.distanceOverrides)) world.distanceOverrides = {};
@@ -4404,6 +4406,22 @@ function adoptWorld(incoming){
   // dražitele, které se strhávají hned při přihození. Proto je zálohujeme a slučujeme.
   const myListings = JSON.parse(JSON.stringify(world.listings || {}));
   const myClosed = Object.assign({}, world.closedListings || {});
+  // Seznam smazaných zpráv se DŘÍV bral celý z cloudu (`world = incoming`). Když dorazil
+  // snapshot pořízený dřív, než jsi mazal, záznam o smazání se ztratil — a protože chat se
+  // slučuje (ne přepisuje), zpráva se z cloudu vrátila. Proto ho zálohujeme a sjednocujeme.
+  const myDeletedMsgs = asArray(world.deletedMsgs);
+  const myChatClearedTs = world.chatClearedTs || 0;
+  // Admin zásahy a sdílené seznamy — všechny stejný případ jako smazané zprávy.
+  const myAdmin = {
+    deletedPlayers: asArray(world.deletedPlayers),
+    seizedPlayers: Object.assign({}, world.seizedPlayers || {}),
+    distanceOverrides: Object.assign({}, world.distanceOverrides || {}),
+    landmarks: asArray(world.landmarks),
+    deletedLandmarks: asArray(world.deletedLandmarks),
+    gifts: JSON.parse(JSON.stringify(world.gifts || {})),
+    heat: Object.assign({}, world.heat || {}),
+    lastProcessedDay: world.lastProcessedDay
+  };
   if(myName && world.users){
     myUser = world.users[myName];
     Object.entries(world.parcels || {}).forEach(([id, p]) => {
@@ -4451,8 +4469,57 @@ function adoptWorld(incoming){
   world.news = mergeLogs(myNews, world.news || [], NEWS_MAX);
   world.chat = mergeLogs(myChat, world.chat || [], CHAT_MAX, true);
   // vyházet zprávy, které admin na kterémkoli zařízení smazal (přežije napříč sloučeními)
-  const deleted = asArray(world.deletedMsgs);
-  if(deleted.length) world.chat = world.chat.filter(m => !m.id || !deleted.includes(m.id));
+  // Smazané zprávy: sjednotit obě strany, ať smazání přežije i sloučení se starším světem.
+  const deleted = new Set([...myDeletedMsgs, ...asArray(world.deletedMsgs)].filter(Boolean));
+  world.deletedMsgs = Array.from(deleted).slice(-DELETED_MSGS_MAX);
+  // Hromadné vymazání chatu držíme časovou hranicí — ta platí i pro zprávy, na které
+  // se v seznamu ID už nedostalo místo.
+  world.chatClearedTs = Math.max(myChatClearedTs, world.chatClearedTs || 0);
+  const hranice = world.chatClearedTs;
+  world.chat = world.chat.filter(m => m && !deleted.has(msgKey(m)) && (m.ts || 0) > hranice);
+
+  // 2d) ADMIN ZÁSAHY A SDÍLENÉ SEZNAMY. Musí se sloučit DŘÍV, než se níž vynucují
+  // (smazaní hráči, zabavený majetek), jinak by se zásah zapsaný na tomhle zařízení
+  // v tomhle kole vůbec neuplatnil.
+  world.deletedPlayers = mergeSet(myAdmin.deletedPlayers, world.deletedPlayers, 500);
+  world.seizedPlayers = mergeStamped(myAdmin.seizedPlayers, world.seizedPlayers);
+  world.distanceOverrides = mergeStamped(myAdmin.distanceOverrides, world.distanceOverrides);
+
+  // Místa zájmu: sjednotit podle id a pak odečíst smazaná (náhrobky), ať se smazané
+  // místo nevrátí ze zařízení, které o smazání neví.
+  world.deletedLandmarks = mergeSet(myAdmin.deletedLandmarks, world.deletedLandmarks, 200);
+  const lmPryc = new Set(world.deletedLandmarks);
+  world.landmarks = mergeById(myAdmin.landmarks, world.landmarks, 200).filter(l => l && !lmPryc.has(l.id));
+
+  // Platby od admina: sjednotit po hráčích podle id dárku. Vyzvednuté se poznají podle
+  // `claimedGifts` na účtu hráče, takže se dvakrát nepřipíšou — ale nesmí se ztratit.
+  const darky = {};
+  const jmena = new Set([...Object.keys(myAdmin.gifts), ...Object.keys(world.gifts || {})]);
+  jmena.forEach(jm => {
+    const vyzvednute = new Set(asArray(world.users && world.users[jm] && world.users[jm].claimedGifts));
+    const spojene = mergeById(myAdmin.gifts[jm], (world.gifts || {})[jm], 50)
+      .filter(g => g && !vyzvednute.has(g.id));
+    if(spojene.length) darky[jm] = spojene;
+  });
+  world.gifts = darky;
+
+  // Teplotní mapa nachozených tras: po buňkách bereme vyšší hodnotu. Sčítat nejde
+  // (nevíme, co už je v cloudu započítané), ale takhle se aspoň nikomu nesmaže,
+  // co dnes nachodil — dřív se celá mapa přepsala cloudovou verzí.
+  world.heat = mergeStamped(myAdmin.heat, world.heat, v => (typeof v === 'number' ? v : 0));
+  const heatKlice = Object.keys(world.heat);
+  if(heatKlice.length > HEAT_MAX_CELLS){   // po sloučení může přetéct strop — uřízneme nejslabší buňky
+    heatKlice.sort((a, b) => world.heat[a] - world.heat[b])
+             .slice(0, heatKlice.length - HEAT_MAX_CELLS)
+             .forEach(k => delete world.heat[k]);
+  }
+
+  // Zpracovaný den se nesmí vrátit zpátky. Zařízení se starším světem ho jinak posunulo
+  // dozadu a onNewDay proběhl znovu pro už zpracované dny (duplicitní zprávy v novinách,
+  // znovu vylosovaná městská událost, přegenerované denní úkoly).
+  if(typeof myAdmin.lastProcessedDay === 'number'){
+    world.lastProcessedDay = Math.max(myAdmin.lastProcessedDay, world.lastProcessedDay || 0);
+  }
 
   // 2c) TRŽIŠTĚ: sjednotit nabídky z obou stran. U stejného ID vyhraje ta s novějším
   // razítkem `mod` (razítkuje se při založení i při každém příhozu), takže se neztratí
@@ -4686,6 +4753,47 @@ function asArray(x){
 // Sloučí dva seznamy záznamů (noviny/chat z různých zařízení) do jednoho, bez ztráty a bez duplicit.
 // Klíč jedinečnosti: čas + text (+ jméno u chatu, kdyby dva lidé napsali stejnou větu ve stejnou ms).
 // Výsledek je seřazený od nejnovějšího a oříznutý na limit.
+// Identita zprávy pro moderaci. Staré zprávy ještě nemají `id` — bez záložního klíče
+// je nešlo smazat vůbec (filtr je propouštěl) a vracely se donekonečna.
+function msgKey(m){
+  if(!m) return '';
+  if(m.id) return m.id;
+  return 'k|' + (m.name||'') + '|' + (m.ts||0) + '|' + (m.text||'');
+}
+
+// ===== SLUČOVÁNÍ SDÍLENÝCH SEZNAMŮ =====
+// Všechno, co leží přímo na `world` a nesluje se, se při `world = incoming` zahodí.
+// Kdo právě něco zapsal a vzápětí dostal o vteřinu starší snapshot, přišel o to.
+// Tyhle tři funkce to řeší jednotně.
+
+// Sjednocení dvou seznamů jmen/ID (bez duplicit, s limitem). Záznamy se jen přidávají,
+// takže je jedno, které zařízení má novější svět.
+function mergeSet(a, b, limit){
+  const set = new Set([...asArray(a), ...asArray(b)].filter(Boolean));
+  const out = Array.from(set);
+  return limit && out.length > limit ? out.slice(-limit) : out;
+}
+
+// Sjednocení map `klíč -> záznam`, kde u kolize vyhraje novější razítko.
+// `casZ` říká, jak se ze záznamu dostane čas (u prostých čísel je to hodnota sama).
+function mergeStamped(a, b, casZ){
+  const cas = casZ || (v => (v && typeof v === 'object' ? (v.ts || 0) : (v || 0)));
+  const out = Object.assign({}, (b && typeof b === 'object') ? b : {});
+  Object.entries((a && typeof a === 'object') ? a : {}).forEach(([k, v]) => {
+    if(!(k in out) || cas(v) > cas(out[k])) out[k] = v;
+  });
+  return out;
+}
+
+// Sjednocení seznamů objektů podle `id` (místa zájmu, dárky). Nic se neztratí,
+// nic se nezduplikuje. Smazané položky řeší zvlášť seznam náhrobků.
+function mergeById(a, b, limit){
+  const map = new Map();
+  [...asArray(b), ...asArray(a)].forEach(x => { if(x && x.id) map.set(x.id, x); });
+  const out = Array.from(map.values());
+  return limit && out.length > limit ? out.slice(-limit) : out;
+}
+
 function mergeLogs(a, b, limit, isChat){
   const map = new Map();
   [...asArray(a), ...asArray(b)].forEach(item => {
@@ -4756,6 +4864,9 @@ function flushCloudWrite(){
 // Zaznamená událost do herních novin. type určuje ikonu/barvu, text je hláška.
 // Ukládá se do world.news (posledních 60). S Firebase se automaticky sdílí mezi hráči.
 const NEWS_MAX = 60;
+// Kolik ID smazaných zpráv si pamatujeme. Náhrobek musí přežít déle než samotná zpráva
+// v chatu, jinak by ji vzkřísilo zařízení, které o smazání nevědělo.
+const DELETED_MSGS_MAX = 500;
 function addNews(type, text){
   if(!world.news) world.news = [];
   world.news.unshift({ type, text, day: world.day, ts: Date.now() });
@@ -5732,6 +5843,9 @@ function updateReachHighlight(force){
     if(!m || !p || !map.hasLayer(m)) return;   // co není na mapě, nemá smysl překreslovat
     // ikonu měníme jen u domů poblíž hráče — u vzdálených se stejně nic nemění
     if(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) > HOUSE_VISIBLE_RADIUS) return;
+    const klic = iconKey(p);
+    if(m._ikonaKlic === klic) return;   // vzhled se nezměnil → nesahat na DOM
+    m._ikonaKlic = klic;
     m.setIcon(iconFor(p));
   });
 }
@@ -5818,33 +5932,150 @@ function refreshRecommended(){
   recommendedStarterHouses(3).forEach(p => { recommendedIds[p.id] = true; });
 }
 
-// Vytvoří/odstraní markery domů podle toho, co je zrovna vidět na obrazovce.
-// Dřív se vykreslovalo všech 2267 domů naráz — mobil to nedal a mapa se nedala posouvat.
+// ===== KOLIK DOMŮ UKAZOVAT =====
+// Samotné ořezání podle obrazovky nestačí: při oddálení se do výřezu vejde všech 2267 domů,
+// takže jich mobil kreslí tisíce a mapa se zasekne. Proto se od určitého oddálení schovávají
+// nezajímavé (prázdné) domy a počet značek má tvrdý strop.
+const ZOOM_JEN_MOJE = 16;       // pod tímhle zbydou jen moje a doporučené
+const MAX_ZNACEK = 140;         // strop značek na obrazovce
+const MAX_POOL = 400;           // strop uschovaných objektů markerů (paměť)
+
+// Prázdný dům se dá koupit jen ze vzdálenosti INTERACTION_RADIUS (60 m). Kreslit jich stovky
+// přes celé město nemá smysl — jen zaplňují mapu a mobil je nestíhá. Ukazujeme proto jen ty,
+// ke kterým se dá reálně dojít pár kroky.
+const PRAZDNE_DOMY_DOSAH = 150;   // m od hráče (bez GPS od středu mapy)
+
+// Jak je dům důležitý — podle toho se rozhoduje, co se při oddálení schová jako první.
+function housePriority(p){
+  if(myHousePct(p) > 0) return 4;          // moje
+  if(recommendedIds[p.id]) return 3;       // tip pro nováčka
+  if(houseHasOwner(p)) return 2;           // cizí, ale obsazený
+  return 1;                                // prázdný
+}
+
+// Vytvoří/odstraní markery domů podle toho, co je zrovna vidět a jak je mapa přiblížená.
 function syncHouseMarkers(){
   if(!map || !world || !world.parcels) return;
-  let bounds = null;
-  try { bounds = map.getBounds().pad(0.25); } catch(e){ return; }   // trochu za okraj, ať to neproblikává
+  let bounds = null, zoom = 16, stred = null;
+  try {
+    bounds = map.getBounds().pad(0.25);   // trochu za okraj, ať to neproblikává
+    zoom = map.getZoom();
+    stred = map.getCenter();
+  } catch(e){ return; }
 
-  let vytvoreno = 0;
-  const LIMIT_NOVYCH = 400;   // strop na jeden průchod, ať se appka nezasekne
+  // Volné domy neřídí přiblížení, ale VZDÁLENOST — koupit se dají jen z 60 m, takže
+  // ukazovat je přes celé město je jen šum. Přiblížení pak řeší už jen to, kdy se schovají
+  // i cizí obsazené domy. Dřív se od zoomu 17 kreslily úplně všechny, kterých se ve výřezu
+  // vejde i přes dvě stě — právě proto se mapa při oddálení zasekávala.
+  const minPriorita = zoom >= ZOOM_JEN_MOJE ? 2 : 3;
+  const prazdneUkazat = zoom >= ZOOM_JEN_MOJE;
+  // Vzdálenost měříme od hráče; když ještě nemáme GPS, tak od středu obrazovky.
+  const kotva = playerPos || (stred ? {lat: stred.lat, lng: stred.lng} : null);
 
+  // 1) Vybrat kandidáty ve výřezu, které projdou přes práh přiblížení.
+  const kandidati = [];
   Object.values(world.parcels).forEach(p => {
-    const viditelny = bounds.contains([p.lat, p.lng]);
+    if(!bounds.contains([p.lat, p.lng])) return;
+    const prio = housePriority(p);
+    if(prio === 1){
+      if(!prazdneUkazat || !kotva) return;
+      if(haversine(kotva, {lat:p.lat, lng:p.lng}) > PRAZDNE_DOMY_DOSAH) return;
+    } else if(prio < minPriorita) return;
+    // Vzdálenost od středu obrazovky stačí spočítat "na plocho" — jde jen o pořadí,
+    // ne o metry, takže haversine by tu byl zbytečně drahý.
+    const dx = p.lat - stred.lat, dy = p.lng - stred.lng;
+    kandidati.push({ p, prio, d: dx*dx + dy*dy });
+  });
+
+  // 2) Seřadit: nejdřív důležitost, pak blízkost ke středu — a uříznout na strop.
+  kandidati.sort((a, b) => (b.prio - a.prio) || (a.d - b.d));
+  const zobrazit = new Set(kandidati.slice(0, MAX_ZNACEK).map(x => x.p.id));
+
+  // 3) Dokreslit chybějící (s limitem na jeden průchod, ať se to nezasekne).
+  let vytvoreno = 0;
+  const LIMIT_NOVYCH = 200;
+  kandidati.forEach(({ p }) => {
+    if(!zobrazit.has(p.id)) return;
     const m = markers[p.id];
-    if(viditelny){
-      if(!m){
-        if(vytvoreno >= LIMIT_NOVYCH) return;   // zbytek se dokreslí při dalším posunu
-        const novy = L.marker([p.lat, p.lng], {icon: iconFor(p)}).addTo(map);
-        novy.on('click', (e) => { L.DomEvent.stopPropagation(e); selectParcel(p.id); });
-        markers[p.id] = novy;
-        vytvoreno++;
-      } else if(!map.hasLayer(m)){
-        map.addLayer(m);
-      }
-    } else if(m && map.hasLayer(m)){
-      map.removeLayer(m);   // mimo obrazovku → pryč z mapy (objekt si necháme pro příště)
+    if(!m){
+      if(vytvoreno >= LIMIT_NOVYCH) return;   // zbytek se dokreslí při dalším posunu
+      const novy = L.marker([p.lat, p.lng], {icon: iconFor(p)}).addTo(map);
+      novy._ikonaKlic = iconKey(p);
+      novy.on('click', (e) => { L.DomEvent.stopPropagation(e); selectParcel(p.id); });
+      markers[p.id] = novy;
+      vytvoreno++;
+    } else {
+      if(!map.hasLayer(m)) map.addLayer(m);
+      // Dům mohl mezitím změnit vzhled, zatímco byl schovaný mimo obrazovku.
+      const klic = iconKey(p);
+      if(m._ikonaKlic !== klic){ m._ikonaKlic = klic; m.setIcon(iconFor(p)); }
     }
   });
+
+  // 4) Všechno ostatní z mapy dolů (objekt si necháme pro příští posun).
+  Object.keys(markers).forEach(id => {
+    if(zobrazit.has(id)) return;
+    const m = markers[id];
+    if(m && map.hasLayer(m)) map.removeLayer(m);
+  });
+
+  // 5) Zahodit přebytečné uschované markery, ať paměť neroste donekonečna.
+  const klice = Object.keys(markers);
+  if(klice.length > MAX_POOL){
+    klice.forEach(id => {
+      if(Object.keys(markers).length <= MAX_POOL) return;
+      if(zobrazit.has(id)) return;
+      const m = markers[id];
+      if(m && map.hasLayer(m)) return;
+      delete markers[id];
+    });
+  }
+
+  aktualizujNapovedu(kandidati.length, zobrazit.size, zoom);
+}
+
+// Malá nápověda v rohu mapy, když se domy schovávají — jinak by to vypadalo jako chyba.
+let napovedaEl = null;
+let napovedaTimer = null;
+function aktualizujNapovedu(kandidatu, zobrazeno, zoom){
+  const mapEl = document.getElementById('map');
+  if(!mapEl) return;
+  if(!napovedaEl){
+    napovedaEl = document.createElement('div');
+    napovedaEl.id = 'mapZoomHint';
+    napovedaEl.style.cssText = 'position:absolute;left:50%;transform:translateX(-50%);bottom:46px;' +
+      'z-index:500;background:rgba(20,22,28,0.82);color:#cfd6e4;font-size:12px;padding:5px 11px;' +
+      'border-radius:14px;pointer-events:none;white-space:nowrap;backdrop-filter:blur(3px);display:none;';
+    mapEl.appendChild(napovedaEl);
+  }
+  if(zoom < ZOOM_JEN_MOJE){
+    clearTimeout(napovedaTimer);
+    napovedaEl.textContent = '🔍 Přibliž pro zobrazení domů';
+    napovedaEl.style.display = 'block';
+  } else if(zobrazeno && kandidatu === zobrazeno){
+    // Ať to nevypadá jako chyba: volné domy dál než pár kroků schováváme schválně.
+    napovedaEl.textContent = `🏚️ Volné domy vidíš do ${PRAZDNE_DOMY_DOSAH} m od sebe`;
+    napovedaEl.style.display = 'block';
+    clearTimeout(napovedaTimer);
+    napovedaTimer = setTimeout(() => { if(napovedaEl) napovedaEl.style.display = 'none'; }, 2600);
+  } else if(kandidatu > zobrazeno){
+    clearTimeout(napovedaTimer);
+    napovedaEl.textContent = `🔍 Zobrazeno ${zobrazeno} z ${kandidatu} domů — přibliž pro zbytek`;
+    napovedaEl.style.display = 'block';
+  } else {
+    clearTimeout(napovedaTimer);
+    napovedaEl.style.display = 'none';
+  }
+}
+
+// Otisk vzhledu domu. Vytvořit divIcon a vyměnit ho v DOM je drahé, tak to děláme jen
+// tehdy, když se vzhled opravdu změnil — ne každou sekundu pro každý dům v okolí.
+function iconKey(p){
+  const owned = houseHasOwner(p);
+  const allBroken = !!(p.units && p.units.length && p.units.every(u => u && u.condition <= 0));
+  const dosah = !!(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS);
+  return [owned ? 1 : 0, p.useType || '-', allBroken ? 1 : 0, myHousePct(p) > 0 ? 1 : 0,
+          dosah ? 1 : 0, recommendedIds[p.id] ? 1 : 0].join('|');
 }
 
 function iconFor(p){
@@ -5877,7 +6108,13 @@ function initMap(){
   // Markery domů se NEVYTVÁŘEJÍ všechny najednou (2267 kusů zahltí mobil a mapa pak seká
   // nebo appka spadne). Vznikají líně jen pro domy blízko hráče / středu mapy — viz syncHouseMarkers().
   syncHouseMarkers();
-  map.on('moveend zoomend', () => syncHouseMarkers());
+  // Posun prstem vystřelí `moveend` klidně několikrát za sebou. Bez zdržení se přepočet
+  // pouštěl pokaždé a mapa při tažení trhala.
+  let prekresliTimer = null;
+  map.on('moveend zoomend', () => {
+    clearTimeout(prekresliTimer);
+    prekresliTimer = setTimeout(syncHouseMarkers, 120);
+  });
 
   let bizMarkers = {};
   Object.values(world.businesses).forEach(biz => {
@@ -7845,6 +8082,10 @@ function adminAddLandmarkHere(){
 async function adminDeleteLandmark(id){
   if(!(await showConfirm('Smazat tohle místo zájmu?'))) return;
   world.landmarks = asArray(world.landmarks).filter(l => l.id !== id);
+  // Náhrobek, ať místo nevzkřísí zařízení, které o smazání ještě neví.
+  world.deletedLandmarks = asArray(world.deletedLandmarks);
+  if(id && !world.deletedLandmarks.includes(id)) world.deletedLandmarks.push(id);
+  if(world.deletedLandmarks.length > 200) world.deletedLandmarks = world.deletedLandmarks.slice(-200);
   saveWorld(); renderAdmin(); renderLandmarkMarkers();
 }
 
@@ -7853,8 +8094,11 @@ async function adminClearChat(){
   if(!isAdmin) return;
   if(!(await showConfirm('Smazat úplně celý chat? Nedá se to vzít zpět.'))) return;
   if(!Array.isArray(world.deletedMsgs)) world.deletedMsgs = [];
-  (world.chat || []).forEach(m => { if(m.id && !world.deletedMsgs.includes(m.id)) world.deletedMsgs.push(m.id); });
-  if(world.deletedMsgs.length > 200) world.deletedMsgs = world.deletedMsgs.slice(-200);
+  (world.chat || []).forEach(m => { const k = msgKey(m); if(k && !world.deletedMsgs.includes(k)) world.deletedMsgs.push(k); });
+  if(world.deletedMsgs.length > DELETED_MSGS_MAX) world.deletedMsgs = world.deletedMsgs.slice(-DELETED_MSGS_MAX);
+  // Časová hranice zabere i na zprávy, které tohle zařízení nikdy nevidělo (leží jen v cloudu
+  // nebo na cizím telefonu) — jinak by se po vymazání chatu při první synchronizaci vrátily.
+  world.chatClearedTs = Date.now();
   world.chat = [];
   saveWorld();
   showAlert('Chat byl vymazán.');
@@ -8637,7 +8881,7 @@ function renderChat(forceScroll){
       <div style="font-size:0.95em;margin-top:2px;word-break:break-word;">${escapeHtml(m.text)}</div>
       <div style="margin-top:4px;display:flex;gap:12px;">
         <span onclick="startReply('${m.id||''}')" style="cursor:pointer;font-size:0.75em;color:var(--muted);">↩︎ Odpovědět</span>
-        ${isAdmin ? `<span onclick="adminDeleteMessage('${m.id||''}')" style="cursor:pointer;font-size:0.75em;color:var(--danger);">🗑️ Smazat</span>` : ''}
+        ${isAdmin ? `<span data-msgkey="${escapeHtml(msgKey(m))}" onclick="adminDeleteMessage(this.getAttribute('data-msgkey'))" style="cursor:pointer;font-size:0.75em;color:var(--danger);">🗑️ Smazat</span>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -8695,15 +8939,17 @@ function cancelReply(){
 // Admin: smaže zprávu z chatu (moderace). Zprávu pozná podle id.
 async function adminDeleteMessage(id){
   if(!isAdmin) return;
-  const msg = (world.chat || []).find(m => m.id === id);
+  const msg = (world.chat || []).find(m => msgKey(m) === id);
   const nahled = msg ? `„${(msg.text||'').slice(0,40)}${(msg.text||'').length>40?'…':''}" od ${msg.name}` : 'tuhle zprávu';
   if(!(await showConfirm(`Smazat ${nahled}?`))) return;
-  world.chat = (world.chat || []).filter(m => m.id !== id);
-  // Zapamatovat smazané id, ať se zpráva nevrátí přes synchronizaci z jiného zařízení,
-  // které o smazání ještě neví (chat se totiž slučuje, ne přepisuje). Držíme posledních 200.
+  const klic = msg ? msgKey(msg) : id;
+  world.chat = (world.chat || []).filter(m => msgKey(m) !== klic);
+  // Zapamatovat klíč smazané zprávy, ať se nevrátí synchronizací ze zařízení, které o smazání
+  // ještě neví (chat se totiž slučuje, ne přepisuje). Seznam se navíc při každém sloučení
+  // sjednocuje s cloudem, takže se smazání neztratí ani při souběhu.
   if(!Array.isArray(world.deletedMsgs)) world.deletedMsgs = [];
-  if(id && !world.deletedMsgs.includes(id)) world.deletedMsgs.push(id);
-  if(world.deletedMsgs.length > 200) world.deletedMsgs = world.deletedMsgs.slice(-200);
+  if(klic && !world.deletedMsgs.includes(klic)) world.deletedMsgs.push(klic);
+  if(world.deletedMsgs.length > DELETED_MSGS_MAX) world.deletedMsgs = world.deletedMsgs.slice(-DELETED_MSGS_MAX);
   saveWorld();
   renderChat();
 }
