@@ -534,7 +534,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '1.8';
+const APP_VERSION = '1.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3675,7 +3675,46 @@ function stampHouse(p){ if(p) p.mod = Date.now(); }
 // Bez tohohle razítka vypadal dům po prodeji jako "nezměněný" a zařízení hráče, který
 // byl týden pryč, ho při první synchronizaci vrátilo původnímu majiteli — přesně ten bug,
 // kdy se lidem po návratu objevily jiné domy/byty, než jaké měli.
-function stampOwners(p){ if(p) p.omod = Date.now(); }
+// Razítkujeme KAŽDÉHO dotčeného vlastníka zvlášť, ne jen dům jako celek. Kdyby se razítkoval
+// jen dům, vyhrála by při sloučení celá mapa podílů toho, kdo zapsal později — a smazala by
+// tím nákup, který ve stejném domě mezitím udělal někdo jiný. Peníze strženy, podíl pryč.
+function stampOwnerList(obj, jmena){
+  if(!obj) return;
+  const t = Date.now();
+  obj.omod = t;
+  if(!obj.ownerMods || typeof obj.ownerMods !== 'object' || Array.isArray(obj.ownerMods)) obj.ownerMods = {};
+  (jmena || []).filter(Boolean).forEach(n => { obj.ownerMods[n] = t; });
+}
+function stampOwners(p, ...jmena){ stampOwnerList(p, jmena); }
+
+// Sloučí podíly dvou verzí domu/podniku PO JEDNOTLIVÝCH vlastnících. Každý vlastník má
+// vlastní razítko, takže dva souběžné nákupy ve stejném domě oba přežijí.
+function mergeOwners(zaloha, cloud){
+  const oL = (zaloha && zaloha.owners) || {}, oC = (cloud && cloud.owners) || {};
+  const mL = (zaloha && zaloha.ownerMods) || {}, mC = (cloud && cloud.ownerMods) || {};
+  const jmena = new Set([...Object.keys(oL), ...Object.keys(oC), ...Object.keys(mL), ...Object.keys(mC)]);
+  const owners = {}, mods = {};
+  jmena.forEach(n => {
+    const tL = mL[n] || 0, tC = mC[n] || 0;
+    let pct;
+    if(tL > tC) pct = oL[n] || 0;
+    else if(tC > tL) pct = oC[n] || 0;
+    // Shoda razítek (typicky data ze starší verze, kde razítka nejsou): bereme vyšší podíl.
+    // Nákup podíl jen zvyšuje a prodej by razítko posunul, takže se tím nic neztratí.
+    else pct = Math.max(oL[n] || 0, oC[n] || 0);
+    if(pct > 0.001) owners[n] = pct;
+    const t = Math.max(tL, tC);
+    if(t) mods[n] = t;
+  });
+  // Pojistka proti přeprodání: když dva koupili poslední volná procenta zároveň, součet
+  // by přesáhl 100. Zkrátíme poměrně — nikdo tak nepřijde o celý nákup.
+  const soucet = Object.values(owners).reduce((a, b) => a + b, 0);
+  if(soucet > 100.001){
+    const k = 100 / soucet;
+    Object.keys(owners).forEach(n => { owners[n] = Math.round(owners[n] * k * 100) / 100; });
+  }
+  return { owners, ownerMods: mods };
+}
 // Stálé ID bytu. Byty se dřív rozlišovaly jen pořadím v poli, takže po přestavbě domu
 // (nebo po vestavbě podkroví) ukazoval uložený index na jiný byt — nájemníkům se měnily byty.
 function newUnitId(){ return 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -3699,7 +3738,7 @@ function closeListing(id){
   }
   if(world.listings) delete world.listings[id];
 }
-function stampBizOwners(b){ if(b) b.omod = Date.now(); }
+function stampBizOwners(b, ...jmena){ stampOwnerList(b, jmena); }
 
 // Férové (tržní) nájemné bytu podle hodnoty domu a počtu bytů — reaguje i na tržní cyklus
 function fairRentForHouse(p){
@@ -4212,6 +4251,7 @@ function migrateWorld(){
           delete p.ownerName;
         }
         delete p.condition; delete p.rentPrice; // přesunuto do units
+        if(p.ownerMods && (typeof p.ownerMods !== 'object' || Array.isArray(p.ownerMods))) delete p.ownerMods;
         if(p.units) p.units = asArray(p.units);
         // Doplnit stálá ID bytům ze starších verzí. Odvozená z ID domu a pořadí, aby
         // vyšla STEJNĚ na všech zařízeních — jinak by si každý telefon vyrobil vlastní
@@ -4441,8 +4481,12 @@ function adoptWorld(incoming){
       // Podíly zálohujeme VŽDY i s razítkem `omod`. Při obnově pak rozhoduje razítko,
       // ne to, že "jsem to já" — jinak by týden staré zařízení vrátilo zpátky podíly,
       // které mezitím legálně změnily majitele (tržiště, aukce, exekuce banky).
-      if(p.owners && Object.keys(p.owners).length){
-        mojeVlastnictvi[id] = { omod: p.omod || 0, owners: JSON.parse(JSON.stringify(p.owners)) };
+      if((p.owners && Object.keys(p.owners).length) || (p.ownerMods && Object.keys(p.ownerMods).length)){
+        mojeVlastnictvi[id] = {
+          omod: p.omod || 0,
+          owners: JSON.parse(JSON.stringify(p.owners || {})),
+          ownerMods: JSON.parse(JSON.stringify(p.ownerMods || {}))
+        };
       }
       // Kde mám většinu, jsem správce → moje verze domu je ta pravá (přestavba, byty,
       // vylepšení, nájemníci). Zazálohujeme CELÝ dům, ať ho cizí zápis nevrátí do starého stavu.
@@ -4456,8 +4500,12 @@ function adoptWorld(incoming){
       asArray(p.units).forEach((u, idx) => { if(u && u.tenant === myName) myTenancies.push({id, uid: u.uid, idx}); });
     });
     Object.entries(world.businesses || {}).forEach(([id, b]) => {
-      if(b && b.owners && Object.keys(b.owners).length){
-        mojeBizVlastnictvi[id] = { omod: b.omod || 0, owners: JSON.parse(JSON.stringify(b.owners)) };
+      if(b && ((b.owners && Object.keys(b.owners).length) || (b.ownerMods && Object.keys(b.ownerMods).length))){
+        mojeBizVlastnictvi[id] = {
+          omod: b.omod || 0,
+          owners: JSON.parse(JSON.stringify(b.owners || {})),
+          ownerMods: JSON.parse(JSON.stringify(b.ownerMods || {}))
+        };
       }
     });
   }
@@ -4635,26 +4683,19 @@ function adoptWorld(incoming){
     // která se měnila naposledy. Dřív se tady moje stará mapa vracela natvrdo zpátky
     // ("if(!p.owners[myName]) p.owners[myName] = pct"), takže hráč po delší pauze dostal
     // zpět domy, které mezitím někdo koupil, a naopak mu zmizely nově nakoupené podíly.
+    // PODÍLY se slučují po JEDNOTLIVÝCH vlastnících podle jejich vlastních razítek.
+    // Verze 1.2–1.8 tu nahrazovala celou mapu podílů tou s novějším razítkem domu — jenže
+    // ta moje mapa neznala nákup, který ve stejném domě mezitím udělal někdo jiný, a smazala
+    // ho. Jemu se strhly peníze a podíl zmizel; při dalším kole se to otočilo. Odtud
+    // "už zase jsem koupil podíl a nic".
     Object.entries(mojeVlastnictvi).forEach(([id, zaloha]) => {
       const cloudP = world.parcels[id];
       if(!cloudP) return;
-      const cloudOmod = cloudP.omod || 0;
-      if((zaloha.omod || 0) > cloudOmod){
-        cloudP.owners = JSON.parse(JSON.stringify(zaloha.owners));
-        cloudP.omod = zaloha.omod;
-        if(!houseHasOwner(cloudP)){ cloudP.useType = null; delete cloudP.units; }
-      }
-      // Když jsou obě strany bez razítka (data ze starší verze hry), nemám jak rozhodnout.
-      // Nechám cloud a jen doplním sebe, kdyby mě tam vůbec neznal — to je bezpečnější
-      // než přepsat cizí nákupy.
-      else if(!cloudOmod && !(zaloha.omod || 0)){
-        const mujStary = zaloha.owners[myName] || 0;
-        if(mujStary > 0 && !(cloudP.owners && cloudP.owners[myName])){
-          if(!cloudP.owners) cloudP.owners = {};
-          const obsazeno = Object.values(cloudP.owners).reduce((a, b) => a + b, 0);
-          if(obsazeno + mujStary <= 100.001) cloudP.owners[myName] = mujStary;
-        }
-      }
+      const slouceno = mergeOwners(zaloha, cloudP);
+      cloudP.owners = slouceno.owners;
+      cloudP.ownerMods = slouceno.ownerMods;
+      cloudP.omod = Math.max(zaloha.omod || 0, cloudP.omod || 0);
+      if(!houseHasOwner(cloudP)){ cloudP.useType = null; delete cloudP.units; }
     });
     // Nejdřív obecně: u KAŽDÉHO domu vyhraje verze s novějším razítkem změny.
     // Bez toho by hráč, který má zastaralá data, mohl svým zápisem smazat cizí přestavbu.
@@ -4667,7 +4708,8 @@ function adoptWorld(incoming){
         world.parcels[id] = Object.assign({}, zaloha.dum, {
           lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels,
           owners: cloudP.owners || zaloha.dum.owners,
-          omod: cloudP.omod || zaloha.dum.omod   // razítko podílů patří k `owners`, ne k vybavení domu
+          omod: cloudP.omod || zaloha.dum.omod,          // razítko podílů patří k `owners`, ne k vybavení domu
+          ownerMods: cloudP.ownerMods || zaloha.dum.ownerMods
         });
       }
     });
@@ -4689,7 +4731,8 @@ function adoptWorld(incoming){
         world.parcels[id] = Object.assign({}, saved, {
           lat: cloudP.lat, lng: cloudP.lng, levels: cloudP.levels,
           owners: cloudP.owners || saved.owners,
-          omod: cloudP.omod || saved.omod
+          omod: cloudP.omod || saved.omod,
+          ownerMods: cloudP.ownerMods || saved.ownerMods
         });
       }
     });
@@ -4697,18 +4740,10 @@ function adoptWorld(incoming){
     Object.entries(mojeBizVlastnictvi).forEach(([id, zaloha]) => {
       const b = world.businesses[id];
       if(!b) return;
-      const cloudOmod = b.omod || 0;
-      if((zaloha.omod || 0) > cloudOmod){
-        b.owners = JSON.parse(JSON.stringify(zaloha.owners));
-        b.omod = zaloha.omod;
-      } else if(!cloudOmod && !(zaloha.omod || 0)){
-        const mujStary = zaloha.owners[myName] || 0;
-        if(mujStary > 0 && !(b.owners && b.owners[myName])){
-          if(!b.owners) b.owners = {};
-          const obsazeno = Object.values(b.owners).reduce((a, c) => a + c, 0);
-          if(obsazeno + mujStary <= 100.001) b.owners[myName] = mujStary;
-        }
-      }
+      const slouceno = mergeOwners(zaloha, b);
+      b.owners = slouceno.owners;
+      b.ownerMods = slouceno.ownerMods;
+      b.omod = Math.max(zaloha.omod || 0, b.omod || 0);
     });
     // Nájem se obnovuje podle STÁLÉHO ID bytu (uid), ne podle pořadí v poli. Když majitel
     // mezitím dům přestavěl nebo přidal byt (projekt "podkroví"), index ukazoval na úplně
@@ -4744,7 +4779,7 @@ function worldForCloud(){
     const owned = p.owners && Object.keys(p.owners).length > 0;
     const modified = owned || p.useType || (p.units && p.units.length) || p.upgrades ||
                      (p.gentrifyMult && p.gentrifyMult !== 1) || p.popularity || p.salesHistory ||
-                     p.mod || p.omod || p.project;
+                     p.mod || p.omod || p.ownerMods || p.project;
     // POZOR na `p.omod`: dům, ze kterého majitel prodal úplně všechno, nemá vlastníka ani byty.
     // Bez razítka podílů by vypadal jako "nedotčený", nešel by do cloudu — a ostatní zařízení
     // by ho dál zobrazovala jako cizí majetek, protože by se o prodeji nikdy nedozvěděla.
@@ -6796,7 +6831,7 @@ async function buyHouseStake(id){
   me.balance -= cost;
   const wasEmpty = !houseHasOwner(p) || (p.owners[currentUser.name]||0) === 0;
   p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
-  stampOwners(p);
+  stampOwners(p, currentUser.name);
 
   // Gentrifikace: nákup dočasně zvedne ceny i oblíbenost okolních domů (do 150 m) úměrně velikosti nákupu.
   // Bez dalších nákupů v okolí efekt postupně odezní (viz GENTRIFY_DECAY_PER_DAY v ticku).
@@ -6842,7 +6877,7 @@ async function claimStarterHome(id){
     if(!ok) return;
   }
   p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
-  stampOwners(p);
+  stampOwners(p, currentUser.name);
   me.starterHomeAvailable = false;
   if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; stampHouse(p); } // hned kde bydlet
 
@@ -6890,7 +6925,7 @@ async function sellHouseStake(id){
   world.users[currentUser.name].balance += refund;
   p.owners[currentUser.name] -= pct;
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
-  stampOwners(p);
+  stampOwners(p, currentUser.name);
   if(!houseHasOwner(p)){ p.useType = null; delete p.units; stampHouse(p); }
   addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${refund} Kč.`);
   saveWorld(); refreshAll();
@@ -6986,7 +7021,7 @@ async function buyListing(listingId){
   p.owners[l.seller] -= l.pct;
   if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
   p.owners[currentUser.name] = (p.owners[currentUser.name]||0) + l.pct;
-  stampOwners(p);
+  stampOwners(p, l.seller, currentUser.name);
   recordSale(p, l.price, l.pct); // reálný prodej posune hodnotu domu
   addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} od hráče ${l.seller} za ${l.price} Kč.`);
   closeListing(listingId);
@@ -7036,7 +7071,7 @@ function resolveAuctions(){
       p.owners[l.seller] -= l.pct;
       if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
       p.owners[l.highestBidder] = (p.owners[l.highestBidder]||0) + l.pct;
-      stampOwners(p);
+      stampOwners(p, l.seller, l.highestBidder);
       recordSale(p, l.currentBid, l.pct); // vydražená cena posune hodnotu domu
       addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${l.currentBid} Kč.`);
     } else if(l.highestBidder && world.users[l.highestBidder]){
@@ -7244,7 +7279,7 @@ function seizeAssetForDebt(user, loan){
     seizedDesc = `${pct.toFixed(1)} % domu ${house.id.replace('h_','#')} (výplata ${proceeds} Kč)`;
     applySeizureProceeds(user, loan, proceeds);
     delete house.owners[owner];
-    stampOwners(house);
+    stampOwners(house, owner);
     if(!houseHasOwner(house)){ house.useType = null; delete house.units; stampHouse(house); }
   } else {
     const biz = Object.values(world.businesses).find(b => (b.owners[owner] || 0) > 0);
@@ -7254,7 +7289,7 @@ function seizeAssetForDebt(user, loan){
       seizedDesc = `${pct.toFixed(1)} % podílu v ${biz.name} (výplata ${proceeds} Kč)`;
       applySeizureProceeds(user, loan, proceeds);
       delete biz.owners[owner];
-      stampBizOwners(biz);
+      stampBizOwners(biz, owner);
     }
   }
 
@@ -8490,11 +8525,11 @@ async function adminSetMoney(name){
 // (aktivní na svém zařízení) pošle synchronizací svou starou verzi domu.
 function seizeAssets(name){
   Object.values(world.parcels).forEach(p => {
-    if(p.owners && p.owners[name] !== undefined){ delete p.owners[name]; stampHouse(p); stampOwners(p); }
+    if(p.owners && p.owners[name] !== undefined){ delete p.owners[name]; stampHouse(p); stampOwners(p, name); }
     if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
     (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
   });
-  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined){ delete b.owners[name]; stampBizOwners(b); } });
+  Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined){ delete b.owners[name]; stampBizOwners(b, name); } });
   Object.keys(world.listings || {}).forEach(id => { if(world.listings[id].seller === name) closeListing(id); });
   if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object') world.seizedPlayers = {};
   world.seizedPlayers[name] = Date.now();
@@ -10216,7 +10251,7 @@ async function buyStake(bizId){
     `Zůstane ti ${Math.round(me.balance - cost).toLocaleString('cs-CZ')} Kč.`))) return;
   me.balance -= cost;
   biz.owners[currentUser.name] = (biz.owners[currentUser.name] || 0) + pct;
-  stampBizOwners(biz);
+  stampBizOwners(biz, currentUser.name);
   addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${pct.toFixed(0)} % za ${cost} Kč).`);
   saveWorld(); refreshAll();
   showAlert(`Koupeno ${pct.toFixed(1)} % podílu za ${cost} Kč.`);
@@ -10238,7 +10273,7 @@ async function sellStake(bizId){
   world.users[currentUser.name].balance += refund;
   biz.owners[currentUser.name] -= pct;
   if(biz.owners[currentUser.name] <= 0.001) delete biz.owners[currentUser.name];
-  stampBizOwners(biz);
+  stampBizOwners(biz, currentUser.name);
   saveWorld(); refreshAll();
   playSound('sell');
   showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
