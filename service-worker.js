@@ -1,43 +1,58 @@
-// Service Worker pro "Bučovice bez majitelů"
-// Cíl: appka jde nainstalovat na plochu a otevře se i bez signálu (cache).
-// GPS a mapové dlaždice pořád potřebují internet — offline funguje jen spuštění appky.
+// Service worker pro Bučpoly.
+// Klíčová věc: název cache obsahuje verzi. Při každém vydání se změní, stará cache se smaže
+// a hráči se nemůžou zaseknout na staré verzi hry. Přesně to způsobovalo, že staré klienty
+// přepisovaly data ostatním, i když už byla nasazená oprava.
+const VERZE = '2.3';
+const CACHE = 'bucpoly-v' + VERZE;
 
-const CACHE_NAME = 'bucovice-landlord-v2';
-const CORE_ASSETS = [
-  './index.html',
-  './manifest.json',
-  './icon-192.png',
-  './icon-512.png',
-];
+// Co se má držet offline. Mapové dlaždice a Firebase se schválně necachují —
+// ty musí být vždycky živé.
+const SOUBORY = ['./', './index.html', './manifest.json'];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS))
-  );
-  self.skipWaiting();
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SOUBORY)).catch(() => {}));
 });
 
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((names) =>
-      Promise.all(names.filter((n) => n !== CACHE_NAME).map((n) => caches.delete(n)))
-    )
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys()
+      .then(klice => Promise.all(klice.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Strategie: síť, pokud nejde -> cache (ať appka jde otevřít i bez signálu,
-// ale při připojení se vždy nejdřív zkusí čerstvá verze).
-self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET') return;
+// Zpráva z appky: "nečekej a převezmi řízení" (hráč odklikl nabídku aktualizace).
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
 
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
-      })
-      .catch(() => caches.match(event.request))
+self.addEventListener('fetch', (e) => {
+  const url = new URL(e.request.url);
+
+  // Nikdy necachovat: cizí domény (mapy, Firebase, Overpass) a cokoli kromě GET.
+  if (e.request.method !== 'GET' || url.origin !== self.location.origin) return;
+
+  // Samotnou hru bereme VŽDY nejdřív ze sítě — do cache sáhneme, jen když není signál.
+  // Opačné pořadí (cache first) je přesně to, co drží hráče na staré verzi.
+  const jeHra = url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
+  if (jeHra) {
+    e.respondWith(
+      fetch(e.request)
+        .then(odpoved => {
+          const kopie = odpoved.clone();
+          caches.open(CACHE).then(c => c.put(e.request, kopie)).catch(() => {});
+          return odpoved;
+        })
+        .catch(() => caches.match(e.request).then(r => r || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  e.respondWith(
+    caches.match(e.request).then(r => r || fetch(e.request).then(odpoved => {
+      const kopie = odpoved.clone();
+      caches.open(CACHE).then(c => c.put(e.request, kopie)).catch(() => {});
+      return odpoved;
+    }))
   );
 });
