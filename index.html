@@ -534,7 +534,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '2.0';
+const APP_VERSION = '2.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3623,7 +3623,16 @@ function tickMarketCycle(daysElapsed){
 }
 const GENTRIFY_DECAY_PER_DAY = 0.90; // gentrifikační bonus odeznívá — bez dalších nákupů v okolí se cena vrací zpět
 // Aktuální tržní hodnota domu (základ × odeznívající gentrifikace z okolních nákupů × aktuální cyklus)
-function effectiveHousePrice(p){ return p.basePrice * (p.gentrifyMult || 1) * marketMultiplier() * inflationMult(); }
+// Strop cenového bonusu z okolních nákupů. Bez něj se násobitel při každé koupi v okolí
+// znovu vynásobil a nic ho nedrželo — kdo pořád dokola kupoval a prodával to samé procento,
+// vyhnal ceny okolí na absurdní čísla (na tržišti se pak objevily nabídky za 1e+128 Kč).
+const GENTRIFY_MAX = 2.5;
+function gentrify(p){
+  const g = p && p.gentrifyMult;
+  if(!(typeof g === 'number') || !isFinite(g) || g < 1) return 1;
+  return Math.min(g, GENTRIFY_MAX);
+}
+function effectiveHousePrice(p){ return p.basePrice * gentrify(p) * marketMultiplier() * inflationMult(); }
 
 function houseSoldPct(p){ return Object.values(p.owners||{}).reduce((s,v)=>s+v, 0); }
 function houseFreePct(p){ return Math.max(0, 100 - houseSoldPct(p)); }
@@ -3775,6 +3784,19 @@ function mergeOwners(zaloha, cloud){
 // Stálé ID bytu. Byty se dřív rozlišovaly jen pořadím v poli, takže po přestavbě domu
 // (nebo po vestavbě podkroví) ukazoval uložený index na jiný byt — nájemníkům se měnily byty.
 function newUnitId(){ return 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+// Strop ceny na tržišti. Nabídka nesmí být nesmyslně vysoká — jednak to nikdo nekoupí
+// a jen to zaplevelí tržiště, jednak se obří čísla vypisují ve tvaru "1e+128 Kč",
+// což vypadá jako rozbitá hra.
+const CENA_MAX_NASOBEK = 20;      // kolikanásobek tržního odhadu ještě projde
+const CENA_STROP = 50000000;      // absolutní strop
+function platnaCena(hodnota, trzniOdhad){
+  const c = Math.round(Number(hodnota));
+  if(!isFinite(c) || c <= 0) return null;
+  const strop = Math.min(CENA_STROP, Math.max(1000, Math.round((trzniOdhad || 0) * CENA_MAX_NASOBEK)));
+  if(c > strop) return { chyba: `Nejvyšší možná cena je ${strop.toLocaleString('cs-CZ')} Kč (${CENA_MAX_NASOBEK}× tržní odhad). Za víc by to stejně nikdo nekoupil.` };
+  return { cena: c };
+}
+
 // ID nabídky na tržišti. Dřív jen 'lst_'+Date.now() — dva hráči, kteří nabídli ve stejnou
 // milisekundu, dostali stejné ID a jedna nabídka tu druhou přepsala.
 function newListingId(){ return 'lst_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7); }
@@ -4234,7 +4256,11 @@ function migrateWorld(){
         if(!world.businesses[k] || typeof world.businesses[k] !== 'object') delete world.businesses[k];
       });
       Object.keys(world.listings || {}).forEach(k => {
-        if(!world.listings[k] || typeof world.listings[k] !== 'object') delete world.listings[k];
+        const l = world.listings[k];
+        if(!l || typeof l !== 'object'){ delete world.listings[k]; return; }
+        // Jednorázový úklid: nabídky s nesmyslnou cenou (následek přetečené gentrifikace) pryč.
+        const cena = (l.type === 'auction') ? l.currentBid : l.price;
+        if(!isFinite(cena) || cena <= 0 || cena > CENA_STROP) delete world.listings[k];
       });
       Object.values(world.users).forEach(u => {
         if(u.totalShifts === undefined) u.totalShifts = 0;
@@ -4310,6 +4336,9 @@ function migrateWorld(){
         }
         delete p.condition; delete p.rentPrice; // přesunuto do units
         if(p.ownerMods && (typeof p.ownerMods !== 'object' || Array.isArray(p.ownerMods))) delete p.ownerMods;
+        // Srovnat gentrifikaci, která se u starších světů stihla vyšplhat do nesmyslných čísel.
+        p.gentrifyMult = gentrify(p);
+        if(!isFinite(p.basePrice) || p.basePrice <= 0) p.basePrice = (fresh[id] && fresh[id].basePrice) || 1000;
         if(p.units) p.units = asArray(p.units);
         // Doplnit stálá ID bytům ze starších verzí. Odvozená z ID domu a pořadí, aby
         // vyšla STEJNĚ na všech zařízeních — jinak by si každý telefon vyrobil vlastní
@@ -5137,7 +5166,7 @@ function tick(){
   // Gentrifikace odeznívá — bez dalších nákupů v okolí se zvýšená cena postupně vrací k základu
   Object.values(world.parcels).forEach(p => {
     if(p.gentrifyMult && p.gentrifyMult > 1){
-      p.gentrifyMult = 1 + (p.gentrifyMult - 1) * Math.pow(GENTRIFY_DECAY_PER_DAY, dayFraction);
+      p.gentrifyMult = 1 + (gentrify(p) - 1) * Math.pow(GENTRIFY_DECAY_PER_DAY, dayFraction);
       if(p.gentrifyMult < 1.001) p.gentrifyMult = 1;
     }
   });
@@ -6383,8 +6412,8 @@ function renderSelected(id){
   html += `<p style="font-size:0.92em;"><span style="color:${popInfo.color}">${popInfo.stars} ${popInfo.label}</span> <span style="color:var(--muted)">— historie zájmu o tuhle lokalitu (trvalé, neodeznívá)</span></p>`;
   const cyc = marketCycleLabel();
   html += `<p style="font-size:0.92em;"><span style="color:${cyc.color}">${cyc.label}</span> <span style="color:var(--muted)">— celoměstský trh teď ceny ${marketMultiplier()>=1?'zvedá':'stahuje dolů'} (×${marketMultiplier().toFixed(2)})</span></p>`;
-  if((p.gentrifyMult||1) > 1.01){
-    html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${p.gentrifyMult.toFixed(2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
+  if(gentrify(p) > 1.01){
+    html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${gentrify(p).toFixed(2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
   }
   if(p.salesHistory && p.salesHistory.length){
     html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
@@ -6910,7 +6939,7 @@ async function buyHouseStake(id){
   Object.values(world.parcels).forEach(other => {
     if(other.id === p.id) return;
     if(haversine({lat:p.lat,lng:p.lng}, {lat:other.lat,lng:other.lng}) <= GENTRIFY_RADIUS){
-      if(bump > 1) other.gentrifyMult = (other.gentrifyMult || 1) * bump;
+      if(bump > 1) other.gentrifyMult = Math.min(GENTRIFY_MAX, gentrify(other) * bump);
       other.popularity = (other.popularity || 0) + pct/100; // "kolik podílů se v okolí koupilo" (historický ukazatel, neodeznívá)
     }
   });
@@ -7021,16 +7050,22 @@ async function listHouseStake(id){
   const isAuction = await showConfirm('OK = aukce (hráči přihazují 2 dny), Zrušit = pevná cena (kdo chce, koupí hned).');
   const marketRef = Math.round(houseMarketPricePerPercent(p) * pct);
   if(isAuction){
-    const startBid = parseInt(await showPrompt(`Vyvolávací cena aukce za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
-    if(isNaN(startBid) || startBid <= 0) return;
+    const vstup = parseInt(await showPrompt(`Vyvolávací cena aukce za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
+    const overeno = platnaCena(vstup, marketRef);
+    if(!overeno) return;
+    if(overeno.chyba){ showAlert(overeno.chyba); return; }
+    const startBid = overeno.cena;
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction', mod: Date.now(),
       startBid, currentBid:startBid, highestBidder:null, endsAtDay: world.day + AUCTION_DURATION_DAYS};
     addNews('market', `🔨 ${currentUser.name} vydražuje ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} (od ${startBid} Kč).`);
     showAlert(`Aukce spuštěna — končí za ${AUCTION_DURATION_DAYS} herní dny.`);
   } else {
-    const price = parseInt(await showPrompt(`Pevná cena za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
-    if(isNaN(price) || price <= 0) return;
+    const vstup = parseInt(await showPrompt(`Pevná cena za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
+    const overeno = platnaCena(vstup, marketRef);
+    if(!overeno) return;
+    if(overeno.chyba){ showAlert(overeno.chyba); return; }
+    const price = overeno.cena;
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price, mod: Date.now()};
     addNews('market', `🏷️ ${currentUser.name} nabízí ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${price} Kč.`);
@@ -7064,7 +7099,7 @@ function recordSale(p, totalPrice, pct){
   if(!p || pct <= 0) return;
   const pricePerPct = totalPrice / pct; // cena za 1 %
   // "očistíme" cenu od dočasných vlivů (cyklus, gentrifikace, inflace), ať dostaneme strukturální hodnotu
-  const structuralPerPct = pricePerPct / (marketMultiplier() * (p.gentrifyMult || 1) * inflationMult());
+  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult());
   const structuralBase = structuralPerPct * 100; // odpovídající basePrice
   // posun basePrice o 30 % k realizované ceně (zbytek setrvačnost — jeden prodej cenu neurčí úplně)
   p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
@@ -7108,8 +7143,12 @@ async function bidListing(listingId){
   if(!l || l.type!=='auction') return;
   if(l.seller === currentUser.name){ showAlert('Nemůžeš dražit vlastní aukci.'); return; }
   const minBid = l.highestBidder ? l.currentBid + 1 : l.currentBid;
-  const bid = parseInt(await showPrompt(`Tvá nabídka za ${l.pct.toFixed(1)} % (min. ${minBid} Kč):`, minBid), 10);
-  if(isNaN(bid) || bid < minBid){ showAlert(`Musíš přihodit aspoň ${minBid} Kč.`); return; }
+  const vstupBid = parseInt(await showPrompt(`Tvá nabídka za ${l.pct.toFixed(1)} % (min. ${minBid} Kč):`, minBid), 10);
+  if(isNaN(vstupBid) || vstupBid < minBid){ showAlert(`Musíš přihodit aspoň ${minBid} Kč.`); return; }
+  const overenyBid = platnaCena(vstupBid, Math.max(minBid, Math.round(houseMarketPricePerPercent(world.parcels[l.houseId]) * l.pct)));
+  if(!overenyBid) return;
+  if(overenyBid.chyba){ showAlert(overenyBid.chyba); return; }
+  const bid = overenyBid.cena;
   const me = world.users[currentUser.name];
   if(me.balance < bid){ showAlert('Nemáš dost peněz na tuhle nabídku.'); return; }
   if(l.highestBidder === currentUser.name){ showAlert('Už vedeš v této aukci.'); return; }
@@ -7223,12 +7262,16 @@ function financeBreakdown(name){
   // Plat počítáme jen tehdy, když se dnes do práce OPRAVDU dá jít. Dřív se započítával
   // i o víkendu (zavřeno) a i po odpracované směně, takže předpověď "za kolik dní ti dojdou
   // peníze" byla optimističtější než realita.
+  // Denní rozpočet je ODHAD BĚŽNÉHO DNE, ne zůstatek dneška. Plat se proto počítá vždycky —
+  // zítra se do práce zase půjde. Ve verzi 1.8 jsem ho po odpracované směně nuloval, takže
+  // rozpočet večer spadl do mínusu a hra hráči radila "seber si práci", i když právě přišel
+  // ze směny. Poznámku o dnešku necháváme, ale částku už ne.
   const job = getCurrentJob(name);
   if(job){
-    const dnesJesteMuze = !isWeekend() && u.lastWorkedCalDay !== calendarDay();
     const plat = job.job.salary * inflationMult() * eventMult('wageMult');
-    if(dnesJesteMuze) income.push({label:'💼 Plat (1 směna/den)', amount: plat});
-    else income.push({label: isWeekend() ? '💼 Plat (o víkendu zavřeno)' : '💼 Plat (dnes už odpracováno)', amount: 0});
+    const poznamka = isWeekend() ? ' — dnes je víkend, zavřeno'
+      : (u.lastWorkedCalDay === calendarDay() ? ' — dnešní směna hotová' : '');
+    income.push({label: `💼 Plat (1 směna/den)${poznamka}`, amount: plat});
   }
 
   // VÝDAJE
@@ -7649,17 +7692,17 @@ const PROJECT_DEFS = {
   fasada: {
     name:'Nová fasáda', icon:'🎨', days:3, costRatio:0.15,
     desc:'Zvedne hodnotu domu o 12 % natrvalo.',
-    apply:(p) => { p.gentrifyMult = (p.gentrifyMult || 1) * 1.12; }
+    apply:(p) => { p.gentrifyMult = Math.min(GENTRIFY_MAX, gentrify(p) * 1.12); }
   },
   zahrada: {
     name:'Úprava zahrady', icon:'🌳', days:2, costRatio:0.08,
     desc:'Zvedne hodnotu domu o 5 % a zlepší okolí.',
     apply:(p) => {
-      p.gentrifyMult = (p.gentrifyMult || 1) * 1.05;
+      p.gentrifyMult = Math.min(GENTRIFY_MAX, gentrify(p) * 1.05);
       // malý pozitivní vliv i na sousedy do 60 m
       Object.values(world.parcels).forEach(q => {
         if(q.id === p.id) return;
-        if(haversine({lat:p.lat,lng:p.lng},{lat:q.lat,lng:q.lng}) <= 60) q.gentrifyMult = (q.gentrifyMult || 1) * 1.01;
+        if(haversine({lat:p.lat,lng:p.lng},{lat:q.lat,lng:q.lng}) <= 60) q.gentrifyMult = Math.min(GENTRIFY_MAX, gentrify(q) * 1.01);
       });
     }
   },
@@ -8423,7 +8466,7 @@ function adminPlayerDetail(name){
       const zbyva = Math.max(0, p.project.endDay - (world.day||1));
       td += r('🏗️ projekt', (def?def.name:p.project.key) + ' — hotovo za ' + zbyva + ' dní (zaplatil ' + kc(p.project.cost) + ' Kč)', 'var(--gold)');
     }
-    if((p.gentrifyMult||1) !== 1) td += r('gentrifikace', '×' + (p.gentrifyMult||1).toFixed(3));
+    if(gentrify(p) !== 1) td += r('gentrifikace', '×' + gentrify(p).toFixed(3));
     // historie prodejů — kdo kdy kolik koupil
     const hist = asArray(p.salesHistory);
     if(hist.length){
