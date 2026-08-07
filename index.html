@@ -560,7 +560,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '2.3';
+const APP_VERSION = '2.4';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6603,7 +6603,9 @@ function renderSelected(id){
     html += `<div class="row">`;
     if(p.useType !== 'residence'){
       const obsazenych = asArray(p.units).filter(u => u && (u.tenant || u.npc)).length;
-      html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)${obsazenych?` ⚠️ vystěhuje ${obsazenych}`:''}</button>`;
+      // Název musí být na první pohled odlišitelný od tlačítka u jednotlivého bytu —
+      // hráči si to pletli a báli se cokoli zmáčknout, aby nepřišli o nájemníky.
+      html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet v CELÉM domě (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)${obsazenych?` ⚠️ vystěhuje ${obsazenych}`:''}</button>`;
     }
     if(p.useType !== 'rental'){
       const uzZarizeno = asArray(p.units).length;   // dům byl přestavěný dřív → znovu otevřít je zdarma
@@ -6710,6 +6712,7 @@ function renderSelected(id){
       else if(sanceNaNajemnika >= 30){ occLabel='volný — zájem je slabší'; occColor='var(--orange)'; }
       else { occLabel='volný — za tuhle cenu nikdo nechce'; occColor='var(--danger)'; }
       const realCollected = (u.tenant || u.npc) ? u.rentPrice : 0;
+      const pocetObsazenych = asArray(p.units).filter(x => x && (x.tenant || x.npc)).length;
       const canRent = !u.tenant && !u.npc && u.condition>0 && myPct===0 && housingStatus(currentUser?.name)==='homeless';
       // popis obyvatele bytu
       let occupantLine;
@@ -6736,10 +6739,23 @@ function renderSelected(id){
             ? `<p style="margin:0;font-size:0.9em;">Nájemník platí <b style="color:var(--gold)">${u.rentPrice} Kč/den</b></p>`
             : `<p style="margin:0;font-size:0.9em;">Teď vydělává <b style="color:var(--danger)">0 Kč/den</b> — je prázdný.</p>
                <p style="margin:2px 0 0 0;font-size:0.85em;color:var(--muted)">Až se někdo nastěhuje, bude platit ${u.rentPrice} Kč/den. Čím nižší nájem, tím dřív se to stane.</p>`}
-          ${myPct < 100 ? `<p style="margin:3px 0 0 0;font-size:0.9em;">
-              Rozpad: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${myPct.toFixed(0)} %</b> =
-              <b style="color:var(--gold)">${(realCollected*myPct/100).toFixed(0)} Kč/den pro tebe</b></p>`
-            : `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům, takže máš <b style="color:var(--gold)">${realCollected.toFixed(0)} Kč/den</b>.</p>`}
+          ${(() => {
+            // Rozpad ukazujeme jen u OBSAZENÉHO bytu. U prázdného vycházela rovnice
+            // "100 Kč × 50 % = 0 Kč", což vypadá jako chyba ve výpočtu — u prázdného bytu
+            // je správně ukázat, kolik to VYNESE, až se někdo nastěhuje.
+            if(myPct >= 100){
+              return realCollected
+                ? `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům, takže máš <b style="color:var(--gold)">${realCollected.toFixed(0)} Kč/den</b>.</p>`
+                : `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům — až se někdo nastěhuje, půjde ti <b style="color:var(--gold)">${u.rentPrice} Kč/den</b>.</p>`;
+            }
+            return realCollected
+              ? `<p style="margin:3px 0 0 0;font-size:0.9em;">
+                   Rozpad: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${myPct.toFixed(0)} %</b> =
+                   <b style="color:var(--gold)">${(realCollected*myPct/100).toFixed(0)} Kč/den pro tebe</b></p>`
+              : `<p style="margin:3px 0 0 0;font-size:0.9em;">
+                   Až se někdo nastěhuje: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${myPct.toFixed(0)} %</b> =
+                   <b style="color:var(--gold)">${(u.rentPrice*myPct/100).toFixed(0)} Kč/den pro tebe</b></p>`;
+          })()}
           ${(() => {
             // Nájemník platí VŽDY celý nájem, ale rozdělí se jen mezi vlastníky podílů.
             // Neprodaná část domu patří městu a jeho díl nájmu propadne — hráče to mátlo.
@@ -6757,7 +6773,11 @@ function renderSelected(id){
         </div>` : ''}
         ${iDecide && u.npc ? `<div class="row"><button class="danger" onclick="evictNpc('${p.id}',${idx})">Vystěhovat ${escapeHtml(u.npc.name)}</button></div>` : ''}
         ${iDecide && u.ownerOccupied ? `<div class="row"><button class="secondary" onclick="leaveOwnUnit('${p.id}',${idx})">📤 Vystěhovat se (byt se zase pronajme)</button></div>` : ''}
-        ${iDecide && !u.ownerOccupied && !u.tenant && !u.npc ? `<div class="row"><button class="secondary" ${near?'':'disabled'} onclick="occupyOwnUnit('${p.id}',${idx})">🏠 Bydlet v tomhle bytě</button></div>` : ''}
+        ${iDecide && !u.ownerOccupied && !u.tenant && !u.npc ? `<div class="row"><button class="secondary" ${near?'':'disabled'} onclick="occupyOwnUnit('${p.id}',${idx})">🏠 Bydlet jen v tomhle bytě</button></div>
+        <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0 0;">
+          Nikoho nevystěhuje — obsadíš jen tenhle jeden volný byt${pocetObsazenych ? `, zbylé ${pocetObsazenych} pronajímáš dál` : ''}.
+          Náklady na bydlení ti klesnou na ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.
+          <i>(Tlačítko „Bydlet" dole u celého domu je něco jiného — to vystěhuje všechny.)</i></p>` : ''}
         ${iDecide && !u.tenant && !u.npc && u.condition>0 ? npcApplicantsHtml(p, idx) : ''}
         ${canRent ? `<div class="row"><button ${near?'':'disabled'} onclick="rentUnit('${p.id}',${idx})">Najmout si tento byt (${u.rentPrice} Kč/den)</button></div>` : ''}
         ${iAmTenant ? `<div class="row"><button class="danger" onclick="endTenancy('${p.id}',${idx})">Dát výpověď z nájmu</button></div>` : ''}
