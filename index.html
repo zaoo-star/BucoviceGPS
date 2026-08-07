@@ -534,7 +534,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '1.9';
+const APP_VERSION = '2.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3678,14 +3678,70 @@ function stampHouse(p){ if(p) p.mod = Date.now(); }
 // Razítkujeme KAŽDÉHO dotčeného vlastníka zvlášť, ne jen dům jako celek. Kdyby se razítkoval
 // jen dům, vyhrála by při sloučení celá mapa podílů toho, kdo zapsal později — a smazala by
 // tím nákup, který ve stejném domě mezitím udělal někdo jiný. Peníze strženy, podíl pryč.
+// Razítka se porovnávají mezi telefony, ale každý telefon má vlastní hodiny. Zařízení, které
+// se o pár minut opožďuje, by svoje změny nikdy neprosadilo — a naopak telefon s hodinami
+// napřed by vyhrával navždycky. Proto si držíme nejvyšší razítko, jaké jsme kdy VIDĚLI
+// (i v cizích datech), a nové vždy vydáme o kus vyšší. Pořadí událostí pak drží i s rozhozenými hodinami.
+let nejvyssiRazitko = 0;
+function zaznamenejRazitko(t){ if(typeof t === 'number' && t > nejvyssiRazitko) nejvyssiRazitko = t; }
+function noveRazitko(){
+  nejvyssiRazitko = Math.max(Date.now(), nejvyssiRazitko + 1);
+  return nejvyssiRazitko;
+}
+
 function stampOwnerList(obj, jmena){
   if(!obj) return;
-  const t = Date.now();
+  const t = noveRazitko();
   obj.omod = t;
   if(!obj.ownerMods || typeof obj.ownerMods !== 'object' || Array.isArray(obj.ownerMods)) obj.ownerMods = {};
   (jmena || []).filter(Boolean).forEach(n => { obj.ownerMods[n] = t; });
 }
 function stampOwners(p, ...jmena){ stampOwnerList(p, jmena); }
+
+// ===== POJISTKA NA NÁKUPY =====
+// Peníze se strhávají z účtu hráče, ale podíl se ukládá do domu — jsou to dvě různá místa,
+// která se do cloudu slučují nezávisle. Kdyby se podíl z jakéhokoli důvodu neuchytil
+// (cizí zařízení se starou verzí hry, rozhozené hodiny, výpadek sítě), zůstal by hráč bez
+// peněz i bez podílu. Proto si každý nákup poznamenáme a po chvíli ho zkontrolujeme:
+// buď se podíl potvrdí, nebo se peníze vrátí. Nikdy obojí, nikdy ani jedno.
+const NAKUP_TOLERANCE_MS = 25000;   // kolik času dáme synchronizaci, než nákup vyhodnotíme
+
+function zapisNedokoncenyNakup(jmeno, houseId, pred, pct, cena){
+  const u = world.users && world.users[jmeno];
+  if(!u) return;
+  u.pendingBuys = asArray(u.pendingBuys);
+  u.pendingBuys.push({
+    id: 'nb_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    house: houseId, pred: pred, ocekavano: pred + pct, pct: pct, cena: cena, ts: Date.now()
+  });
+  if(u.pendingBuys.length > 30) u.pendingBuys = u.pendingBuys.slice(-30);
+}
+
+// Vrací text pro hráče, když se něco vracelo (jinak prázdný řetězec).
+function overNedokonceneNakupy(){
+  if(!currentUser) return '';
+  const u = world.users && world.users[currentUser.name];
+  if(!u || !asArray(u.pendingBuys).length) return '';
+  const ted = Date.now();
+  const zbyva = [];
+  let vraceno = 0, kusu = 0;
+  asArray(u.pendingBuys).forEach(nb => {
+    if(!nb || !nb.house){ return; }
+    const p = world.parcels[nb.house];
+    const mam = (p && p.owners && p.owners[currentUser.name]) || 0;
+    if(mam >= nb.ocekavano - 0.01) return;              // podíl sedí → nákup potvrzen, záznam zahodíme
+    if(ted - (nb.ts || 0) < NAKUP_TOLERANCE_MS){ zbyva.push(nb); return; }  // ještě dáváme čas na sync
+    // Podíl se neuchytil (celý nebo částečně) → vrátit poměrnou část peněz.
+    const chybi = Math.max(0, Math.min(nb.pct, nb.ocekavano - Math.max(mam, nb.pred)));
+    if(chybi > 0.01 && nb.pct > 0){
+      const nazpet = Math.round((nb.cena || 0) * (chybi / nb.pct));
+      if(nazpet > 0){ u.balance += nazpet; vraceno += nazpet; kusu++; }
+    }
+  });
+  u.pendingBuys = zbyva;
+  if(!vraceno) return '';
+  return `⚠️ ${kusu === 1 ? 'Jeden nákup se' : kusu + ' nákupy se'} nepodařilo dokončit — vrátili jsme ti ${vraceno.toLocaleString('cs-CZ')} Kč.`;
+}
 
 // Sloučí podíly dvou verzí domu/podniku PO JEDNOTLIVÝCH vlastnících. Každý vlastník má
 // vlastní razítko, takže dva souběžné nákupy ve stejném domě oba přežijí.
@@ -3696,6 +3752,7 @@ function mergeOwners(zaloha, cloud){
   const owners = {}, mods = {};
   jmena.forEach(n => {
     const tL = mL[n] || 0, tC = mC[n] || 0;
+    zaznamenejRazitko(tL); zaznamenejRazitko(tC);
     let pct;
     if(tL > tC) pct = oL[n] || 0;
     else if(tC > tL) pct = oC[n] || 0;
@@ -4205,6 +4262,7 @@ function migrateWorld(){
         };
         u.balance = cislo(u.balance, START_BALANCE, -50000000, 50000000);
         u.savings = cislo(u.savings, 0, 0, 50000000);
+        u.pendingBuys = asArray(u.pendingBuys);
         u.totalDistance = cislo(u.totalDistance, 0, 0, 100000000);
         u.totalShifts = cislo(u.totalShifts, 0, 0, 1000000);
         u.peakWorth = cislo(u.peakWorth, u.balance, 0, 1000000000);
@@ -4581,6 +4639,7 @@ function adoptWorld(incoming){
     world.lastProcessedDay = Math.max(myAdmin.lastProcessedDay, world.lastProcessedDay || 0);
   }
 
+  // (kontrola nedokončených nákupů je na konci adoptWorld, až je svět kompletní)
   // 2c) TRŽIŠTĚ: sjednotit nabídky z obou stran. U stejného ID vyhraje ta s novějším
   // razítkem `mod` (razítkuje se při založení i při každém příhozu), takže se neztratí
   // ani nabídka, ani poslední přihození. Uzavřené nabídky drží "náhrobky" v closedListings,
@@ -4765,6 +4824,15 @@ function adoptWorld(incoming){
       avatar: '🧑', totalShifts: 0, totalDistance: 0, walkEarnedToday: 0, distanceToday: 0, jobBanUntil: 0,
       lastWorkedCalDay: -1, joinedGameDay: (world.day||1), joinedRealDate: Date.now(), peakWorth: START_BALANCE };
   }
+
+  // Až je svět kompletní, ověříme nákupy, u kterých se ještě nepotvrdilo, že podíl dosedl.
+  // Buď se potvrdí, nebo se vrátí peníze — hráč nikdy nezůstane bez podílu i bez peněz.
+  const hlaseni = safeCall(() => overNedokonceneNakupy());
+  if(hlaseni){
+    saveWorld();
+    showAlert(hlaseni);
+  }
+
   if(currentUser) refreshAll();
 }
 
@@ -6830,8 +6898,10 @@ async function buyHouseStake(id){
     (budeMit > 50 ? ' — o domě budeš rozhodovat 👑' : ' (na rozhodování je potřeba přes 50 %)')))) return;
   me.balance -= cost;
   const wasEmpty = !houseHasOwner(p) || (p.owners[currentUser.name]||0) === 0;
-  p.owners[currentUser.name] = (p.owners[currentUser.name] || 0) + pct;
+  const predKoupi = p.owners[currentUser.name] || 0;
+  p.owners[currentUser.name] = predKoupi + pct;
   stampOwners(p, currentUser.name);
+  zapisNedokoncenyNakup(currentUser.name, p.id, predKoupi, pct, cost);
 
   // Gentrifikace: nákup dočasně zvedne ceny i oblíbenost okolních domů (do 150 m) úměrně velikosti nákupu.
   // Bez dalších nákupů v okolí efekt postupně odezní (viz GENTRIFY_DECAY_PER_DAY v ticku).
@@ -7020,8 +7090,10 @@ async function buyListing(listingId){
   if(seller) seller.balance += (l.price - fee); // prodejci jde cena minus provize (provize městu = mizí)
   p.owners[l.seller] -= l.pct;
   if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
-  p.owners[currentUser.name] = (p.owners[currentUser.name]||0) + l.pct;
+  const predKoupi = p.owners[currentUser.name] || 0;
+  p.owners[currentUser.name] = predKoupi + l.pct;
   stampOwners(p, l.seller, currentUser.name);
+  zapisNedokoncenyNakup(currentUser.name, p.id, predKoupi, l.pct, l.price);
   recordSale(p, l.price, l.pct); // reálný prodej posune hodnotu domu
   addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} od hráče ${l.seller} za ${l.price} Kč.`);
   closeListing(listingId);
@@ -10555,6 +10627,12 @@ window.onload = async () => {
   initMap();
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
+  // Kontrola nákupů běží i bez příchozí synchronizace — kdyby hráč zůstal chvíli sám
+  // (slabý signál, appka na pozadí), peníze se mu vrátí i tak.
+  setInterval(() => {
+    const hlaseni = safeCall(() => overNedokonceneNakupy());
+    if(hlaseni){ saveWorld(); refreshAll(); showAlert(hlaseni); }
+  }, 10000);
   registerServiceWorker();
   setupInstallPrompt();
   loadAdminFlag();
