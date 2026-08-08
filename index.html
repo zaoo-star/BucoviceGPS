@@ -560,7 +560,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '2.4';
+const APP_VERSION = '2.5';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -879,15 +879,18 @@ const INTERACTION_RADIUS = 60;        // metrů — jak blízko musíš být k d
 const HOUSE_VISIBLE_RADIUS = 130;     // metrů — domy dál od hráče se vůbec nevykreslují
 const JOB_RADIUS = 90;                // metrů — okolo radnice
 const WALK_REWARD_PER_METER = 0.05;   // Kč/m (5 Kč/100m)
-const WALK_DAILY_CAP = 400;           // Kč max z chůze za herní den
+const WALK_DAILY_CAP = 400;           // Kč max z chůze za herní den = 8 km při 0,05 Kč/m.
+                                      // Osm kilometrů denně je horní hranice toho, co člověk
+                                      // po městě reálně nachodí. Nad tím už chůze nevydělává —
+                                      // dřív se strop nikde neuplatňoval a šlo vydělat až 1500 Kč/den.
 const GPS_JUMP_IGNORE = 200;          // m — ignoruj skoky větší než tohle (GPS chyba/teleport)
 const GPS_NOISE_IGNORE = 6;           // m — ignoruj chvění do 6 m (GPS drift vestoje bývá 3-8 m).
                                       // Menší kroky se sčítají, takže pomalá chůze se stejně započítá,
                                       // jakmile souhrnný posun tenhle práh překročí.
 const GPS_MAX_ACCURACY = 25;          // m — když je poloha méně přesná než tohle, pohyb nepočítáme (šum).
                                       // Přísnější než dřív (40) — nepřesné údaje bývají příčinou falešných metrů.
-const GPS_MIN_STEP = 4;               // m — jednotlivý posun menší než tohle se ještě nezapočítá hned
-                                      // (drží referenci, čeká na nasčítání) — brání "cukání" na místě.
+// (dřív tu byla konstanta GPS_MIN_STEP s popisem mechaniky, která nikdy nevznikla —
+//  drobné kroky ve skutečnosti řeší GPS_NOISE_IGNORE výš)
 const MAX_WALK_SPEED_MS = 2.2;        // m/s (~8 km/h) — nejvyšší rychlost, co bereme jako chůzi/běh.
 const PLAY_AREA_RADIUS = 250;         // m — chůze se počítá jen když jsi do 250 m od nějakého domu.
                                       // Mimo herní oblast (za městem, kde nejsou domy) se peníze nepřipisují.
@@ -1274,6 +1277,8 @@ const DAYS_PER_YEAR = 365;
 const LOAN_LIMIT_RATIO = 0.8;            // max půjčka = 80 % odhadovaného jmění (nad rámec základního stropu)
 const LOAN_BASE_LIMIT = 15000;          // každý si může půjčit aspoň tolik (nastartování na začátku)
 const MORTGAGE_REPO_MULTIPLIER = 1.5;    // banka zabaví dům, když dluh přesáhne 150 % ceny domu
+const MORTGAGE_MIN_PAYMENT_RATIO = 0.008; // banka strhává 0,8 % jistiny denně → splaceno zhruba za 4 měsíce
+const MORTGAGE_SEIZURE_MISSED_DAYS = 8;   // hypotéka je jištěná domem, tak má delší knot než běžná půjčka
 
 const LOAN_MIN_PAYMENT_RATIO = 0.03;     // nezajištěná půjčka: banka si sama strhne 3 % jistiny/den, pokud máš na účtu dost
 const LOAN_SEIZURE_MISSED_DAYS = 5;      // 5 dní po sobě nezaplaceno → banka zabaví majetek na pokrytí dluhu
@@ -4802,7 +4807,7 @@ function adoptWorldVnitrni(incoming){
       const ja = world.users[myName];
       const vyssi = (k) => { const a = ja[k], b = cloudMe[k];
         if(typeof a === 'number' || typeof b === 'number') ja[k] = Math.max(a || 0, b || 0); };
-      ['lastWorkedCalDay','lastWorkedDay','totalShifts','currentJobShifts','totalDistance',
+      ['lastWorkedCalDay','totalShifts','currentJobShifts','totalDistance',
        'questBonusDay','streakDay','streakBest','peakWorth'].forEach(vyssi);
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
       const darky = new Set([...asArray(ja.claimedGifts), ...asArray(cloudMe.claimedGifts)]);
@@ -4910,7 +4915,10 @@ function adoptWorldVnitrni(incoming){
   // POJISTKA: přihlášený hráč nesmí po sloučení chybět (jinak "Profil nenalezen" a nic nejede).
   // Když v přijatém světě není a máme jeho zálohu, vrátíme ji; když ani to ne, vytvoříme základní účet.
   if(myName && !world.users[myName]){
+    // Musí odpovídat vytvoření účtu v doLogin(). Dřív tu chybělo `starterHomeAvailable`
+    // a `pinHash`, takže komu se účet takhle obnovil, přišel o dům zdarma i o PIN.
     world.users[myName] = myUser || { name: myName, balance: START_BALANCE, savings: 0, loans: [], achievements: [],
+      starterHomeAvailable: true, pinHash: null,
       avatar: '🧑', totalShifts: 0, totalDistance: 0, walkEarnedToday: 0, distanceToday: 0, jobBanUntil: 0,
       lastWorkedCalDay: -1, joinedGameDay: (world.day||1), joinedRealDate: Date.now(), peakWorth: START_BALANCE };
   }
@@ -5261,8 +5269,9 @@ function tickVnitrni(){
     if(!u.loans) u.loans = [];
     u.loans.forEach(loan => {
       loan.balance += loan.balance * loan.dailyRate * dayFraction;
-      if(loan.type === 'loan'){
-        const minPay = Math.min(loan.principal * LOAN_MIN_PAYMENT_RATIO * dayFraction, loan.balance);
+      if(loan.type === 'loan' || loan.type === 'mortgage'){
+        const podil = loan.type === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
+        const minPay = Math.min(loan.principal * podil * dayFraction, loan.balance);
         if(u.balance >= minPay){
           u.balance -= minPay;
           loan.balance -= minPay;
@@ -5274,10 +5283,34 @@ function tickVnitrni(){
     });
   });
 
+  // splacené půjčky ze seznamu pryč (u hypotéky to znamená, že dům je konečně jen tvůj)
+  Object.values(world.users).forEach(u => {
+    if(!u.loans) return;
+    const doplacene = u.loans.filter(l => l.balance <= 0.5);
+    doplacene.forEach(l => {
+      if(l.type === 'mortgage' && l.houseId) addNews('bank', `🎉 ${u.name} doplatil hypotéku na dům ${l.houseId.replace('h_','#')}.`);
+    });
+    if(doplacene.length) u.loans = u.loans.filter(l => l.balance > 0.5);
+  });
+
   // exekuce majetku za dlouhodobě neplacenou nezajištěnou půjčku
   Object.values(world.users).forEach(u => {
     (u.loans || []).filter(l => l.type === 'loan' && (l.missedDays || 0) >= LOAN_SEIZURE_MISSED_DAYS)
       .forEach(loan => seizeAssetForDebt(u, loan));
+  });
+
+  // Hypotéka: banka si bere ZPÁTKY zastavený dům, ne náhodný jiný majetek. Spustí to buď
+  // dlouhé neplacení, nebo když dluh přeroste 150 % ceny domu (dům přestal stačit jako záruka).
+  Object.values(world.users).forEach(u => {
+    (u.loans || []).filter(l => l.type === 'mortgage').forEach(loan => {
+      const p = world.parcels[loan.houseId];
+      if(!p) return;
+      const hodnotaZastavy = houseMarketPricePerPercent(p) * Math.min(loan.pct || 0, p.owners?.[u.name] || 0);
+      const podvodni = hodnotaZastavy > 0 && loan.balance > hodnotaZastavy * MORTGAGE_REPO_MULTIPLIER;
+      const neplatic = (loan.missedDays || 0) >= MORTGAGE_SEIZURE_MISSED_DAYS;
+      if(!podvodni && !neplatic) return;
+      zabavZastavu(u, loan, p, podvodni ? 'hodnota domu už nestačí na dluh' : 'dlouhodobé neplacení');
+    });
   });
 
   world.dayProgress += dayFraction;
@@ -6096,6 +6129,7 @@ function ensureWalkDay(u){
     u.walkCalDay = today;
     u.distanceToday = 0;
     u.walkEarnedToday = 0;
+    u.walkCapHlaseno = false;
   }
   return u;
 }
@@ -6108,11 +6142,25 @@ function creditWalking(dist){
   if(u.walkBlocked) return;                                   // anti-cheat: dnes už se chůze neplatí
   if((u.distanceToday || 0) >= WALK_SANE_DAILY_MAX) return;    // nesmyslně vysoký denní nájezd
   if(u.walkEarnedToday === undefined) u.walkEarnedToday = 0;
-  const reward = dist * WALK_REWARD_PER_METER * inflationMult() * eventMult('walkMult');
+
+  // DENNÍ STROP. Metry se počítají dál (kvůli úkolům a statistikám), ale peníze už nechodí.
+  // Poslední krok se ještě proplatí jen do výše zbytku, ať se strop netrefuje nastejno.
+  const strop = WALK_DAILY_CAP * inflationMult();
+  const zbyva = Math.max(0, strop - u.walkEarnedToday);
+  let reward = dist * WALK_REWARD_PER_METER * inflationMult() * eventMult('walkMult');
+  const dosahlStropu = reward >= zbyva;
+  reward = Math.min(reward, zbyva);
+
   u.balance += reward;
-  u.walkEarnedToday += reward; // jen pro přehled kolik dnes chůzí vydělal (bez stropu)
+  u.walkEarnedToday += reward;
   u.distanceToday = (u.distanceToday || 0) + dist;
   u.totalDistance = (u.totalDistance || 0) + dist;
+  // Jednou za den dát vědět, že další kroky už peníze nenesou — ať hráč netápe,
+  // proč mu přestalo přibývat.
+  if(dosahlStropu && !u.walkCapHlaseno){
+    u.walkCapHlaseno = true;
+    notifyPlayer('Denní strop z chůze', `Dnes sis chůzí vydělal maximum (${Math.round(strop)} Kč). Metry se dál počítají do úkolů, peníze přijdou zase zítra.`);
+  }
   saveWorld();
   updateHeaderStats();
   checkQuests();   // chůze může splnit denní úkol
@@ -6559,6 +6607,7 @@ function renderSelected(id){
     }</p>`;
   }
   if(free > 0) html += `<button ${near?'':'disabled'} onclick="buyHouseStake('${p.id}')">Koupit podíl${near?'':' (musíš být u domu)'}</button>`;
+  if(free > 0 && currentUser) html += `<button class="secondary" ${near?'':'disabled'} onclick="buyHouseStakeOnMortgage('${p.id}')">🏦 Na hypotéku (${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % předem)</button>`;
   html += `</div>`;
   // Návratnost: bez ní hráč nemá jak poznat, jestli je dům dobrá koupě. Cena za procento
   // se totiž mezi domy liší víc než nájem, takže levnější dům bývá lepší investice.
@@ -7466,6 +7515,89 @@ async function takeLoan(){
   showAlert(`Půjčeno ${amount} Kč.`);
 }
 
+// ===== HYPOTÉKA =====
+// Reálný způsob, jak se kupuje nemovitost: složíš akontaci, zbytek půjčí banka a dům jí
+// ručí. Úrok je proto výrazně nižší než u nezajištěné půjčky (6 % vs 18 % p.a.).
+// Když dluh přeroste 150 % ceny domu nebo přestaneš splácet, banka si vezme zpátky dům —
+// ne náhodný jiný majetek, jako u nezajištěné půjčky.
+
+function mortgageForHouse(u, houseId){
+  return asArray(u && u.loans).find(l => l && l.type === 'mortgage' && l.houseId === houseId) || null;
+}
+function mortgageDebtFor(u, houseId){
+  const m = mortgageForHouse(u, houseId);
+  return m ? m.balance : 0;
+}
+
+async function buyHouseStakeOnMortgage(id){
+  const p = world.parcels[id];
+  if(!p) return;
+  const me = world.users[currentUser.name];
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být u domu.'); return; }
+
+  const volne = houseFreePct(p);
+  if(volne <= 0){ showAlert('Tenhle dům je celý rozebraný.'); return; }
+
+  const cenaZaProcento = houseMarketPricePerPercent(p);
+  const maxZaHotove = Math.floor((me.balance / (cenaZaProcento * MORTGAGE_DOWNPAYMENT_RATIO)));
+  const maxPct = Math.min(volne, maxZaHotove, 100);
+  if(maxPct < 1){
+    showAlert(`Na akontaci nemáš dost. I nejmenší podíl (1 %) vyžaduje ${Math.ceil(cenaZaProcento*MORTGAGE_DOWNPAYMENT_RATIO).toLocaleString('cs-CZ')} Kč vlastních peněz.`);
+    return;
+  }
+
+  const vstup = parseInt(await showPrompt(
+    `Kolik % domu koupit na hypotéku? (volných ${volne.toFixed(1)} %, zvládneš ${maxPct.toFixed(0)} %)\n\n` +
+    `Cena za 1 %: ${Math.round(cenaZaProcento).toLocaleString('cs-CZ')} Kč\n` +
+    `Z toho zaplatíš hned: ${Math.round(cenaZaProcento*MORTGAGE_DOWNPAYMENT_RATIO).toLocaleString('cs-CZ')} Kč (${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} %)\n` +
+    `Zbytek půjčí banka za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně.`, Math.min(10, maxPct)), 10);
+  if(isNaN(vstup) || vstup <= 0) return;
+  const pct = Math.min(vstup, volne, maxPct);
+
+  const cena = Math.round(cenaZaProcento * pct);
+  const akontace = Math.round(cena * MORTGAGE_DOWNPAYMENT_RATIO);
+  const uver = cena - akontace;
+  const dennaSplatka = Math.round(uver * MORTGAGE_MIN_PAYMENT_RATIO);
+
+  if(me.balance < akontace){ showAlert('Na akontaci nemáš dost peněz.'); return; }
+
+  if(!(await showConfirm(
+    `Koupit ${pct.toFixed(1)} % domu ${p.id.replace('h_','#')} na hypotéku?\n\n` +
+    `Cena celkem: ${cena.toLocaleString('cs-CZ')} Kč\n` +
+    `Zaplatíš hned: ${akontace.toLocaleString('cs-CZ')} Kč\n` +
+    `Půjčka od banky: ${uver.toLocaleString('cs-CZ')} Kč za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně\n` +
+    `Banka si bude strhávat ~${dennaSplatka} Kč denně\n\n` +
+    `⚠️ Dům ručí za dluh. Když přestaneš splácet, banka si vezme právě tenhle podíl.`))) return;
+
+  // Znovu vyzvednout dům (stejná pojistka jako u běžného nákupu)
+  const p2 = world.parcels[id];
+  if(!p2){ showAlert('Dům se mezitím ztratil ze světa, nákup se neprovedl.'); return; }
+  if(pct > houseFreePct(p2) + 0.001){
+    showAlert(`Někdo byl rychlejší — volných je jen ${houseFreePct(p2).toFixed(1)} %. Nákup se neprovedl.`);
+    return;
+  }
+
+  const pred = p2.owners?.[currentUser.name] || 0;
+  me.balance -= akontace;
+  if(!p2.owners) p2.owners = {};
+  p2.owners[currentUser.name] = pred + pct;
+  stampOwners(p2, currentUser.name);
+  zapisNedokoncenyNakup(currentUser.name, p2.id, pred, pct, akontace);
+
+  if(!me.loans) me.loans = [];
+  me.loans.push({
+    id: 'mort_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,7),
+    type: 'mortgage', houseId: p2.id, pct: pct,
+    principal: uver, balance: uver,
+    dailyRate: MORTGAGE_ANNUAL_RATE / DAYS_PER_YEAR, missedDays: 0
+  });
+
+  recordSale(p2, cena, pct);
+  addNews('trade', `🏦 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${p2.id.replace('h_','#')} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`);
+  saveWorld(); refreshAll(); playSound('buy');
+  showAlert(`Hotovo! Vlastníš ${pct.toFixed(1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
+}
+
 async function repayLoan(loanId){
   const me = world.users[currentUser.name];
   const loan = me.loans.find(l => l.id === loanId);
@@ -7484,6 +7616,41 @@ async function repayLoan(loanId){
 
 // Banka si po LOAN_SEIZURE_MISSED_DAYS dnech neplacení vezme majetek na pokrytí dluhu:
 // nejdřív podíl v domě (60 % ceny), jinak podíl v podniku (70 % ceny)
+// Zabavení ZASTAVENÉHO domu u hypotéky. Na rozdíl od nezajištěné půjčky si banka nebere
+// co jí přijde pod ruku — vezme si přesně ten podíl, který za dluh ručil.
+function zabavZastavu(user, loan, p, duvod){
+  const jmeno = user.name;
+  const mam = p.owners?.[jmeno] || 0;
+  const bere = Math.min(loan.pct || mam, mam);
+  if(bere <= 0.001){
+    // Podíl už hráč nemá (prodal ho) — dluh zůstává, ale přesouvá se mezi nezajištěné.
+    loan.type = 'loan';
+    loan.dailyRate = LOAN_ANNUAL_RATE / DAYS_PER_YEAR;
+    loan.houseId = null;
+    addNews('bank', `🏦 ${jmeno} přišel o zástavu k hypotéce — dluh pokračuje jako běžná půjčka s vyšším úrokem.`);
+    return;
+  }
+
+  const vytezek = houseMarketPricePerPercent(p) * bere * HOUSE_SELL_RATIO;
+  p.owners[jmeno] = mam - bere;
+  if(p.owners[jmeno] <= 0.001) delete p.owners[jmeno];
+  stampOwners(p, jmeno);
+  if(!houseHasOwner(p)){ p.useType = null; delete p.units; stampHouse(p); }
+
+  applySeizureProceeds(user, loan, vytezek);
+  addNews('bank', `🏦 Banka zabavila ${bere.toFixed(0)} % domu ${p.id.replace('h_','#')} hráči ${jmeno} — ${duvod}.`);
+  if(currentUser && currentUser.name === jmeno){
+    showAlert(`🏦 Banka si vzala zastavený podíl v domě ${p.id.replace('h_','#')} (${duvod}). Prodejem se pokryla část dluhu.`);
+  }
+  // Pokud výtěžek nestačil, zbytek dluhu pokračuje — ale už bez zástavy.
+  if(loan.balance > 0.5){
+    loan.type = 'loan';
+    loan.dailyRate = LOAN_ANNUAL_RATE / DAYS_PER_YEAR;
+    loan.houseId = null;
+    loan.missedDays = 0;
+  }
+}
+
 function seizeAssetForDebt(user, loan){
   const owner = user.name;
   // Vybíráme NEJMENŠÍ podíl, který dluh ještě pokryje — a když žádný nestačí, ten nejmenší vůbec.
@@ -8130,6 +8297,19 @@ function renderDaily(){
     <h3>${ev.emoji} Dnes ve městě: ${ev.name}</h3>
     <p style="font-size:0.9em;margin:2px 0;">${ev.desc}</p>
   </div>`;
+
+  // --- poslední náhodné setkání ---
+  // `lastEvent` se dosud jen zapisoval a nikdo ho nikdy neviděl. Ukážeme ho v den, kdy nastal —
+  // hráč tak má zpětnou vazbu, co mu to vlastně na ulici přineslo (nebo vzalo).
+  if(u.lastEvent && u.lastEvent.day === world.day){
+    const castka = u.lastEvent.amount || 0;
+    const barva = castka >= 0 ? 'var(--accent)' : 'var(--danger)';
+    html += `<div class="card" style="border-left:3px solid ${barva};">
+      <h3>🎲 Dnešní setkání</h3>
+      <p style="font-size:0.92em;margin:2px 0;">${escapeHtml(u.lastEvent.txt || '')}</p>
+      ${castka ? `<p style="margin:2px 0 0 0;"><b style="color:${barva}">${castka > 0 ? '+' : ''}${Math.round(castka).toLocaleString('cs-CZ')} Kč</b></p>` : ''}
+    </div>`;
+  }
 
   // --- průvodce pro nováčka (jen dokud není hotový) ---
   html += renderOnboarding(u);
@@ -10013,6 +10193,13 @@ function renderBank(){
     <p>Celkový dluh: <b style="color:${debtTotal>0?'var(--danger)':'var(--muted)'}">${Math.round(debtTotal)} Kč</b></p>
     <p>Limit pro novou půjčku: ${limit} Kč</p>
     <div class="row"><button onclick="takeLoan()">Vzít půjčku (${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)</button></div>
+    ${infoBox('Půjčka nebo hypotéka?', `
+      <p><b>💵 Běžná půjčka — ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně.</b> Peníze na cokoliv, banka nemá žádnou záruku. Proto je drahá. Když ${LOAN_SEIZURE_MISSED_DAYS} dní nesplácíš, banka si vezme <b>kterýkoliv</b> tvůj majetek.</p>
+      <p><b>🏦 Hypotéka — ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně.</b> Jde si pro ni jen při koupi domu, přímo v jeho detailu. Složíš ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny a zbytek půjčí banka. Dům jí ručí, proto je úrok třikrát nižší.</p>
+      <div class="ex">Dům za 30 000 Kč: za hotové potřebuješ celých 30 000. Na hypotéku ti stačí <b>${Math.round(30000*MORTGAGE_DOWNPAYMENT_RATIO).toLocaleString('cs-CZ')} Kč</b> a bydlíš hned — zbytek splácíš z nájmu.</div>
+      <p><b>Kde je háček.</b> Když dluh přeroste ${Math.round(MORTGAGE_REPO_MULTIPLIER*100)} % hodnoty zastaveného podílu, nebo ${MORTGAGE_SEIZURE_MISSED_DAYS} dní nesplácíš, banka si vezme <b>právě ten dům</b>. A protože ho prodá pod cenou, zbytek dluhu ti může zůstat.</p>
+      <p><b>Kdy se vyplatí.</b> Když dům vydělá na nájmu víc, než stojí úrok. Prázdný dům na hypotéku je naopak nejrychlejší cesta do dluhů.</p>
+    `)}
     <p style="font-size:0.85em;margin-top:8px;">Půjčku využiješ na nákup podílů v domech a podnicích. Banka strhává splátky automaticky — když je dlouho neplatíš, zabaví ti majetek.</p>
     ${infoBox('Kdy si půjčit a kdy ne?', `
       <p><b>Dobrý dluh.</b> Půjčíš si na něco, co ti vydělá víc, než je úrok. Dům, který nese 60 Kč denně, splatí půjčku s úrokem ${Math.round(LOAN_ANNUAL_RATE*100)} % a ještě ti zbyde.</p>
@@ -10056,11 +10243,27 @@ function renderBank(){
   } else {
     html += me.loans.map(l => {
       const missed = l.missedDays || 0;
+      const jeHypo = l.type === 'mortgage';
+      const podil = jeHypo ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
+      const limitDnu = jeHypo ? MORTGAGE_SEIZURE_MISSED_DAYS : LOAN_SEIZURE_MISSED_DAYS;
+      const dum = jeHypo && l.houseId ? world.parcels[l.houseId] : null;
+      // U hypotéky ukážeme, jak si dluh stojí proti hodnotě zástavy — je to jediné číslo,
+      // podle kterého hráč pozná, jestli mu banka dům nesebere.
+      let kryti = '';
+      if(dum){
+        const hodnota = houseMarketPricePerPercent(dum) * Math.min(l.pct || 0, dum.owners?.[me.name] || 0);
+        const pomer = hodnota > 0 ? l.balance / hodnota : 99;
+        const barva = pomer > 1.2 ? 'var(--danger)' : (pomer > 0.9 ? 'var(--gold)' : 'var(--accent)');
+        kryti = `<p style="font-size:0.92em;">Zástava: ${l.pct.toFixed(0)} % domu ${l.houseId.replace('h_','#')} v hodnotě
+          <b>${Math.round(hodnota).toLocaleString('cs-CZ')} Kč</b> · dluh je <b style="color:${barva}">${Math.round(pomer*100)} %</b> její hodnoty
+          <span style="color:var(--muted)">(nad ${Math.round(MORTGAGE_REPO_MULTIPLIER*100)} % si ji banka vezme)</span></p>`;
+      }
       return `<div class="card">
-        <h3>💵 Půjčka</h3>
+        <h3>${jeHypo ? '🏦 Hypotéka' : '💵 Půjčka'}</h3>
         <p>Dluh: <b style="color:var(--danger)">${Math.round(l.balance)} Kč</b> · úrok ${(l.dailyRate*DAYS_PER_YEAR*100).toFixed(1)} % p.a.</p>
-        <p style="font-size:0.92em;color:var(--muted)">Banka strhává min. splátku automaticky (${Math.round(l.principal*LOAN_MIN_PAYMENT_RATIO)} Kč/den), když máš na účtu dost.</p>
-        ${missed > 0 ? `<p style="color:${missed>=LOAN_SEIZURE_MISSED_DAYS*0.6?'var(--danger)':'var(--gold)'}">⚠️ ${missed.toFixed(1)} / ${LOAN_SEIZURE_MISSED_DAYS} dní nezaplaceno — pak banka zabaví majetek na pokrytí dluhu.</p>` : ''}
+        ${kryti}
+        <p style="font-size:0.92em;color:var(--muted)">Banka strhává min. splátku automaticky (${Math.round(l.principal*podil)} Kč/den), když máš na účtu dost.</p>
+        ${missed > 0 ? `<p style="color:${missed>=limitDnu*0.6?'var(--danger)':'var(--gold)'}">⚠️ ${missed.toFixed(1)} / ${limitDnu} dní nezaplaceno — pak si banka vezme ${jeHypo ? 'zastavený dům' : 'majetek na pokrytí dluhu'}.</p>` : ''}
         <div class="row"><button onclick="repayLoan('${l.id}')">Splatit</button></div>
       </div>`;
     }).join('');
@@ -10443,7 +10646,7 @@ function workShift(jobId){
   const total = Math.round((job.salary + Math.round(seniorityBonus) + tip) * inflationMult() * eventMult('wageMult'));
   me.balance += total;
   me.lastWorkedCalDay = today;
-  me.lastWorkedDay = world.day; // ponecháno kvůli docházce/výpovědi
+  // (dřív se tu vedlo i `lastWorkedDay` — nikde se nečetlo, docházka nikdy nevznikla)
   me.totalShifts = (me.totalShifts || 0) + 1;
   me.currentJobShifts = (me.currentJobShifts || 0) + 1;
   me.missedInRow = 0;
@@ -10665,7 +10868,7 @@ function claimGifts(name){
 
 function doLogin(name, pinHash){
   if(!world.users[name]){
-    world.users[name] = {name, balance: START_BALANCE, lastWorkedDay: -1, lastWorkedCalDay: -1, walkEarnedToday: 0, distanceToday: 0, totalDistance: 0, loans: [], totalShifts: 0, jobBanUntil: 0,
+    world.users[name] = {name, balance: START_BALANCE, lastWorkedCalDay: -1, walkEarnedToday: 0, distanceToday: 0, totalDistance: 0, loans: [], totalShifts: 0, jobBanUntil: 0,
       joinedRealDate: Date.now(), joinedGameDay: world.day, peakWorth: START_BALANCE, avatar: '🧑', savings: 0, starterHomeAvailable: true, pinHash: pinHash || null};
     addNews('join', `👋 ${name} se přidal do města!`);
     saveWorld();
