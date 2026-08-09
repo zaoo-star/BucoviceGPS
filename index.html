@@ -560,7 +560,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '2.5';
+const APP_VERSION = '2.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6379,12 +6379,66 @@ function iconFor(p){
   return L.divIcon({html:`<div class="parcelMarker ${cls}">${emoji}</div>`, className:'', iconSize:[26,26]});
 }
 
+// ===== PODKLADOVÁ MAPA =====
+// tile.openstreetmap.org jsme používat PŘESTALI. Jejich pravidla zakazují distribuované
+// aplikace (a naše appka jako APK přesně to je), takže nám servery začaly vracet 403
+// a hráčům se místo mapy zobrazily nápisy "Access blocked".
+//
+// Dlaždice teď bereme od CARTO, které vlastní vykreslení OpenStreetMap dat a pro
+// nekomerční projekty je nabízí volně. Data jsou pořád z OpenStreetMap, jen je kreslí
+// někdo jiný — proto zůstává uvedený i on.
+//
+// Kdyby vypadl i tenhle zdroj, přepneme se na další v pořadí automaticky.
+const PODKLADY = [
+  { url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+    subdomains: 'abcd', maxZoom: 20,
+    attribution: '© OpenStreetMap · © CARTO' },
+  { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+    subdomains: 'abcd', maxZoom: 20,
+    attribution: '© OpenStreetMap · © CARTO' },
+  { url: 'https://tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+    subdomains: 'abc', maxZoom: 19,
+    attribution: '© OpenStreetMap · © OpenStreetMap France' }
+];
+
+let podkladIndex = 0;
+let podkladVrstva = null;
+
+function nastavPodklad(index){
+  if(!map || index >= PODKLADY.length) return;
+  podkladIndex = index;
+  const p = PODKLADY[index];
+  if(podkladVrstva) map.removeLayer(podkladVrstva);
+
+  podkladVrstva = L.tileLayer(p.url, {
+    subdomains: p.subdomains,
+    maxZoom: p.maxZoom,
+    attribution: p.attribution,
+    // Šetření dlaždicemi — pravidla všech poskytovatelů stojí na tom, že se stahuje jen to,
+    // co je zrovna vidět. `updateWhenIdle` počká, až hráč domapuje prst, `keepBuffer`
+    // drží jen úzký lem kolem obrazovky.
+    updateWhenIdle: true,
+    keepBuffer: 1,
+    crossOrigin: true
+  });
+
+  // Když se dlaždice nedaří načíst opakovaně, zkusíme dalšího poskytovatele.
+  // Jednotlivé chyby ignorujeme, ty se stávají běžně při slabém signálu.
+  let chyb = 0;
+  podkladVrstva.on('tileerror', () => {
+    chyb++;
+    if(chyb >= 8 && podkladIndex === index && index + 1 < PODKLADY.length){
+      zapisChybu(`Podklad mapy ${index} selhal (${chyb} dlaždic), přepínám na ${index + 1}`, 'mapa');
+      nastavPodklad(index + 1);
+    }
+  });
+  podkladVrstva.addTo(map);
+}
+
 function initMap(){
   map = L.map('map', {zoomControl:false}).setView(CITY_CENTER, 16);
   L.control.zoom({position:'bottomleft'}).addTo(map);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution:'© OpenStreetMap', maxZoom:19
-  }).addTo(map);
+  nastavPodklad(0);
 
   L.marker(CITY_CENTER, {icon: L.divIcon({html:'<div class="parcelMarker p-cityhall">🏛️</div>', className:'', iconSize:[26,26]})})
     .addTo(map).bindTooltip('Radnice — místo pro městskou práci');
