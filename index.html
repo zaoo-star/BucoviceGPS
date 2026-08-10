@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '3.0';
+const APP_VERSION = '3.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -712,7 +712,7 @@ const HOUSE_UPGRADES = {
   renovation: { icon:'🔧', name:'Rekonstrukce',     costRatio:0.10,
     desc:'Kvalitní materiály — byty chátrají o polovinu pomaleji, míň platíš za opravy.' },
   solar:      { icon:'☀️', name:'Solární panely',   costRatio:0.08,
-    desc:'Vlastní elektřina — každý byt ti nese něco navíc každý den, i když je prázdný.' },
+    desc:'Vlastní elektřina — vydělává ti každý den, i když je dům prázdný, a snižuje ti účty za bydlení.' },
 };
 const INSULATION_OCC_BONUS = 0.18;  // zaplní 18 % zbývající šance na nájemníka
 const AC_RENT_BONUS = 1.20;         // snese o 20 % vyšší férový nájem
@@ -10656,7 +10656,14 @@ async function installUpgrade(id, key){
   if(!up) return;
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
   if(!iAmDecider(p)){ showAlert('Vylepšení hradí a řídí jen největší podílník.'); return; }
-  if(p.useType !== 'rental'){ showAlert('Vylepšit jde jen dům určený k pronájmu.'); return; }
+  // Vylepšit jde pronájem I dům, ve kterém bydlíš — v tom druhém případě ti srazí životní
+  // náklady (viz livingCostDiscountFromUpgrades). Ta podmínka na 'rental' tu zbyla z doby,
+  // kdy vylepšení sloužila jen k lákání nájemníků, a odporovala i vlastnímu popisku panelu
+  // ("V domě, kde bydlíš, ti sníží účty za energie").
+  if(p.useType !== 'rental' && p.useType !== 'residence'){
+    showAlert('Nejdřív urči, k čemu dům bude — jestli v něm budeš bydlet, nebo ho pronajímat.');
+    return;
+  }
   if(hasUpgrade(p, key)){ showAlert('Tohle vylepšení už dům má.'); return; }
   const cost = houseUpgradeCost(p, key);
   if(!(await showConfirm(`${up.icon} ${up.name} za ${cost.toLocaleString('cs-CZ')} Kč?\n\n${up.desc}`))) return;
