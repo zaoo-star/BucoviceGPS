@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '2.7';
+const APP_VERSION = '3.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3962,13 +3962,17 @@ function livingCostDiscountFromUpgrades(name){
 function dailyHousingCost(name){
   const status = housingStatus(name);
   if(isNewbieProtected(world.users[name])) return 0;   // ochranná lhůta nováčka
-  if(status === 'owner') return LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT);
+  // Vylepšení v domě, kde bydlím, srážejí životní náklady. tick() i finanční přehled to
+  // počítaly, jen tahle funkce ne — takže pilulka v hlavičce hlásila plných 45 Kč i tomu,
+  // kdo si pořídil zateplení nebo solár a reálně platil míň.
+  const sleva = 1 - livingCostDiscountFromUpgrades(name);
+  if(status === 'owner') return LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) * sleva;
   if(status === 'tenant'){
     let rent = 0;
     Object.values(world.parcels).forEach(p => {
-      (p.units||[]).forEach(u => { if(u.tenant === name) rent += u.rentPrice; });
+      asArray(p.units).forEach(u => { if(u && u.tenant === name) rent += u.rentPrice; });
     });
-    return TENANT_LIVING_COST + rent;
+    return TENANT_LIVING_COST * sleva + rent;   // nájem sleva neovlivní, ten platíš majiteli
   }
   return LIVING_COST;
 }
@@ -6530,7 +6534,10 @@ function updateHeaderStats(){
     const dailyCost = dailyHousingCost(currentUser.name);
     const housingEl = document.getElementById('housingVal');
     if(status === 'owner'){
-      housingEl.textContent = `vlastní bydlení (${Math.round(dailyCost)} Kč/den)`;
+      const slevaPct = Math.round(livingCostDiscountFromUpgrades(currentUser.name) * 100);
+      housingEl.textContent = slevaPct > 0
+        ? `vlastní bydlení (${Math.round(dailyCost)} Kč/den, −${slevaPct} % za vylepšení)`
+        : `vlastní bydlení (${Math.round(dailyCost)} Kč/den)`;
       housingEl.parentElement.style.color = 'var(--accent)';
     } else if(status === 'tenant'){
       housingEl.textContent = `v nájmu (${Math.round(dailyCost)} Kč/den)`;
@@ -6661,6 +6668,12 @@ function renderSelected(id){
     const freePct = Math.min(free, Math.min(100, STARTER_HOME_VALUE / housePricePerPercent(p)));
     const staciNaBydleni = freePct > 50;
     html += `<button ${near?'':'disabled'} style="background:var(--gold);color:#1a1a1a;" onclick="claimStarterHome('${p.id}')">🎁 Vzít zdarma — ${freePct.toFixed(0)} %${near?'':' (musíš být u domu)'}</button>`;
+    // Nováček musí vidět, s jakým rozpočtem pracuje, jinak nemá jak poznat, proč zrovna
+    // z tohohle domu dostane jen kus. Dřív se dozvěděl až výsledek.
+    html += `<p style="font-size:0.85em;margin:4px 0;color:var(--muted)">
+      Tvůj nárok má hodnotu <b>${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč</b>.
+      Tenhle dům stojí ${Math.round(effectiveHousePrice(p)).toLocaleString('cs-CZ')} Kč, proto z něj dostaneš ${freePct.toFixed(0)} %.
+      ${freePct < 50 ? `Na celý dům by stačil takový do ${(STARTER_HOME_VALUE*2).toLocaleString('cs-CZ')} Kč.` : ''}</p>`;
     html += `<p style="font-size:0.85em;margin:4px 0;color:${staciNaBydleni?'var(--accent)':'var(--orange)'}">${
       staciNaBydleni
         ? '✓ To je víc než polovina domu — budeš v něm rovnou <b>bydlet</b> a klesnou ti náklady.'
@@ -7417,6 +7430,27 @@ function resolveAuctions(){
 function totalDebt(name){
   return (world.users[name]?.loans || []).reduce((s,l)=>s+l.balance, 0);
 }
+// Hodnota majetku hráče ve dvou číslech: tržní (kolik to stojí na trhu) a likvidační
+// (za kolik by to reálně a rychle prodal). Počítá se PŘÍMO z toho, co hráč vlastní.
+// Dřív se v přehledu majetek dopočítával odečtením od čistého jmění — jenže to už mělo
+// odečtený dluh, takže se dluh počítal dvakrát a majetek vycházel o celý dluh nižší.
+function majetekHodnota(name){
+  let trzni = 0, likvidacni = 0;
+  Object.values(world.parcels).forEach(p => {
+    const pct = p.owners?.[name] || 0;
+    if(pct <= 0) return;
+    trzni += pct * houseMarketPricePerPercent(p);
+    likvidacni += pct * housePricePerPercent(p) * 0.6;
+  });
+  Object.values(world.businesses).forEach(biz => {
+    const pct = biz.owners?.[name] || 0;
+    if(pct <= 0) return;
+    trzni += pct * pricePerPercent(biz);
+    likvidacni += pct * pricePerPercent(biz) * 0.7;
+  });
+  return { trzni, likvidacni };
+}
+
 function netWorthEstimate(name){
   let worth = Math.max(0, world.users[name].balance);
   worth += Math.max(0, world.users[name].savings || 0); // spoření se počítá do jmění
@@ -7995,9 +8029,18 @@ async function adminHash(text){
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 let isAdmin = false;
+
+// Odemčení se pamatuje natrvalo. Ukládá se OTISK hesla, ne jednička — takže si to
+// nezapne ten, kdo si jen tipne název položky v úložišti; musel by znát heslo.
+// Bezpečnost to ale nedělá: kdo umí otevřít konzoli, nastaví si `isAdmin = true` a je uvnitř.
+// Jediná skutečná obrana jsou pravidla ve Firebase (viz firebase-pravidla.md) — ta se
+// vyhodnocují na serveru a klient je obejít nemůže.
+const ADMIN_KLIC = 'bucpoly_admin_v2';
+
 function loadAdminFlag(){
-  // Odemčení platí jen do zavření appky. Dřív se ukládalo do localStorage, takže stačilo
-  // nastavit jednu položku v prohlížeči a admin práva měl kdokoli i bez hesla.
+  if(!isAdmin){
+    try { isAdmin = localStorage.getItem(ADMIN_KLIC) === ADMIN_PASS_HASH; } catch(e){}
+  }
   const btn = document.getElementById('adminRailBtn');
   if(btn) btn.style.display = isAdmin ? 'flex' : 'none';
 }
@@ -8010,16 +8053,20 @@ async function unlockAdmin(){
   try { otisk = await adminHash(pass); } catch(e){ showAlert('Prohlížeč neumí ověřit heslo (chybí crypto.subtle).'); return; }
   if(otisk === ADMIN_PASS_HASH){
     isAdmin = true;
+    try { localStorage.setItem(ADMIN_KLIC, ADMIN_PASS_HASH); } catch(e){}
     loadAdminFlag();
     openSheet('admin');
-    showAlert('Admin režim odemčen.');
+    showAlert('Admin režim odemčen — zůstane odemčený, dokud ho sám nezamkneš.');
   } else {
     showAlert('Špatné heslo.');
   }
 }
 function lockAdmin(){
   isAdmin = false;
-  try { localStorage.removeItem('bucovice_admin'); } catch(e){}   // úklid po starých verzích
+  try {
+    localStorage.removeItem(ADMIN_KLIC);
+    localStorage.removeItem('bucovice_admin');   // úklid po starých verzích
+  } catch(e){}
   loadAdminFlag();
   closeSheet();
 }
@@ -9335,7 +9382,7 @@ function renderStatDetail(which){
   else if(which === 'money'){
     const worth = netWorthEstimate(u.name);
     const f = financeBreakdown(u.name);
-    const majetek = Math.max(0, worth - (u.balance||0) - (u.savings||0));
+    const maj = majetekHodnota(u.name);
     const dluh = asArray(u.loans).reduce((s,l)=>s+(l.balance||0),0);
     // pasivní = vše kromě platu
     const pasivni = f.income.filter(i => !i.label.includes('Plat')).reduce((s,i)=>s+i.amount,0);
@@ -9344,9 +9391,14 @@ function renderStatDetail(which){
     html += `<div class="card"><h3>💰 Kde máš peníze</h3>
       <p>V hotovosti: <b style="color:var(--gold)">${kc(u.balance)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— můžeš hned utratit</span></p>
       <p>Na spoření: <b>${kc(u.savings)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— úročí se ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % ročně</span></p>
-      <p>V majetku: <b>${kc(majetek)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— domy a firmy</span></p>
+      <p>V majetku: <b>${kc(maj.trzni)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— domy a firmy v tržní ceně</span></p>
       ${dluh > 0 ? `<p>Dluhy: <b style="color:var(--danger)">−${kc(dluh)} Kč</b></p>` : ''}
       <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">Čisté jmění: <b style="color:var(--gold)">${kc(worth)} Kč</b></p>
+      <p style="font-size:0.82em;color:var(--muted);margin:4px 0 0 0;">
+        Čisté jmění počítá majetek opatrně — za kolik bys ho reálně rychle prodal
+        (${kc(maj.likvidacni)} Kč, tedy 60 % tržní ceny u domů a 70 % u firem), minus dluhy.
+        Do žebříčku se počítá právě tohle číslo, aby se nedalo zbohatnout jen tím, že si někdo
+        napíše u domu vysokou cenu.</p>
     </div>`;
 
     // rozpis toku po položkách
@@ -9468,7 +9520,9 @@ function renderStatDetail(which){
       homeless: LIVING_COST
     };
     html += `<div class="card"><h3>💡 Srovnání možností</h3>
-      <p style="margin:3px 0;${status==='owner'?'color:var(--accent);font-weight:600;':''}">🏠 vlastní bydlení: <b>${ceny.owner} Kč/den</b>${status==='owner'?' ← tvoje':''}</p>
+      <p style="margin:3px 0;${status==='owner'?'color:var(--accent);font-weight:600;':''}">🏠 vlastní bydlení: <b>${ceny.owner} Kč/den</b>${status==='owner'?' ← tvoje':''}${
+        (() => { const s = livingCostDiscountFromUpgrades(u.name);
+          return s > 0 ? ` <span style="font-size:0.85em;color:var(--muted)">(díky vylepšením platíš ${Math.round(ceny.owner*(1-s))} Kč)</span>` : ''; })()}</p>
       <p style="margin:3px 0;${status==='tenant'?'color:var(--gold);font-weight:600;':''}">🔑 nájem: <b>~${ceny.tenant} Kč/den</b>${status==='tenant'?' ← tvoje':''}</p>
       <p style="margin:3px 0;${status==='homeless'?'color:var(--danger);font-weight:600;':''}">🚶 bez bydlení: <b>${ceny.homeless} Kč/den</b>${status==='homeless'?' ← tvoje':''}</p>
       ${status!=='owner' ? `<p style="font-size:0.9em;color:var(--muted);margin-top:6px;">Vlastním bydlením bys ušetřil <b>${celkem - ceny.owner} Kč/den</b> — to je ${kc((celkem-ceny.owner)*30)} Kč měsíčně.</p>` : `<p style="font-size:0.9em;color:var(--accent);margin-top:6px;">Máš nejlevnější možnost. Nic lepšího už nevymyslíš.</p>`}
@@ -9854,7 +9908,8 @@ function renderGuide(){
     <p>2️⃣ <b>Bydlíš v nájmu</b> u jiného hráče → platíš nájem + malý poplatek navíc</p>
     <p>3️⃣ <b>Nemáš kde bydlet</b> → platíš <b>${LIVING_COST} Kč/den</b> (nejdražší — jako bys pořád spal v hotelu)</p>
     <p style="color:var(--muted)">💡 Ponaučení: vlastnit vlastní bydlení se dlouhodobě vždycky vyplatí.</p>
-    <p style="color:var(--gold)">🎁 Nový hráč dostává <b>první nemovitost zdarma</b> — dojdi k libovolnému volnému domu a v jeho detailu klepni na „Vzít zdarma". Hned budeš mít kde bydlet.</p>
+    <p style="color:var(--gold)">🎁 Nový hráč dostává <b>první nemovitost zdarma</b> — přesněji podíl v hodnotě <b>${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč</b>. Dojdi k volnému domu a v jeho detailu klepni na „Vzít zdarma".</p>
+    <p>Kolik z domu dostaneš, závisí na jeho ceně. U domu do ${(STARTER_HOME_VALUE*2).toLocaleString('cs-CZ')} Kč získáš víc než polovinu, budeš v něm <b>bydlet</b> a klesnou ti denní náklady. U dražšího domu dostaneš jen menšinový podíl — vynáší, ale bydlení z něj není. Nárok máš jen jednou.</p>
   `);
 
   html += guideSection('🤝','Podíly v domě — co to znamená', `
@@ -10973,7 +11028,7 @@ function doLogin(name, pinHash){
       joinedRealDate: Date.now(), joinedGameDay: world.day, peakWorth: START_BALANCE, avatar: '🧑', savings: 0, starterHomeAvailable: true, pinHash: pinHash || null};
     addNews('join', `👋 ${name} se přidal do města!`);
     saveWorld();
-    setTimeout(() => showAlert('🎁 Vítej! Máš nárok na svou první nemovitost ZDARMA. Dojdi k libovolnému volnému domu a v jeho detailu klepni na „Vzít zdarma". Hned budeš mít kde bydlet a ušetříš na nákladech.'), 800);
+    setTimeout(() => showAlert(`🎁 Vítej! Máš nárok na první nemovitost ZDARMA v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč.\n\nDojdi k volnému domu a v jeho detailu klepni na „Vzít zdarma". U levnějšího domu (do ${(STARTER_HOME_VALUE*2).toLocaleString('cs-CZ')} Kč) dostaneš většinu a budeš v něm rovnou bydlet — to ti srazí denní náklady. U drahého domu dostaneš jen menšinový podíl a bydlení z toho nebude.\n\nNárok máš jen jednou, tak si dům vyber.`), 800);
   }
   currentUser = {name};
   const u = world.users[name];
