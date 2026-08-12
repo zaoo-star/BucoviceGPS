@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '3.1';
+const APP_VERSION = '3.2';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -7065,8 +7065,12 @@ function renderJobs(){
     else if(missed > 0) attendanceNote = `<p style="font-size:0.92em;color:var(--danger)">⚠️ Vynechal jsi ${missed}/${JOB_SICK_DAYS_ALLOWED} omluvených směn v řadě — další vynechání = vyhazov!</p>`;
     else attendanceNote = `<p style="font-size:0.92em;color:var(--gold)">⚠️ Dnes ještě musíš odpracovat směnu (toleruje se ${JOB_SICK_DAYS_ALLOWED} vynechání v řadě, pak vyhazov).</p>`;
     const canWorkNow = !workedToday && !weekend && nearCityHall;
+    // Dnešní mzdový násobek musí být vidět PŘED směnou, ne až v hlášení po ní.
+    const mzdaMult = eventMult('wageMult');
+    const mzdaEv = Math.abs(mzdaMult - 1) > 0.001 ? todaysCityEvent(world.day) : null;
     html += `<div class="card"><h3>Tvoje práce: ${escapeHtml(j.name)}</h3>
-      <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult())} Kč</b> / směna${seniorityBonus>=1?` + <span style="color:var(--accent)">${Math.round(seniorityBonus*inflationMult())} Kč stáž</span>`:''}</p>
+      <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult()*mzdaMult)} Kč</b> / směna${seniorityBonus>=1?` + <span style="color:var(--accent)">${Math.round(seniorityBonus*inflationMult()*mzdaMult)} Kč stáž</span>`:''}</p>
+      ${mzdaEv ? `<p style="font-size:0.92em;color:var(--gold);margin:2px 0;">${mzdaEv.emoji} ${mzdaEv.name}: dnes ${mzdaMult > 1 ? '+' : ''}${Math.round((mzdaMult-1)*100)} % ke mzdě (běžně ${Math.round(j.salary*inflationMult())} Kč)</p>` : ''}
       <p style="font-size:0.92em;color:var(--muted)">Odsloužené směny na téhle pozici: ${seniorityShifts} (příplatek roste, max ${SENIORITY_BONUS_CAP} Kč) · šance na spropitné ${Math.round(TIP_CHANCE*100)} %</p>
       ${attendanceNote}
       <div class="row">
@@ -7097,7 +7101,7 @@ function renderJobs(){
       return `<div class="card">
       <h3>${escapeHtml(j.name)} ${statusBadge}</h3>
       <p>${j.desc}</p>
-      <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult())} Kč</b> / směna${j.reqShifts>0?` · praxe: ${j.reqShifts} směn`:''} · míst: ${j.slots}</p>
+      <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult()*eventMult('wageMult'))} Kč</b> / směna${j.reqShifts>0?` · praxe: ${j.reqShifts} směn`:''} · míst: ${j.slots}</p>
       ${lockNote}
       ${!full && !current && !locked && ban===0 ? `<div class="row"><button ${nearCityHall?'':'disabled'} onclick="takeJob('${j.id}')">Nastoupit</button></div>` : ''}
       ${taken>0 ? `<p style="font-size:0.92em;color:var(--muted)">Zaměstnanci: ${holders.map(h=>`<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(h)}>${escapeHtml(h)}</span>`).join(', ')}</p>` : ''}
@@ -10816,11 +10820,31 @@ function workShift(jobId){
   saveWorld(); refreshAll(); renderJobs();
   checkQuests();   // směna může splnit denní úkol
 
-  let msg = `Odpracováno: +${Math.round(job.salary*inflationMult())} Kč`;
-  if(seniorityBonus >= 1) msg += ` · příplatek za stáž +${Math.round(seniorityBonus*inflationMult())} Kč`;
-  if(gotTip) msg += ` · 🎉 spropitné +${Math.round(tip*inflationMult())} Kč`;
+  // Rozpis MUSÍ sedět na součet. Dřív se jednotlivé položky vypisovaly bez `eventMult`,
+  // ale celková částka ho zahrnovala — při městské události typu "nábor" pak hlášení
+  // tvrdilo 321 + 42 = 544, což vypadalo jako rozbitá matematika.
+  const nasobekUdalosti = eventMult('wageMult');
+  const stazKc = Math.round(seniorityBonus * inflationMult() * nasobekUdalosti);
+  const spropKc = Math.round(tip * inflationMult() * nasobekUdalosti);
+  // Základ dopočítáme jako ZBYTEK do celkové částky, ne zvlášť zaokrouhlením. Jinak by se
+  // rozpis o korunu rozešel se součtem kvůli zaokrouhlování — a přesně to hráči hlásili
+  // jako "ten výpočet nesedí". Zbytek dáváme na základ, protože ten je vždycky největší
+  // a nemůže vyjít záporný.
+  const zaklad = total - stazKc - spropKc;
+
+  let msg = `Odpracováno: +${zaklad} Kč`;
+  if(stazKc >= 1) msg += ` · příplatek za stáž +${stazKc} Kč`;
+  if(gotTip && spropKc >= 1) msg += ` · 🎉 spropitné +${spropKc} Kč`;
+  msg += ` = ${total} Kč celkem.`;
+  // Když dnes platí událost, která mění mzdy, je poctivé to říct — jinak hráč netuší,
+  // proč dostal jiné číslo, než jaké má u pozice napsané.
+  if(Math.abs(nasobekUdalosti - 1) > 0.001){
+    const ev = todaysCityEvent(world.day);
+    const zmena = Math.round((nasobekUdalosti - 1) * 100);
+    msg += `\n\n${ev ? ev.emoji + ' ' + ev.name : 'Dnešní událost'}: mzdy ${zmena > 0 ? '+' : ''}${zmena} % (základ ${Math.round(job.salary*inflationMult())} Kč → ${zaklad} Kč).`;
+  }
   playSound(gotTip ? 'coin' : 'work');
-  showAlert(msg + ` = ${total} Kč celkem.`);
+  showAlert(msg);
 }
 
 // ===== PODNIKY (frakční vlastnictví) =====
