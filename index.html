@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '3.2';
+const APP_VERSION = '3.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1032,13 +1032,21 @@ function ensureStreak(u){
 // ===== DENNÍ ÚKOLY =====
 // Každý den 3 úkoly. Postup se čte z počítadel, která se stejně už nulují o půlnoci,
 // takže není co rozbít. Splnění se odmění automaticky (bez klikání navíc).
+// Postup se MUSÍ číst jen tehdy, když počítadlo patří dnešnímu dni. Počítadla balíků,
+// míst a nachozených metrů se totiž nulují až ve chvíli, kdy hráč na tu část hry sáhne
+// (myCollectedToday, myLandmarksToday, ensureWalkDay) — ne o půlnoci. Bez téhle kontroly
+// se hned po půlnoci načetl VČEREJŠÍ počet, úkol se sám označil za splněný a vyplatil
+// odměnu za nic. Vzápětí se počítadlo vynulovalo, takže zůstalo "0 / 2 ✓ splněno".
+const dnesniPocet = (u, poleDen, poleData) =>
+  (u && u[poleDen] === calendarDay()) ? asArray(u[poleData]).length : 0;
+
 const QUEST_DEFS = [
-  {id:'walk1',  icon:'🚶', name:'Projdi se po městě',   goal:1200, unit:'m',      reward:120, prog:u => Math.round(u.distanceToday || 0)},
-  {id:'walk2',  icon:'👟', name:'Delší procházka',      goal:2500, unit:'m',      reward:230, prog:u => Math.round(u.distanceToday || 0)},
-  {id:'pick2',  icon:'💰', name:'Seber 2 balíky peněz', goal:2,    unit:'ks',     reward:130, prog:u => (asArray(u.pickupGot)).length},
-  {id:'pick4',  icon:'🎁', name:'Seber 4 balíky peněz', goal:4,    unit:'ks',     reward:260, prog:u => (asArray(u.pickupGot)).length},
-  {id:'land1',  icon:'📍', name:'Navštiv 1 místo zájmu',goal:1,    unit:'míst',   reward:120, prog:u => (asArray(u.lmGot)).length},
-  {id:'land2',  icon:'🗺️', name:'Navštiv 2 místa zájmu',goal:2,    unit:'míst',   reward:240, prog:u => (asArray(u.lmGot)).length},
+  {id:'walk1',  icon:'🚶', name:'Projdi se po městě',   goal:1200, unit:'m',      reward:120, prog:u => (u.walkCalDay === calendarDay() ? Math.round(u.distanceToday || 0) : 0)},
+  {id:'walk2',  icon:'👟', name:'Delší procházka',      goal:2500, unit:'m',      reward:230, prog:u => (u.walkCalDay === calendarDay() ? Math.round(u.distanceToday || 0) : 0)},
+  {id:'pick2',  icon:'💰', name:'Seber 2 balíky peněz', goal:2,    unit:'ks',     reward:130, prog:u => dnesniPocet(u, 'pickupDay', 'pickupGot')},
+  {id:'pick4',  icon:'🎁', name:'Seber 4 balíky peněz', goal:4,    unit:'ks',     reward:260, prog:u => dnesniPocet(u, 'pickupDay', 'pickupGot')},
+  {id:'land1',  icon:'📍', name:'Navštiv 1 místo zájmu',goal:1,    unit:'míst',   reward:120, prog:u => dnesniPocet(u, 'lmDay', 'lmGot')},
+  {id:'land2',  icon:'🗺️', name:'Navštiv 2 místa zájmu',goal:2,    unit:'míst',   reward:240, prog:u => dnesniPocet(u, 'lmDay', 'lmGot')},
   {id:'work1',  icon:'💼', name:'Odpracuj směnu',       goal:1,    unit:'směna',  reward:150, prog:u => (u.lastWorkedCalDay === calendarDay() ? 1 : 0), workday:true},
   {id:'fix1',   icon:'🔧', name:'Oprav byt v pronájmu', goal:1,    unit:'oprava', reward:140, prog:u => (u.repairDay === calendarDay() ? (u.repairsToday || 0) : 0)},
 ];
@@ -1093,6 +1101,11 @@ function checkQuests(){
   if(!currentUser) return;
   const u = world.users[currentUser.name];
   if(!u) return;
+  // Nejdřív srovnat VŠECHNA denní počítadla na dnešek. Kdyby se to nechalo na později,
+  // vyhodnotil by se úkol proti včerejším číslům.
+  ensureWalkDay(u);
+  if(u.pickupDay !== calendarDay()){ u.pickupDay = calendarDay(); u.pickupGot = []; }
+  if(u.lmDay !== calendarDay()){ u.lmDay = calendarDay(); u.lmGot = []; }
   ensureQuests(u);
   u.questDone = asArray(u.questDone);
   let changed = false;
@@ -4292,7 +4305,7 @@ function migrateWorld(){
           const wj = world.jobs[j.id];
           wj.name=j.name; wj.salary=j.salary; wj.desc=j.desc; wj.tier=j.tier; wj.reqShifts=j.reqShifts; wj.slots=j.slots;
           if(!wj.holders){ wj.holders = wj.holder ? [wj.holder] : []; delete wj.holder; } // migrace jednoho holdera na pole
-          wj.holders = asArray(wj.holders);
+          wj.holders = asArray(wj.holders).filter(Boolean);
         }
       });
       if(!world.users) world.users = {};
@@ -4315,6 +4328,14 @@ function migrateWorld(){
         // Jednorázový úklid: nabídky s nesmyslnou cenou (následek přetečené gentrifikace) pryč.
         const cena = (l.type === 'auction') ? l.currentBid : l.price;
         if(!isFinite(cena) || cena <= 0 || cena > CENA_STROP) delete world.listings[k];
+      });
+      // Data ze starších verzí: kdo je v seznamu zaměstnanců, ale nemá to na účtu,
+      // dostane currentJobId doplněné — jinak by ho přepočet z práce vyhodil.
+      Object.values(world.jobs || {}).forEach(j => {
+        asArray(j && j.holders).forEach(h => {
+          const uu = world.users[h];
+          if(uu && !uu.currentJobId) uu.currentJobId = j.id;
+        });
       });
       Object.values(world.users).forEach(u => {
         if(u.totalShifts === undefined) u.totalShifts = 0;
@@ -4343,6 +4364,7 @@ function migrateWorld(){
         u.balance = cislo(u.balance, START_BALANCE, -50000000, 50000000);
         u.savings = cislo(u.savings, 0, 0, 50000000);
         u.pendingBuys = asArray(u.pendingBuys);
+        if(u.currentJobId === undefined) u.currentJobId = null;
         u.totalDistance = cislo(u.totalDistance, 0, 0, 100000000);
         u.totalShifts = cislo(u.totalShifts, 0, 0, 1000000);
         u.peakWorth = cislo(u.peakWorth, u.balance, 0, 1000000000);
@@ -4818,7 +4840,14 @@ function adoptWorldVnitrni(incoming){
       const ja = world.users[myName];
       const vyssi = (k) => { const a = ja[k], b = cloudMe[k];
         if(typeof a === 'number' || typeof b === 'number') ja[k] = Math.max(a || 0, b || 0); };
-      ['lastWorkedCalDay','totalShifts','currentJobShifts','totalDistance',
+      // Změna práce má vlastní razítko — vyhrává novější, ať už je novější účet kterýkoliv.
+      if((cloudMe.jobChangedTs || 0) > (ja.jobChangedTs || 0)){
+        ja.currentJobId = cloudMe.currentJobId;
+        ja.currentJobShifts = cloudMe.currentJobShifts;
+        ja.jobStartDay = cloudMe.jobStartDay;
+        ja.jobChangedTs = cloudMe.jobChangedTs;
+      }
+      ['lastWorkedCalDay','totalShifts','totalDistance',
        'questBonusDay','streakDay','streakBest','peakWorth'].forEach(vyssi);
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
       const darky = new Set([...asArray(ja.claimedGifts), ...asArray(cloudMe.claimedGifts)]);
@@ -4936,6 +4965,10 @@ function adoptWorldVnitrni(incoming){
 
   // Až je svět kompletní, ověříme nákupy, u kterých se ještě nepotvrdilo, že podíl dosedl.
   // Buď se potvrdí, nebo se vrátí peníze — hráč nikdy nezůstane bez podílu i bez peněz.
+  // Seznamy zaměstnanců přepočítat z účtů hráčů — `world.jobs` přišlo celé z cloudu
+  // a mohlo by hráče vrátit do práce, ze které dal výpověď.
+  safeCall(() => prepocitejZamestnance());
+
   const hlaseni = safeCall(() => overNedokonceneNakupy());
   if(hlaseni){
     saveWorld();
@@ -5510,6 +5543,9 @@ function onNewDay(catchUp){
           u.jobBanUntil = world.day + JOB_BAN_DAYS;
           u.missedInRow = 0;
           delete u.jobStartDay;
+          u.currentJobId = null;        // ať ho přepočet zaměstnanců nevrátí zpátky
+          u.currentJobShifts = 0;
+          u.jobChangedTs = Date.now();
           return false; // vyhazov — odebrat z holders
         }
         return true; // ještě v toleranci (omluvenka)
@@ -6704,6 +6740,9 @@ function renderSelected(id){
   }
   html += `<div class="row">`;
   if(myPct > 0) html += `<button class="danger" onclick="sellHouseStake('${p.id}')">Prodat městu (${Math.round(HOUSE_SELL_RATIO*100)} %)</button>`;
+  // Zástava musí být vidět dřív, než hráč zkusí prodávat.
+  const hypo = currentUser && mortgageForHouse(world.users[currentUser.name], p.id);
+  if(hypo) html += `<p style="font-size:0.88em;color:var(--gold);margin:4px 0;">🏦 ${hypo.pct.toFixed(1)} % tohoto domu ručí za hypotéku (zbývá ${Math.round(hypo.balance).toLocaleString('cs-CZ')} Kč) — tuhle část nejde prodat, dokud ji nedoplatíš.</p>`;
   html += `</div>`;
   if(myPct > 0){
     const activeListing = myActiveListingFor(p.id);
@@ -7234,6 +7273,10 @@ async function sellHouseStake(id){
   const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${myPct.toFixed(1)} %, dostaneš ~${refundPer} Kč za 1 %.${condNote})`, myPct));
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
+  { const k = muzuProdat(currentUser.name, id, pct);
+    if(!k.ok){
+      showAlert(`Tenhle podíl ručí za hypotéku, nejde ho prodat.\n\nVázáno: ${k.vazano.toFixed(1)} %\nVolně k prodeji: ${k.volne.toFixed(1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNejdřív hypotéku doplať v bance.`);
+      return; } }
   const refund = Math.round(marketPer * pct * HOUSE_SELL_RATIO);
   // Varování před prodejem — po prodeji většiny přijdeš o rozhodování a při prodeji
   // celého podílu se ruší i byty (přestavba, kterou jsi zaplatil).
@@ -7283,6 +7326,10 @@ async function listHouseStake(id){
   const pct = parseFloat(await showPrompt(`Kolik % nabídnout k prodeji? (vlastníš ${myPct.toFixed(1)} %)`, myPct));
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
+  { const k = muzuProdat(currentUser.name, id, pct);
+    if(!k.ok){
+      showAlert(`Tenhle podíl ručí za hypotéku, nejde ho nabídnout.\n\nVázáno: ${k.vazano.toFixed(1)} %\nVolně k prodeji: ${k.volne.toFixed(1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNejdřív hypotéku doplať v bance.`);
+      return; } }
   const isAuction = await showConfirm('OK = aukce (hráči přihazují 2 dny), Zrušit = pevná cena (kdo chce, koupí hned).');
   const marketRef = Math.round(houseMarketPricePerPercent(p) * pct);
   if(isAuction){
@@ -7622,10 +7669,6 @@ async function takeLoan(){
 
 function mortgageForHouse(u, houseId){
   return asArray(u && u.loans).find(l => l && l.type === 'mortgage' && l.houseId === houseId) || null;
-}
-function mortgageDebtFor(u, houseId){
-  const m = mortgageForHouse(u, houseId);
-  return m ? m.balance : 0;
 }
 
 async function buyHouseStakeOnMortgage(id){
@@ -8116,7 +8159,10 @@ async function startProject(houseId, key){
   const p = world.parcels[houseId];
   const def = PROJECT_DEFS[key];
   if(!p || !def || !currentUser) return;
-  if(!canInteract(p)){ showAlert('Musíš být u domu.'); return; }
+  // canInteract bere (lat, lng, poloměr), ne celý dům. Předání objektu znamenalo, že se
+  // vzdálenost nespočítala a kontrola vždycky selhala — projekt tak nešel spustit ani
+  // přímo u domu.
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
   if(!iHaveMajority(p)){ showAlert('Projekt může spustit jen většinový vlastník (přes 50 %).'); return; }
   if(p.project){ showAlert('Na tomhle domě už jeden projekt běží.'); return; }
   const me = world.users[currentUser.name];
@@ -8490,12 +8536,16 @@ function renderDaily(){
     const prog = Math.min(q.prog(u), q.goal);
     const hotovo = u.questDone.includes(qid);
     const pct = Math.round(prog / q.goal * 100);
+    // Odměny rostou s inflací, proto nejsou kulaté (230 → 231). Bez vysvětlení to vypadá
+    // jako chyba ve výpočtu.
+    const odmenaDnes = Math.round(q.reward * inflationMult());
     html += `<div style="border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:6px;${hotovo?'opacity:0.65;':''}">
       <p style="margin:0;font-weight:600;">${q.icon} ${q.name} ${hotovo?'<span style="color:var(--accent)">✓ splněno</span>':''}</p>
       <div style="background:var(--panel);border-radius:6px;height:8px;margin:6px 0;overflow:hidden;">
         <div style="width:${pct}%;height:100%;background:${hotovo?'var(--accent)':'var(--accent2)'};"></div>
       </div>
-      <p style="margin:0;font-size:0.82em;color:var(--muted)">${prog} / ${q.goal} ${q.unit} · odměna <b style="color:var(--gold)">${Math.round(q.reward*inflationMult())} Kč</b></p>
+      <p style="margin:0;font-size:0.82em;color:var(--muted)">${prog} / ${q.goal} ${q.unit} · odměna <b style="color:var(--gold)">${odmenaDnes} Kč</b>${
+        odmenaDnes !== q.reward ? ` <span style="opacity:0.75">(${q.reward} Kč + inflace)</span>` : ''}</p>
     </div>`;
   });
   html += `<p style="font-size:0.85em;color:var(--muted);margin-top:8px;">Splníš všechny tři? Bonus <b>${Math.round(QUEST_ALL_BONUS*inflationMult())} Kč</b>. Úkoly se mění každý den o půlnoci.</p>
@@ -10740,6 +10790,25 @@ async function endTenancy(id, idx){
 
 // ===== AKCE: ZAMĚSTNÁNÍ =====
 
+// Seznam zaměstnanců (`job.holders`) žije v `world.jobs`, které se při sloučení přebírá
+// CELÉ z cloudu. Změna práce se tak dala přepsat starším snapshotem — hráč se ocitl zpátky
+// v pozici, ze které dal výpověď, a musel do nové nastupovat znovu (a znovu, a znovu…).
+// Řešení: jediným zdrojem pravdy je `currentJobId` na účtu hráče, který se slučuje podle
+// razítka. Seznamy zaměstnanců se z něj po každém sloučení přepočítají.
+function prepocitejZamestnance(){
+  if(!world.jobs || !world.users) return;
+  Object.values(world.jobs).forEach(j => { if(j) j.holders = []; });
+  Object.values(world.users).forEach(u => {
+    if(!u || !u.currentJobId) return;
+    const j = world.jobs[u.currentJobId];
+    if(!j) { u.currentJobId = null; return; }
+    if(!Array.isArray(j.holders)) j.holders = [];
+    // Přeplněnou pozici neřešíme mazáním — kdo se tam dostal dřív, tam zůstane.
+    if(j.holders.length < (j.slots || 1)) j.holders.push(u.name);
+    else u.currentJobId = null;
+  });
+}
+
 function getCurrentJob(name){
   const job = Object.values(world.jobs).find(j => (j.holders||[]).includes(name));
   return job ? {job} : null;
@@ -10771,6 +10840,7 @@ function takeJob(jobId){
   me.currentJobId = jobId;
   me.currentJobShifts = 0;
   me.missedInRow = 0;
+  me.jobChangedTs = Date.now();   // razítko změny práce, ať se při sloučení nepřepíše starší verzí
   addNews('job', `💼 ${currentUser.name} nastoupil do práce jako ${job.name}.`);
   saveWorld(); renderJobs();
 }
@@ -10786,7 +10856,14 @@ async function quitJob(jobId){
     `\n\nMísto může mezitím obsadit někdo jiný.`))) return;
   if(job.holders) job.holders = job.holders.filter(n => n !== currentUser.name);
   const me = world.users[currentUser.name];
-  if(me) delete me.jobStartDay;
+  if(me){
+    delete me.jobStartDay;
+    // Bez tohohle zůstalo `currentJobId` viset na staré pozici a při dalším sloučení
+    // světa hráče vrátilo zpátky do práce, ze které dal výpověď.
+    me.currentJobId = null;
+    me.currentJobShifts = 0;
+    me.jobChangedTs = Date.now();
+  }
   saveWorld(); renderJobs();
 }
 
