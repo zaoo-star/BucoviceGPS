@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '3.6';
+const APP_VERSION = '3.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3836,6 +3836,49 @@ function mergeOwners(zaloha, cloud){
 }
 // Stálé ID bytu. Byty se dřív rozlišovaly jen pořadím v poli, takže po přestavbě domu
 // (nebo po vestavbě podkroví) ukazoval uložený index na jiný byt — nájemníkům se měnily byty.
+// Razítko změny bytu. Byty se dosud slučovaly jako součást celého domu podle `mod`,
+// takže starší snapshot mohl vrátit starý nájem nebo zrušit opravu — a hráč přišel
+// o peníze, které do toho dal.
+function stampUnit(un){ if(un) un.umod = noveRazitko(); }
+
+// Sloučí byty dvou verzí domu po JEDNOTLIVÝCH bytech (podle stálého uid).
+// Pravidla: nájem a stav řídí novější razítko; obsazenost má přednost před bydlícím
+// majitelem, protože nájemník je skutečný hráč, který za byt platí.
+function mergeUnits(zalohaUnits, cloudUnits){
+  const zal = asArray(zalohaUnits), cl = asArray(cloudUnits);
+  if(!zal.length) return cl;
+  if(!cl.length) return zal;
+  const podleUid = new Map();
+  cl.forEach(u => { if(u && u.uid) podleUid.set(u.uid, u); });
+  // Byty bez uid (velmi stará data) nemá smysl párovat — necháme cloud, jak je.
+  if(!podleUid.size) return cl;
+
+  return cl.map(cloudU => {
+    if(!cloudU || !cloudU.uid) return cloudU;
+    const mujU = zal.find(u => u && u.uid === cloudU.uid);
+    if(!mujU) return cloudU;
+    const vyhrava = (mujU.umod || 0) > (cloudU.umod || 0) ? mujU : cloudU;
+    const vysledek = Object.assign({}, cloudU, {
+      rentPrice: vyhrava.rentPrice,
+      condition: Math.max(mujU.condition || 0, cloudU.condition || 0),   // opravu nikdy nezahodíme
+      umod: Math.max(mujU.umod || 0, cloudU.umod || 0)
+    });
+    // Obsazenost: nájemník (nebo NPC) přebíjí bydlícího majitele.
+    const najemnik = cloudU.tenant || mujU.tenant || null;
+    const npc = cloudU.npc || mujU.npc || null;
+    if(najemnik || npc){
+      vysledek.tenant = najemnik;
+      vysledek.npc = npc;
+      vysledek.ownerOccupied = false;
+    } else {
+      vysledek.tenant = null;
+      vysledek.npc = null;
+      vysledek.ownerOccupied = !!(cloudU.ownerOccupied || mujU.ownerOccupied);
+    }
+    return vysledek;
+  });
+}
+
 function newUnitId(){ return 'u' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 // Strop ceny na tržišti. Nabídka nesmí být nesmyslně vysoká — jednak to nikdo nekoupí
 // a jen to zaplevelí tržiště, jednak se obří čísla vypisují ve tvaru "1e+128 Kč",
@@ -4627,6 +4670,10 @@ function adoptWorldVnitrni(incoming){
   const mojeVlastnictvi = {}; // parcelId -> {omod, owners} — celá mapa podílů + kdy se naposled měnila
   const myManagedHouses = {}; // parcelId -> celý stav domu, kde jsem SPRÁVCE (>50 %)
   const mojeRazitka = {};     // parcelId -> {mod, dum} pro VŠECHNY domy s razítkem změny
+  const mojeVylepseni = {};   // parcelId -> mapa zaplacených vylepšení
+  const mojeByty = {};        // parcelId -> byty (nájem, stav, obsazenost)
+  const mojeProdeje = {};     // parcelId -> historie prodejů (drží cenu domu)
+  const mojeProjekty = {};    // parcelId -> rozdělaný stavební projekt
   const mojeBizVlastnictvi = {}; // bizId -> {omod, owners}
   const myTenancies = [];     // {id, uid, idx} — pronajaté byty (uid je stálý, index se přestavbou mění)
   const myNews = world.news || [];
@@ -4675,6 +4722,14 @@ function adoptWorldVnitrni(incoming){
       // Razítko si pamatujeme u KAŽDÉHO domu, i cizího. Když někdo pošle starší verzi domu
       // (typicky hráč, který ještě nedostal cizí změnu), nepřijdeme o novější stav.
       if(p && p.mod) mojeRazitka[id] = { mod: p.mod, dum: JSON.parse(JSON.stringify(p)) };
+      // Vylepšení a rozdělaný projekt zálohujeme ZVLÁŠŤ. Jsou to zaplacené věci, které
+      // se nedají odinstalovat — a přesto mizely, protože byty i vylepšení se slučují
+      // jako celý dům podle razítka `mod`. Kdo dostal starší snapshot, přišel o klimatizaci
+      // i s penězi za ni (a domu spadl komfort, takže se vystěhovali nájemníci).
+      if(p && p.upgrades && Object.keys(p.upgrades).length) mojeVylepseni[id] = Object.assign({}, p.upgrades);
+      if(p && asArray(p.units).length) mojeByty[id] = JSON.parse(JSON.stringify(asArray(p.units)));
+      if(p && asArray(p.salesHistory).length) mojeProdeje[id] = JSON.parse(JSON.stringify(asArray(p.salesHistory)));
+      if(p && p.project) mojeProjekty[id] = JSON.parse(JSON.stringify(p.project));
       asArray(p.units).forEach((u, idx) => { if(u && u.tenant === myName) myTenancies.push({id, uid: u.uid, idx}); });
     });
     Object.entries(world.businesses || {}).forEach(([id, b]) => {
@@ -4942,6 +4997,59 @@ function adoptWorldVnitrni(incoming){
     // Nájem se obnovuje podle STÁLÉHO ID bytu (uid), ne podle pořadí v poli. Když majitel
     // mezitím dům přestavěl nebo přidal byt (projekt "podkroví"), index ukazoval na úplně
     // jiný byt — hráč se probudil v cizím bytě. Bez uid (data ze starší verze) radši nic.
+    // VYLEPŠENÍ se slučují SJEDNOCENÍM, ne přepisem. Vylepšení jde jen přidat, nikdy
+    // odebrat — takže když ho jedna strana zná a druhá ne, ta druhá je prostě pozadu.
+    Object.entries(mojeVylepseni).forEach(([id, up]) => {
+      const p = world.parcels[id];
+      if(!p) return;
+      if(!p.upgrades) p.upgrades = {};
+      Object.keys(up).forEach(k => { if(up[k] && !p.upgrades[k]) p.upgrades[k] = true; });
+    });
+
+    // Rozdělaný projekt vrátíme, jen když v cloudu žádný není a ještě neměl skončit —
+    // jinak bychom vzkřísili projekt, který mezitím doběhl.
+    Object.entries(mojeProjekty).forEach(([id, proj]) => {
+      const p = world.parcels[id];
+      if(!p || p.project || !proj) return;
+      if((proj.endDay || 0) > (world.day || 1)) p.project = proj;
+    });
+
+    // BYTY se slučují po jednotlivých bytech podle uid, ne jako součást celého domu.
+    // Bez toho mohl starší snapshot vrátit starý nájem nebo zrušit zaplacenou opravu.
+    Object.entries(mojeByty).forEach(([id, byty]) => {
+      const p = world.parcels[id];
+      if(!p || !asArray(p.units).length) return;
+      p.units = mergeUnits(byty, asArray(p.units));
+    });
+
+    // Historie prodejů drží tržní cenu domu — sjednotíme podle času, ať se záznamy neztrácí.
+    Object.entries(mojeProdeje).forEach(([id, prodeje]) => {
+      const p = world.parcels[id];
+      if(!p) return;
+      const mapa = new Map();
+      [...asArray(p.salesHistory), ...prodeje].forEach(z => {
+        if(z && z.ts) mapa.set(z.ts + '|' + (z.pct || 0), z);
+      });
+      p.salesHistory = Array.from(mapa.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0)).slice(-20);
+    });
+
+    // OPRAVA STŘETU: byt nemůže mít zároveň nájemníka a bydlícího majitele. Stává se to,
+    // když se majitel nastěhuje na jednom zařízení ve chvíli, kdy se na druhém nastěhoval
+    // nájemník — byty se totiž slučují jako celý dům podle razítka `mod`, takže jedna
+    // verze druhou přepíše. Přednost dostává NÁJEMNÍK: je to skutečný hráč, který má byt
+    // zaplacený, kdežto majitel se jen přestěhuje jinam.
+    Object.values(world.parcels || {}).forEach(p => {
+      asArray(p && p.units).forEach(un => {
+        if(!un || !un.ownerOccupied) return;
+        if(!un.tenant && !un.npc) return;
+        un.ownerOccupied = false;
+        if(un.tenant === myName) return;   // nemá smysl hlásit sám sobě
+        if(myName && (p.owners?.[myName] || 0) > 50){
+          zapisChybu(`Střet v bytě ${p.id}: bydlel tam majitel i nájemník ${un.tenant || 'NPC'} — přednost dostal nájemník.`, 'byty');
+        }
+      });
+    });
+
     myTenancies.forEach(({id, uid, idx}) => {
       const p = world.parcels[id];
       const units = p && asArray(p.units);
@@ -6002,6 +6110,7 @@ async function encounterNajemnik(enc, u){
   if(!ok){ showToast('Zájemce šel jinam.'); return; }
   cil.p.units[cil.idx].npc = { name: 'Nájemník z ulice', avatar: '🧑', minCondition: 35 };
   cil.p.units[cil.idx].rentPrice = nabidka;
+  stampUnit(cil.p.units[cil.idx]);
   stampHouse(cil.p);
   addNews('rental', `🔑 Do domu ${cil.p.id.replace('h_','#')} se nastěhoval nový nájemník (${nabidka} Kč/den).`);
   await showAlert(`Nastěhováno! Bude ti platit ${nabidka} Kč denně.`);
@@ -10528,9 +10637,19 @@ async function occupyOwnUnit(id, idx){
   else if(jinyDum) zprava += `\n\nPozn.: pořád máš dům ${jinyDum.id.replace('h_','#')} určený k bydlení.`;
   if(!(await showConfirm(zprava))) return;
 
-  jinyByt.forEach(({ q, i }) => { q.units[i].ownerOccupied = false; stampHouse(q); });
-  u.ownerOccupied = true;
-  stampHouse(p);
+  // Po potvrzení si byt vyzvedneme ZNOVU — mezitím se do něj mohl nastěhovat nájemník
+  // (a bez téhle kontroly bychom ho tiše vyhodili).
+  const p2 = world.parcels[id];
+  const cil = asArray(p2 && p2.units).find(x => x && u.uid && x.uid === u.uid) || asArray(p2 && p2.units)[idx];
+  if(!cil){ showAlert('Byt se mezitím ztratil, zkus to prosím znovu.'); return; }
+  if(cil.tenant || cil.npc){
+    showAlert(`Do bytu se mezitím nastěhoval ${cil.tenant || 'nájemník'} — nestěhuješ se tam. Zkus jiný volný byt.`);
+    refreshAll();
+    return;
+  }
+  jinyByt.forEach(({ q, i }) => { if(q.units[i]) q.units[i].ownerOccupied = false; stampHouse(q); });
+  cil.ownerOccupied = true;
+  stampHouse(p2 || p);
   saveWorld(); refreshAll();
   showAlert(`Nastěhoval ses do ${idx+1}. bytu. Ostatní byty vyděláváš dál — a klesly ti náklady na bydlení.`);
 }
@@ -10617,7 +10736,7 @@ async function startRental(id){
     if(isNaN(novyNajem) || novyNajem <= 0) return;
     if(novyNajem > maxRentForHouse(p)){ showAlert(`Nejvyšší povolený nájem je ${maxRentForHouse(p)} Kč/den.`); return; }
     p.useType = 'rental';
-    p.units.forEach(u => { if(u) u.rentPrice = novyNajem; });
+    p.units.forEach(u => { if(u){ u.rentPrice = novyNajem; stampUnit(u); } });
     stampHouse(p);
     addNews('rental', `🏘️ ${currentUser.name} zase pronajímá dům ${p.id.replace('h_','#')} (nájem ${novyNajem} Kč).`);
     saveWorld(); refreshAll();
@@ -10700,6 +10819,7 @@ async function setUnitRentPrice(id, idx){
   }
 
   unit.rentPrice = rent;
+  stampUnit(unit);
   stampHouse(p);
   saveWorld(); refreshAll();
 }
@@ -10746,6 +10866,7 @@ async function repairUnit(id, idx){
   if(me.balance < cost){ showAlert('Nemáš dost peněz na stavebniny.'); return; }
   me.balance -= cost;
   unit.condition = 100;
+  stampUnit(unit);
   stampHouse(p);
   // počítadlo oprav pro denní úkol (nuluje se s novým dnem)
   const today = calendarDay();
@@ -10762,7 +10883,7 @@ async function rentUnit(id, idx){
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu, který si chceš najmout.'); return; }
   if(p.useType !== 'rental'){ showAlert('Tenhle dům se momentálně nepronajímá — majitel v něm bydlí.'); return; }
   const unit = p.units[idx];
-  if(unit.ownerOccupied){ showAlert('V tomhle bytě bydlí majitel domu.'); return; }
+  if(unit.ownerOccupied){ showAlert('V tomhle bytě bydlí majitel domu. Zkus jiný volný byt v okolí.'); return; }
   if(unit.tenant){ showAlert('Tento byt už má nájemníka.'); return; }
   if(unit.condition <= 0){ showAlert('Byt je zchátralý, nedá se v něm bydlet.'); return; }
   if((p.owners?.[currentUser.name]||0) > 0){ showAlert('Ve vlastním domě si byt nenajímáš — jsi spoluvlastník.'); return; }
