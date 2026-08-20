@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '3.9';
+const APP_VERSION = '4.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4375,9 +4375,14 @@ function migrateWorld(){
       // Data ze starších verzí: kdo je v seznamu zaměstnanců, ale nemá to na účtu,
       // dostane currentJobId doplněné — jinak by ho přepočet z práce vyhodil.
       Object.values(world.jobs || {}).forEach(j => {
-        asArray(j && j.holders).forEach(h => {
+        if(!j) return;
+        j.holders = Array.from(new Set(asArray(j.holders).filter(Boolean)));   // odstranit duplicity
+        j.holders.forEach(h => {
           const uu = world.users[h];
-          if(uu && !uu.currentJobId) uu.currentJobId = j.id;
+          // Doplníme jen tomu, kdo má stopu po skutečném nástupu (jobStartDay). Bez téhle
+          // podmínky by se "zaměstnanci" stali i lidé, kteří v seznamu uvízli z dřívějška —
+          // zaplnili by místa a skutečným zaměstnancům by práci přebrali.
+          if(uu && !uu.currentJobId && uu.jobStartDay !== undefined) uu.currentJobId = j.id;
         });
       });
       Object.values(world.users).forEach(u => {
@@ -7245,7 +7250,9 @@ function renderJobs(){
       let statusBadge;
       if(full) statusBadge = `<span class="badge badge-empty">obsazeno ${taken}/${j.slots}</span>`;
       else if(locked) statusBadge = `<span class="badge badge-empty">zamčeno</span>`;
-      else statusBadge = `<span class="badge badge-res">volné ${taken}/${j.slots}</span>`;
+      // Dřív tu bylo "volné 0/6", což znamenalo OBSAZENO 0 ze 6 — hráči to četli obráceně
+      // jako "žádné volné místo" a mysleli si, že je pozice plná.
+      else statusBadge = `<span class="badge badge-res">volných ${j.slots - taken} z ${j.slots}</span>`;
       return `<div class="card">
       <h3>${escapeHtml(j.name)} ${statusBadge}</h3>
       <p>${j.desc}</p>
@@ -10919,14 +10926,21 @@ async function endTenancy(id, idx){
 function prepocitejZamestnance(){
   if(!world.jobs || !world.users) return;
   Object.values(world.jobs).forEach(j => { if(j) j.holders = []; });
-  Object.values(world.users).forEach(u => {
-    if(!u || !u.currentJobId) return;
+  // Řadíme podle data nástupu, ne podle pořadí v datech. Pořadí uživatelů z Firebase je
+  // nahodilé, takže dřív o práci přicházel prostě ten, kdo byl v seznamu níž — a to i
+  // opakovaně, při každé synchronizaci.
+  const zamestnanci = Object.values(world.users)
+    .filter(u => u && u.currentJobId)
+    .sort((a, b) => (a.jobStartDay || 0) - (b.jobStartDay || 0));
+
+  zamestnanci.forEach(u => {
     const j = world.jobs[u.currentJobId];
-    if(!j) { u.currentJobId = null; return; }
+    if(!j){ u.currentJobId = null; return; }
     if(!Array.isArray(j.holders)) j.holders = [];
-    // Přeplněnou pozici neřešíme mazáním — kdo se tam dostal dřív, tam zůstane.
-    if(j.holders.length < (j.slots || 1)) j.holders.push(u.name);
-    else u.currentJobId = null;
+    // POZOR: počet míst omezuje NÁBOR, ne zaměstnání. Kdo už práci má, o ni tímhle
+    // přepočtem nepřijde — dřív se mu `currentJobId` potichu smazalo, on se ocitl bez práce
+    // a musel nastupovat znovu (a přišel o odsloužené směny na pozici).
+    if(!j.holders.includes(u.name)) j.holders.push(u.name);
   });
 }
 
