@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '4.0';
+const APP_VERSION = '4.2';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1317,6 +1317,60 @@ const JOB_DEFS = [
   {id:'vedouci_ts', name:'Vedoucí technických služeb', salary:420, tier:4, reqShifts:35, slots:1, desc:'Řízení čety technických služeb.'},
   {id:'tajemnik',   name:'Tajemník MěÚ',             salary:480, tier:5, reqShifts:50, slots:1, desc:'Nejvyšší úřednická pozice, řízení celého úřadu.'},
 ];
+// ===== SOUKROMÁ ZAMĚSTNÁNÍ =====
+// Městské pozice se všechny nastupují na radnici, což znamenalo, že hráč musel kvůli každé
+// směně přes celé město na jedno místo. Soukromá místa vznikají z podniků, které v Bučovicích
+// opravdu stojí — směna se odpracuje TAM, takže se práce dá spojit s procházkou po okolí.
+const PRIVATE_JOB_ROLES = {
+  'Supermarket': { role:'Prodavač',        emoji:'🛒', mult:0.95, slots:3 },
+  'Restaurace':  { role:'Číšník',          emoji:'🍽️', mult:0.90, slots:3, tip:0.55 },
+  'Hotel':       { role:'Recepční',        emoji:'🛎️', mult:1.00, slots:2, tip:0.45 },
+  'Benzinka':    { role:'Obsluha čerpací stanice', emoji:'⛽', mult:0.95, slots:2 },
+  'Památka':     { role:'Průvodce',        emoji:'🏰', mult:1.05, slots:2, tip:0.40 },
+  'Sport':       { role:'Správce sportoviště', emoji:'🤾', mult:0.90, slots:2 },
+  'Kavárna':     { role:'Barista',         emoji:'☕', mult:0.88, slots:2, tip:0.50 },
+  'Obchod':      { role:'Prodavač',        emoji:'🛍️', mult:0.88, slots:2 },
+  'Pekárna':     { role:'Pekař',           emoji:'🥐', mult:0.92, slots:2 },
+  'Lékárna':     { role:'Lékárník',        emoji:'💊', mult:1.10, slots:1 },
+  'Škola':       { role:'Školník',         emoji:'🏫', mult:0.92, slots:2 },
+  'Zdravotnictví':{ role:'Sanitář',        emoji:'🏥', mult:1.05, slots:2 }
+};
+
+// Plat vychází z výkonu podniku, ale drží se v rozumném pásmu kolem městských platů —
+// ať se nevyplatí ignorovat radnici, ani naopak.
+function privateJobSalary(biz, role){
+  const zaklad = 230 + Math.min(160, (biz.hourlyYield || 50) * 0.45);
+  return Math.round(zaklad * (role.mult || 1));
+}
+
+// Soukromá místa se negenerují do světa — odvozují se z podniků, takže se samy přizpůsobí
+// tomu, jaké podniky ve městě zrovna jsou (a fungují i po přepnutí na jiné město).
+function privateJobsList(){
+  const out = [];
+  Object.values(world.businesses || {}).forEach(biz => {
+    if(!biz || !biz.category) return;
+    const role = PRIVATE_JOB_ROLES[biz.category];
+    if(!role) return;
+    out.push({
+      id: 'pj_' + biz.id,
+      name: `${role.role} — ${biz.name}`,
+      shortName: role.role,
+      emoji: role.emoji,
+      bizId: biz.id,
+      lat: biz.lat, lng: biz.lng,
+      salary: privateJobSalary(biz, role),
+      tipChance: role.tip || 0.25,
+      slots: role.slots || 2,
+      tier: 0, reqShifts: 0,
+      desc: `Směnu odpracuješ přímo u podniku ${biz.name}.`,
+      soukrome: true
+    });
+  });
+  return out.sort((a, b) => b.salary - a.salary);
+}
+
+function privateJobById(id){ return privateJobsList().find(j => j.id === id) || null; }
+
 const JOB_BAN_DAYS = 7; // po vyčerpání omluvenek a vynechání směny zákaz práce na 7 dní
 const JOB_SICK_DAYS_ALLOWED = 2; // kolik vynechaných směn za sebou appka toleruje, než přijde vyhazov
 const SENIORITY_BONUS_PER_SHIFT = 0.4; // Kč navíc k platu za každou odslouženou směnu na AKTUÁLNÍ pozici
@@ -5638,32 +5692,44 @@ function onNewDay(catchUp){
     const yesterday = new Date(Date.now() - 86400000);
     const prevCalDay = calendarDay(yesterday);
     const prevWasWeekend = isWeekend(yesterday);
-    Object.values(world.jobs).forEach(job => {
-      if(!job.holders || !job.holders.length) return;
-      job.holders = job.holders.filter(holderName => {
-        const u = world.users[holderName];
-        if(!u) return false;
-        if(prevWasWeekend) return true; // předchozí den byl víkend → žádný postih
-        const startedBefore = (u.jobStartDay ?? prevDay) < prevDay;
-        const workedPrev = u.lastWorkedCalDay === prevCalDay;
-        if(!startedBefore) return true; // grace den nástupu
-        if(workedPrev){
-          u.missedInRow = 0;
-          return true;
-        }
-        u.missedInRow = (u.missedInRow || 0) + 1;
-        if(u.missedInRow > JOB_SICK_DAYS_ALLOWED){
-          u.jobBanUntil = world.day + JOB_BAN_DAYS;
-          u.missedInRow = 0;
-          delete u.jobStartDay;
-          u.currentJobId = null;        // ať ho přepočet zaměstnanců nevrátí zpátky
-          u.currentJobShifts = 0;
-          u.jobChangedTs = Date.now();
-          return false; // vyhazov — odebrat z holders
-        }
-        return true; // ještě v toleranci (omluvenka)
-      });
+    // Vyhodnocení jednoho zaměstnance. Vrací false, když dostal padáka.
+    // Dřív se docházka procházela přes `world.jobs`, takže se vůbec netýkala SOUKROMÝCH
+    // pozic u firem — ty v `world.jobs` nejsou. Kdo pracoval u podniku, mohl chodit
+    // do práce, jak se mu zachtělo. Proto se teď prochází podle účtů hráčů.
+    const posudDochazku = (u) => {
+      if(!u) return false;
+      if(prevWasWeekend) return true; // předchozí den byl víkend → žádný postih
+      const startedBefore = (u.jobStartDay ?? prevDay) < prevDay;
+      const workedPrev = u.lastWorkedCalDay === prevCalDay;
+      if(!startedBefore) return true; // grace den nástupu
+      if(workedPrev){
+        u.missedInRow = 0;
+        return true;
+      }
+      u.missedInRow = (u.missedInRow || 0) + 1;
+      if(u.missedInRow > JOB_SICK_DAYS_ALLOWED){
+        u.jobBanUntil = world.day + JOB_BAN_DAYS;
+        u.missedInRow = 0;
+        delete u.jobStartDay;
+        u.currentJobId = null;        // ať ho přepočet zaměstnanců nevrátí zpátky
+        u.currentJobShifts = 0;
+        u.jobChangedTs = Date.now();
+        return false; // vyhazov
+      }
+      return true; // ještě v toleranci (omluvenka)
+    };
+
+    Object.values(world.users).forEach(u => {
+      if(!u || !u.currentJobId) return;
+      const jmenoPozice = String(u.currentJobId).startsWith('pj_')
+        ? (privateJobById(u.currentJobId)?.name || 'práci u firmy')
+        : (world.jobs[u.currentJobId]?.name || 'práci');
+      if(!posudDochazku(u)){
+        addNews('job', `📉 ${u.name} dostal výpověď — ${jmenoPozice}, neomluvené absence.`);
+      }
     });
+    // Seznamy zaměstnanců srovnat podle účtů (vyhozeným se `currentJobId` už smazalo).
+    prepocitejZamestnance();
   }
   Object.values(world.users).forEach(u => {
     u.walkEarnedToday = 0;
@@ -7177,11 +7243,48 @@ function renderMine(){
     `));
 }
 
+// Vzdálenost sama o sobě nestačí — "863 m odtud" je kružnice kolem hráče, na které
+// stojí desítky domů. Přidáme světovou stranu, ať se dá vyrazit správným směrem.
+const SMERY = ['na sever','na severovýchod','na východ','na jihovýchod','na jih','na jihozápad','na západ','na severozápad'];
+function smerKe(cil){
+  if(!playerPos || !cil) return '';
+  const f1 = playerPos.lat * Math.PI/180, f2 = cil.lat * Math.PI/180;
+  const dl = (cil.lng - playerPos.lng) * Math.PI/180;
+  const y = Math.sin(dl) * Math.cos(f2);
+  const x = Math.cos(f1)*Math.sin(f2) - Math.sin(f1)*Math.cos(f2)*Math.cos(dl);
+  const uhel = (Math.atan2(y, x) * 180/Math.PI + 360) % 360;
+  return SMERY[Math.round(uhel / 45) % 8];
+}
+
+// Popis vzdálenosti i se směrem, pro tipy a doporučení.
+function kudyText(cil, d){
+  const vzdalenost = d < 1000 ? Math.round(d) + ' m' : (d/1000).toFixed(1).replace('.', ',') + ' km';
+  const smer = smerKe(cil);
+  return smer ? `${vzdalenost} ${smer}` : `${vzdalenost} odtud`;
+}
+
 function flyToParcel(id){
   const p = world.parcels[id];
   if(!p) return;
+  closeSheet();                       // ať je mapa vidět, ne panel přes ni
   map.setView([p.lat, p.lng], 18);
+  oznacCil(p);                        // pulzující kroužek, aby šlo poznat KTERÝ dům to je
   selectParcel(id);
+}
+
+// Dočasné zvýraznění cíle na mapě. Bez něj hráč doletí na místo, kde je dvacet stejných
+// značek, a netuší, na kterou z nich se má dívat.
+let cilKroužek = null, cilTimer = null;
+function oznacCil(p){
+  if(!map || !p) return;
+  if(cilKroužek){ map.removeLayer(cilKroužek); cilKroužek = null; }
+  clearTimeout(cilTimer);
+  cilKroužek = L.circle([p.lat, p.lng], {
+    radius: 22, color: '#facc15', weight: 3, fillColor: '#facc15', fillOpacity: 0.25
+  }).addTo(map);
+  cilTimer = setTimeout(() => {
+    if(cilKroužek){ map.removeLayer(cilKroužek); cilKroužek = null; }
+  }, 20000);
 }
 
 function flyToBusiness(bizId){
@@ -7198,8 +7301,12 @@ function renderJobs(){
   const el = document.getElementById('jobsContent');
   const me = currentUser ? world.users[currentUser.name] : null;
   const current = currentUser ? getCurrentJob(currentUser.name) : null;
-  const nearCityHall = canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS);
-  let html = distanceNoteHtml(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS).replace('📍','🏛️ Radnice:');
+  // Vzdálenost ukazujeme k MÉMU pracovišti — u soukromé práce to není radnice.
+  const mojeMisto = current ? jobPlace(current.job) : { lat: CITY_CENTER[0], lng: CITY_CENTER[1], nazev: 'radnice' };
+  const nearCityHall = canInteract(mojeMisto.lat, mojeMisto.lng, JOB_RADIUS);
+  const emojiMista = (current && current.job.soukrome) ? (current.job.emoji || '🏪') : '🏛️';
+  let html = distanceNoteHtml(mojeMisto.lat, mojeMisto.lng, JOB_RADIUS)
+    .replace('📍', `${emojiMista} ${mojeMisto.nazev.charAt(0).toUpperCase() + mojeMisto.nazev.slice(1)}:`);
 
   const shifts = me?.totalShifts || 0;
   const ban = me ? jobBanRemaining(me) : 0;
@@ -7224,16 +7331,18 @@ function renderJobs(){
     html += `<div class="card"><h3>Tvoje práce: ${escapeHtml(j.name)}</h3>
       <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult()*mzdaMult)} Kč</b> / směna${seniorityBonus>=1?` + <span style="color:var(--accent)">${Math.round(seniorityBonus*inflationMult()*mzdaMult)} Kč stáž</span>`:''}</p>
       ${mzdaEv ? `<p style="font-size:0.92em;color:var(--gold);margin:2px 0;">${mzdaEv.emoji} ${mzdaEv.name}: dnes ${mzdaMult > 1 ? '+' : ''}${Math.round((mzdaMult-1)*100)} % ke mzdě (běžně ${Math.round(j.salary*inflationMult())} Kč)</p>` : ''}
-      <p style="font-size:0.92em;color:var(--muted)">Odsloužené směny na téhle pozici: ${seniorityShifts} (příplatek roste, max ${SENIORITY_BONUS_CAP} Kč) · šance na spropitné ${Math.round(TIP_CHANCE*100)} %</p>
+      <p style="font-size:0.92em;color:var(--muted)">Odsloužené směny na téhle pozici: ${seniorityShifts} (příplatek roste, max ${SENIORITY_BONUS_CAP} Kč) · šance na spropitné ${Math.round((j.tipChance || TIP_CHANCE)*100)} %</p>
       ${attendanceNote}
       <div class="row">
-        <button ${canWorkNow?'':'disabled'} onclick="workShift('${j.id}')">${weekend ? '🌴 Víkend' : (workedToday ? '✅ Hotovo' : 'Odpracovat směnu (u radnice)')}</button>
+        <button ${canWorkNow?'':'disabled'} onclick="workShift('${j.id}')">${weekend ? '🌴 Víkend' : (workedToday ? '✅ Hotovo' : `Odpracovat směnu (u ${mojeMisto.nazev})`)}</button>
+        ${j.soukrome ? `<button class="secondary" onclick="flyToBusiness('${j.bizId}')">Kde to je</button>` : ''}
         <button class="danger" onclick="quitJob('${j.id}')">Dát výpověď</button>
       </div>
     </div>`;
   }
 
-  html += `<p style="font-size:0.92em;color:var(--muted);margin:10px 0 4px;">🏛️ Městská zaměstnání (postupuj od nejnižších)</p>`;
+  const uRadnice = canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS);
+  html += `<p style="font-size:0.92em;color:var(--muted);margin:10px 0 4px;">🏛️ Městská zaměstnání — nastupuje se na radnici (postupuj od nejnižších)</p>`;
   html += Object.values(world.jobs)
     .filter(j => !(current && current.job.id===j.id))
     .sort((a,b)=>a.tier-b.tier || a.salary-b.salary)
@@ -7258,10 +7367,40 @@ function renderJobs(){
       <p>${j.desc}</p>
       <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult()*eventMult('wageMult'))} Kč</b> / směna${j.reqShifts>0?` · praxe: ${j.reqShifts} směn`:''} · míst: ${j.slots}</p>
       ${lockNote}
-      ${!full && !current && !locked && ban===0 ? `<div class="row"><button ${nearCityHall?'':'disabled'} onclick="takeJob('${j.id}')">Nastoupit</button></div>` : ''}
+      ${!full && !current && !locked && ban===0 ? `<div class="row"><button ${uRadnice?'':'disabled'} onclick="takeJob('${j.id}')">Nastoupit${uRadnice?'':' (musíš být u radnice)'}</button></div>` : ''}
       ${taken>0 ? `<p style="font-size:0.92em;color:var(--muted)">Zaměstnanci: ${holders.map(h=>`<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(h)}>${escapeHtml(h)}</span>`).join(', ')}</p>` : ''}
     </div>`;
     }).join('');
+
+  // --- SOUKROMÁ MÍSTA U PODNIKŮ ---
+  // Řadíme podle vzdálenosti: nejužitečnější je vidět, kde se dá pracovat cestou.
+  const odkud = playerPos || {lat: CITY_CENTER[0], lng: CITY_CENTER[1]};
+  const soukroma = privateJobsList()
+    .map(j => ({ ...j, d: haversine(odkud, {lat:j.lat, lng:j.lng}) }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 12);
+
+  if(soukroma.length){
+    html += `<p style="font-size:0.92em;color:var(--muted);margin:14px 0 4px;">🏪 Práce u firem — nastupuje se i pracuje přímo na místě</p>`;
+    html += soukroma.map(j => {
+      if(current && current.job.id === j.id) return '';
+      const obsazeno = Object.values(world.users).filter(x => x && x.currentJobId === j.id).length;
+      const full = obsazeno >= j.slots;
+      const blizko = canInteract(j.lat, j.lng, JOB_RADIUS);
+      return `<div class="card">
+        <h3>${j.emoji} ${escapeHtml(j.name)} ${full
+          ? `<span class="badge badge-empty">obsazeno ${obsazeno}/${j.slots}</span>`
+          : `<span class="badge badge-res">volných ${j.slots - obsazeno} z ${j.slots}</span>`}</h3>
+        <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult()*eventMult('wageMult'))} Kč</b> / směna · spropitné ${Math.round(j.tipChance*100)} % · míst: ${j.slots}</p>
+        <p style="font-size:0.88em;color:var(--gold);">🧭 ${kudyText(j, j.d)}</p>
+        <p style="font-size:0.88em;color:var(--muted);">Bez požadavků na praxi — směnu odpracuješ tady, ne na radnici.</p>
+        <div class="row">
+          ${!full && !current && ban===0 ? `<button ${blizko?'':'disabled'} onclick="takeJob('${j.id}')">Nastoupit${blizko?'':' (musíš být na místě)'}</button>` : ''}
+          <button class="secondary" onclick="flyToBusiness('${j.bizId}')">Kde to je</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
 
   html += infoBox('Co znamenají údaje u pozice?', `
     <p><b>Plat (Kč/směna).</b> Kolik dostaneš za jednu směnu. Vyplácí se hned na účet.</p>
@@ -8452,6 +8591,20 @@ function worthChartHtml(u){
 // ===== REALITNÍ TIPY =====
 // Najde domy, které se vyplatí koupit — levné vzhledem k tomu, co vydělají.
 // Učí hráče hledat příležitosti místo náhodného nakupování.
+// Nejbližší známý bod k domu — "u Lidlu" se hledá líp než souřadnice.
+function orientacniBod(p){
+  let nejlepsi = null, nejd = 260;
+  const zkus = (o, jmeno) => {
+    if(!o || typeof o.lat !== 'number') return;
+    const d = haversine({lat:p.lat, lng:p.lng}, {lat:o.lat, lng:o.lng});
+    if(d < nejd){ nejd = d; nejlepsi = jmeno; }
+  };
+  Object.values(world.businesses || {}).forEach(b => zkus(b, b.name));
+  asArray(world.landmarks).forEach(l => zkus(l, l.name));
+  LANDMARK_DEFS.forEach(l => zkus(l, l.name));
+  return nejlepsi ? `poblíž ${nejlepsi}` : '';
+}
+
 function findDealTips(){
   const odkud = playerPos || {lat: CITY_CENTER[0], lng: CITY_CENTER[1]};
   const me = currentUser && world.users[currentUser.name];
@@ -8467,7 +8620,7 @@ function findDealTips(){
       const bytu = (p.units && p.units.length) || p.levels || 1;
       const denniNajem = fairRentForHouse(p) * bytu;
       const zaMe = Math.round(cena * (Math.min(51, houseFreePct(p)) / 100));   // kolik stojí většina
-      return { p, cena, bytu, denniNajem, zaMe, volne: houseFreePct(p),
+      return { p, cena, bytu, denniNajem, zaMe, volne: houseFreePct(p), orientace: orientacniBod(p),
                d: haversine(odkud, {lat:p.lat, lng:p.lng}),
                vylepseni: Object.keys(HOUSE_UPGRADES).filter(k => hasUpgrade(p,k)).length,
                obsazenych: (p.units||[]).filter(un => un && (un.tenant || un.npc)).length };
@@ -10011,7 +10164,9 @@ function renderFinance(){
       html += `<div style="border:1px solid var(--border);border-radius:8px;padding:7px;margin-top:6px;">
         <p style="margin:0;font-weight:600;">🏠 Dům ${t.p.id.replace('h_','#')}</p>
         <p style="margin:2px 0;font-size:0.85em;color:var(--accent);">${t.duvod}</p>
-        <p style="margin:2px 0;font-size:0.83em;color:var(--muted);">Většinový podíl ~${t.zaMe.toLocaleString('cs-CZ')} Kč · nájem ~${Math.round(t.denniNajem)} Kč/den · ${t.d<1000?Math.round(t.d)+' m':(t.d/1000).toFixed(1).replace('.',',')+' km'} odtud</p>
+        <p style="margin:2px 0;font-size:0.83em;color:var(--muted);">Většinový podíl ~${t.zaMe.toLocaleString('cs-CZ')} Kč · nájem ~${Math.round(t.denniNajem)} Kč/den</p>
+        <p style="margin:2px 0;font-size:0.83em;color:var(--gold);">🧭 ${kudyText(t.p, t.d)}${t.orientace ? ` · ${escapeHtml(t.orientace)}` : ''}</p>
+        <div class="row"><button class="secondary" onclick="flyToParcel('${t.p.id}')">Ukázat na mapě</button></div>
       </div>`;
     });
     html += `</div>`;
@@ -10934,6 +11089,11 @@ function prepocitejZamestnance(){
     .sort((a, b) => (a.jobStartDay || 0) - (b.jobStartDay || 0));
 
   zamestnanci.forEach(u => {
+    if(String(u.currentJobId).startsWith('pj_')){
+      // Soukromé místo se nedrží v `world.jobs`; ověříme jen, že podnik pořád existuje.
+      if(!privateJobById(u.currentJobId)) u.currentJobId = null;
+      return;
+    }
     const j = world.jobs[u.currentJobId];
     if(!j){ u.currentJobId = null; return; }
     if(!Array.isArray(j.holders)) j.holders = [];
@@ -10945,8 +11105,20 @@ function prepocitejZamestnance(){
 }
 
 function getCurrentJob(name){
+  const u = world.users && world.users[name];
+  // Soukromé pozice nežijí ve `world.jobs` — odvozují se z podniků, takže je hledáme zvlášť.
+  if(u && u.currentJobId && String(u.currentJobId).startsWith('pj_')){
+    const pj = privateJobById(u.currentJobId);
+    if(pj) return { job: pj };
+  }
   const job = Object.values(world.jobs).find(j => (j.holders||[]).includes(name));
   return job ? {job} : null;
+}
+
+// Kde se pro danou práci odpracovává směna. Městské pozice na radnici, soukromé u podniku.
+function jobPlace(job){
+  if(job && job.soukrome) return { lat: job.lat, lng: job.lng, nazev: job.name.split(' — ')[1] || 'podniku' };
+  return { lat: CITY_CENTER[0], lng: CITY_CENTER[1], nazev: 'radnice' };
 }
 
 // Nejvyšší tier, na který hráč dosáhne = (nejvyšší splněný tier podle praxe) + 1 (posun jen o úroveň)
@@ -10960,28 +11132,43 @@ function maxTierFor(u){
 function jobBanRemaining(u){ return Math.max(0, (u.jobBanUntil || 0) - world.day); }
 
 function takeJob(jobId){
-  if(!canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS)){ showAlert('Musíš být u radnice.'); return; }
+  const pj = String(jobId).startsWith('pj_') ? privateJobById(jobId) : null;
+  const misto = jobPlace(pj || world.jobs[jobId]);
+  if(!canInteract(misto.lat, misto.lng, JOB_RADIUS)){
+    showAlert(`Nábor probíhá na místě — musíš být u ${misto.nazev}.`);
+    return;
+  }
   const me = world.users[currentUser.name];
   const ban = jobBanRemaining(me);
   if(ban > 0){ showAlert(`Máš zákaz práce ještě ${ban} ${ban===1?'den':'dní'} kvůli vynechané směně.`); return; }
   if(getCurrentJob(currentUser.name)){ showAlert('Už máš práci — nejdřív dej výpověď.'); return; }
-  const job = world.jobs[jobId];
-  if(!job.holders) job.holders = [];
-  if(job.holders.length >= job.slots){ showAlert(`Všechna místa (${job.slots}) na téhle pozici jsou obsazená.`); return; }
-  if((me.totalShifts||0) < job.reqShifts){ showAlert(`Na tuhle pozici potřebuješ ${job.reqShifts} odpracovaných směn (máš ${me.totalShifts||0}). Začni od nižší pozice.`); return; }
-  if(job.tier > maxTierFor(me)){ showAlert('Nemůžeš přeskočit víc úrovní najednou — postupuj postupně od nižších pozic.'); return; }
-  job.holders.push(currentUser.name);
+  const job = pj || world.jobs[jobId];
+  if(!job){ showAlert('Tahle pozice už neexistuje.'); return; }
+
+  // Kolik lidí na pozici je: u městské z holders, u soukromé se počítá z účtů hráčů,
+  // protože soukromá místa se v datech světa nedrží.
+  const obsazeno = pj
+    ? Object.values(world.users).filter(x => x && x.currentJobId === jobId).length
+    : (job.holders = job.holders || []).length;
+  if(obsazeno >= job.slots){ showAlert(`Všechna místa (${job.slots}) na téhle pozici jsou obsazená.`); return; }
+
+  if((me.totalShifts||0) < (job.reqShifts||0)){ showAlert(`Na tuhle pozici potřebuješ ${job.reqShifts} odpracovaných směn (máš ${me.totalShifts||0}). Začni od nižší pozice.`); return; }
+  if(!pj && job.tier > maxTierFor(me)){ showAlert('Nemůžeš přeskočit víc úrovní najednou — postupuj postupně od nižších pozic.'); return; }
+  if(!pj) job.holders.push(currentUser.name);
   me.jobStartDay = world.day; // grace: dnešek se nekontroluje na docházku
   me.currentJobId = jobId;
   me.currentJobShifts = 0;
   me.missedInRow = 0;
   me.jobChangedTs = Date.now();   // razítko změny práce, ať se při sloučení nepřepíše starší verzí
-  addNews('job', `💼 ${currentUser.name} nastoupil do práce jako ${job.name}.`);
+  addNews('job', `${pj ? pj.emoji : '💼'} ${currentUser.name} nastoupil do práce jako ${job.name}.`);
   saveWorld(); renderJobs();
 }
 
 async function quitJob(jobId){
-  const job = world.jobs[jobId];
+  // Soukromá místa nežijí ve `world.jobs` — bez tohohle by výpověď u firmy spadla
+  // na `job.name` nad prázdnou hodnotou.
+  const job = (String(jobId).startsWith('pj_') ? privateJobById(jobId) : world.jobs[jobId]);
+  if(!job){ showAlert('Tahle pozice už neexistuje.'); return; }
   const me0 = world.users[currentUser.name];
   const staz = (me0 && me0.currentJobShifts) || 0;
   if(!(await showConfirm(
@@ -11003,9 +11190,14 @@ async function quitJob(jobId){
 }
 
 function workShift(jobId){
-  if(!canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS)){ showAlert('Musíš být u radnice.'); return; }
+  const pjob = String(jobId).startsWith('pj_') ? privateJobById(jobId) : null;
+  const misto = jobPlace(pjob || world.jobs[jobId]);
+  if(!canInteract(misto.lat, misto.lng, JOB_RADIUS)){
+    showAlert(`Směna se odpracuje na místě — musíš být u ${misto.nazev}.`);
+    return;
+  }
   if(isWeekend()){ showAlert('O víkendu je volno — do práce se dá jít až v pracovní den (pondělí až pátek).'); return; }
-  const job = world.jobs[jobId];
+  const job = pjob || world.jobs[jobId];
   const me = world.users[currentUser.name];
   const today = calendarDay();
   if(me.lastWorkedCalDay === today){ showAlert('Dnes už jsi odpracoval směnu. Přijď zase zítra.'); return; }
@@ -11016,7 +11208,7 @@ function workShift(jobId){
 
   // náhodný bonus/spropitné
   let tip = 0;
-  const gotTip = Math.random() < TIP_CHANCE;
+  const gotTip = Math.random() < (job.tipChance || TIP_CHANCE);
   if(gotTip){
     const ratio = TIP_MIN_RATIO + Math.random() * (TIP_MAX_RATIO - TIP_MIN_RATIO);
     tip = Math.round(job.salary * ratio);
