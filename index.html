@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '4.2';
+const APP_VERSION = '4.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -10188,6 +10188,16 @@ function renderFinance(){
     }</p>
     <p style="font-size:0.85em;color:var(--muted)">Chytré je mít rezervu aspoň na 2 týdny — kdyby přišel nečekaný výdaj nebo výpadek příjmu, nemusíš si hned půjčovat.</p>
   </div>`;
+
+  // Jerry se ptal, KDY vlastně peníze chodí. Nikde to nebylo napsané — hráči čekali
+  // na nějakou výplatu jednou denně a nechápali, proč se zůstatek pořád mění.
+  html += infoBox('Kdy se peníze připisují?', `
+    <p><b>Průběžně, ne jednou denně.</b> Nájem, výnos z firem i solár se počítají <b>každých pár vteřin</b> podle toho, kolik času uplynulo. Nečeká se na půlnoc ani na žádnou výplatu.</p>
+    <p>Stejně tak i výdaje: životní náklady, daň z nemovitosti a úrok z půjčky ti ubývají plynule.</p>
+    <div class="ex">Podíl, který nese <b>${Math.round(Math.max(0, f.totalIncome))} Kč/den</b>, ti připíše zhruba <b>${(Math.max(0, f.totalIncome)/24).toFixed(1)} Kč za hodinu</b>. Za pět minut je to pár haléřů — proto to na první pohled vypadá, že se nic neděje.</div>
+    <p><b>Když hru zavřeš, peníze běží dál</b> — dokud hraje aspoň někdo jiný. Když nehraje nikdo, čas se zastaví a dopočítá se, až se někdo vrátí (nejvýš však ${Math.round(GAME_DAY_MS*3/GAME_DAY_MS)} dny zpětně).</p>
+    <p><b>Jediná výjimka je plat</b> — ten dostaneš naráz ve chvíli, kdy odpracuješ směnu.</p>
+  `);
 
   html += infoBox('Jak číst finanční přehled?', `
     <p><b>Denní rozpočet.</b> Kolik ti každý den přiteče a odteče. Když je bilance <b>záporná</b>, ubývají ti peníze — a je jedno, kolik jich máš, jednou dojdou.</p>
