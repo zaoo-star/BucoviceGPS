@@ -567,7 +567,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '4.3';
+const APP_VERSION = '4.4';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4467,6 +4467,8 @@ function migrateWorld(){
         u.savings = cislo(u.savings, 0, 0, 50000000);
         u.pendingBuys = asArray(u.pendingBuys);
         if(u.currentJobId === undefined) u.currentJobId = null;
+        // Vlastní razítko pro výpočet peněz. Kdo ho nemá, začíná teď — ne od začátku věků.
+        if(typeof u.lastTick !== 'number') u.lastTick = Date.now();
         u.totalDistance = cislo(u.totalDistance, 0, 0, 100000000);
         u.totalShifts = cislo(u.totalShifts, 0, 0, 1000000);
         u.peakWorth = cislo(u.peakWorth, u.balance, 0, 1000000000);
@@ -4961,6 +4963,8 @@ function adoptWorldVnitrni(incoming){
         ja.jobStartDay = cloudMe.jobStartDay;
         ja.jobChangedTs = cloudMe.jobChangedTs;
       }
+      // Razítko výpočtu peněz musí jít jen dopředu — jinak by se stejný čas proplatil dvakrát.
+      ja.lastTick = Math.max(ja.lastTick || 0, cloudMe.lastTick || 0);
       ['lastWorkedCalDay','totalShifts','totalDistance',
        'questBonusDay','streakDay','streakBest','peakWorth'].forEach(vyssi);
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
@@ -5369,10 +5373,33 @@ function tickVnitrni(){
   elapsed = Math.min(elapsed, GAME_DAY_MS * 3); // ochrana proti obřímu skoku po dlouhé odmlce
   world.lastTick = now;
 
+  // Společné razítko zůstává pro věci, které patří MĚSTU a mají se dít jen jednou:
+  // opotřebení bytů, odeznívání gentrifikace a postup dne.
   const dayFraction = elapsed / GAME_DAY_MS;
-  const hoursElapsed = elapsed / 3600000; // podniky vydělávají podle SKUTEČNÝCH hodin, ne herních dnů
 
-  Object.values(world.users).forEach(u => {
+  // ===== VLASTNÍ RAZÍTKO HRÁČE =====
+  // `world.lastTick` je SPOLEČNÝ pro celé město: kdokoli ho posune dopředu. Peníze se ale
+  // ukládají na účet, a účty se slučují po hráčích — takže si každý nakonec ponechá jen to,
+  // co mu připsalo JEHO zařízení. Když hrál někdo jiný, čas byl "spotřebován" jeho tickem
+  // a na hráčovo zařízení zbyly zlomky vteřin. Výsledek: čím víc lidí hraje, tím míň každému
+  // chodí — a kdo appku zavře, nedostane skoro nic.
+  // Proto má každý hráč vlastní razítko a svoje peníze si počítá sám za sebe.
+  const ja = currentUser ? world.users[currentUser.name] : null;
+  let mojeDayFraction = 0, mojeHodiny = 0;
+  if(ja){
+    if(typeof ja.lastTick !== 'number') ja.lastTick = now - 1000;
+    let mojeElapsed = now - ja.lastTick;
+    if(mojeElapsed < 0) mojeElapsed = 0;                       // hodiny se rozešly — nic nepřipisujeme
+    mojeElapsed = Math.min(mojeElapsed, GAME_DAY_MS * 3);      // strop po dlouhé odmlce
+    ja.lastTick = now;
+    mojeDayFraction = mojeElapsed / GAME_DAY_MS;
+    mojeHodiny = mojeElapsed / 3600000;
+  }
+  const hoursElapsed = mojeHodiny; // podniky vydělávají podle SKUTEČNÝCH hodin, ne herních dnů
+
+  // Náklady, daně a úroky řeší každý hráč taky sám za sebe — jinak by je platil vícekrát
+  // (jednou za každé zapnuté zařízení ve městě).
+  [ja].filter(Boolean).forEach(u => {
     // životní náklady podle stavu bydlení (vlastník / nájemník / bezdomovec);
     // u nájemníka jen životní složka — samotný nájem se převádí níž mezi majitele
     const status = housingStatus(u.name);
@@ -5386,7 +5413,7 @@ function tickVnitrni(){
     cost *= eventMult('livingMult');     // dnešní událost ve městě (např. zdražení energií)
     cost *= (1 - livingCostDiscountFromUpgrades(u.name));   // zateplení/solár v domě, kde bydlím
     if(isNewbieProtected(u)) cost = 0;   // nováček má prvních pár dní klid
-    u.balance -= cost * dayFraction;
+    u.balance -= cost * mojeDayFraction;
 
     // daň z nemovitosti: 4 % hodnoty tvého podílu ročně (ze všech domů, včetně bydlení)
     let taxableValue = 0;
@@ -5395,12 +5422,12 @@ function tickVnitrni(){
       if(pct > 0) taxableValue += effectiveHousePrice(p) * (pct/100);
     });
     if(taxableValue > 0){
-      u.balance -= taxableValue * PROPERTY_TAX_RATE / DAYS_PER_YEAR * dayFraction;
+      u.balance -= taxableValue * PROPERTY_TAX_RATE / DAYS_PER_YEAR * mojeDayFraction;
     }
 
     // úrok ze spořicího účtu (peníze uložené v bance rostou — bezpečně, ale pomalu)
     if(u.savings && u.savings > 0){
-      u.savings += u.savings * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR * dayFraction;
+      u.savings += u.savings * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR * mojeDayFraction;
     }
   });
   Object.values(world.parcels).forEach(p => {
@@ -5415,8 +5442,10 @@ function tickVnitrni(){
             // radši se odstěhuje — dřív se mu strhávalo dál a skončil v dluzích, ze kterých
             // se nedalo dostat (a pronajímatel to mohl zneužít jako zbraň).
             const najemnikUcet = world.users[u.tenant];
-            const castka = collected * dayFraction;
-            if(najemnikUcet.balance - castka < -LIVING_COST * 3){
+            // Nájem strhává jen zařízení samotného nájemníka — jinak by mu ho strhl
+            // každý, kdo má zrovna zapnutou hru.
+            const castka = (ja && u.tenant === ja.name) ? collected * mojeDayFraction : 0;
+            if(castka > 0 && najemnikUcet.balance - castka < -LIVING_COST * 3){
               addNews('rental', `📤 ${u.tenant} se odstěhoval z domu ${p.id.replace('h_','#')} — na nájem ${u.rentPrice} Kč/den už neměl.`);
               u.tenant = null;
               stampHouse(p);
@@ -5438,10 +5467,10 @@ function tickVnitrni(){
             collected = 0;   // prázdný byt nevydělává nic — nájemník se nastěhuje sám (tryFillVacantUnits)
           }
         }
-        if(collected > 0){
-          Object.entries(p.owners||{}).forEach(([owner, pct]) => {
-            if(world.users[owner]) world.users[owner].balance += collected * (pct/100) * dayFraction;
-          });
+        // Výnos si připisuje jen ten, kdo zrovna hraje — za dobu, kterou vidí on sám.
+        if(collected > 0 && ja){
+          const mujPodil = (p.owners?.[ja.name] || 0) / 100;
+          if(mujPodil > 0) ja.balance += collected * mujPodil * mojeDayFraction;
         }
         // obsazený byt (hráč, NPC nebo poptávka) se opotřebovává; prázdný chátrá pomaleji
         const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : 0;   // buď někdo bydlí, nebo ne
@@ -5453,10 +5482,9 @@ function tickVnitrni(){
     // Solární panely vydělávají u KAŽDÉHO domu — i toho, ve kterém majitel bydlí.
     // Dřív to bylo uvnitř bloku pro pronájem, takže u vlastního bydlení se nepřipsalo nic.
     const solar = solarBonusForHouse(p);
-    if(solar > 0){
-      Object.entries(p.owners||{}).forEach(([owner, pct]) => {
-        if(world.users[owner]) world.users[owner].balance += solar * (pct/100) * dayFraction;
-      });
+    if(solar > 0 && ja){
+      const mujPodil = (p.owners?.[ja.name] || 0) / 100;
+      if(mujPodil > 0) ja.balance += solar * mujPodil * mojeDayFraction;
     }
   });
 
@@ -5468,27 +5496,26 @@ function tickVnitrni(){
     }
   });
 
-  Object.values(world.businesses).forEach(biz => {
-    Object.entries(biz.owners).forEach(([owner, pct]) => {
-      if(pct > 0 && world.users[owner]){
-        world.users[owner].balance += biz.hourlyYield * inflationMult() * (pct/100) * hoursElapsed;
-      }
+  if(ja){
+    Object.values(world.businesses).forEach(biz => {
+      const pct = biz.owners?.[ja.name] || 0;
+      if(pct > 0) ja.balance += biz.hourlyYield * inflationMult() * (pct/100) * hoursElapsed;
     });
-  });
+  }
 
-  Object.values(world.users).forEach(u => {
+  [ja].filter(Boolean).forEach(u => {
     if(!u.loans) u.loans = [];
     u.loans.forEach(loan => {
-      loan.balance += loan.balance * loan.dailyRate * dayFraction;
+      loan.balance += loan.balance * loan.dailyRate * mojeDayFraction;
       if(loan.type === 'loan' || loan.type === 'mortgage'){
         const podil = loan.type === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
-        const minPay = Math.min(loan.principal * podil * dayFraction, loan.balance);
+        const minPay = Math.min(loan.principal * podil * mojeDayFraction, loan.balance);
         if(u.balance >= minPay){
           u.balance -= minPay;
           loan.balance -= minPay;
-          loan.missedDays = Math.max(0, (loan.missedDays || 0) - dayFraction * 2); // řádné placení dřívější výpadky "smaže" rychleji
+          loan.missedDays = Math.max(0, (loan.missedDays || 0) - mojeDayFraction * 2); // řádné placení dřívější výpadky "smaže" rychleji
         } else {
-          loan.missedDays = (loan.missedDays || 0) + dayFraction;
+          loan.missedDays = (loan.missedDays || 0) + mojeDayFraction;
         }
       }
     });
