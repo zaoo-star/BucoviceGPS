@@ -49,6 +49,13 @@
     pointer-events:none;
   }
   .statsRow{display:flex;gap:6px;flex-wrap:wrap;pointer-events:none;}
+  /* Živý ukazatel příjmu. Zůstatek roste o haléře, takže na první pohled vypadá zamrzlý —
+     hráči kvůli tomu hlásili, že jim peníze vůbec nechodí. Sazba za hodinu je čitelná. */
+  .rate{margin-left:5px;font-size:0.82em;font-weight:600;opacity:0.95;}
+  .rate.up{color:var(--accent);}
+  .rate.down{color:var(--danger);}
+  @keyframes tikPulz{0%{transform:scale(1);}40%{transform:scale(1.18);}100%{transform:scale(1);}}
+  .tikPulz{animation:tikPulz 0.45s ease-out;display:inline-block;}
   .statPill{
     background:rgba(23,26,33,0.92);border:1px solid var(--border);border-radius:10px;
     padding:5px 10px;font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px;
@@ -348,7 +355,7 @@
     </div>
     <div class="statsRow">
       <div class="statPill" id="dayPill" onclick="showStatDetail('day')" style="cursor:pointer;">📅 Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
-      <div class="statPill" id="balance" onclick="showStatDetail('money')" style="cursor:pointer;">💰 <span id="balanceVal">0</span> Kč</div>
+      <div class="statPill" id="balance" onclick="showStatDetail('money')" style="cursor:pointer;">💰 <span id="balanceVal">0</span> Kč<span id="rateVal" class="rate"></span></div>
       <div class="statPill" id="walkPill" onclick="showStatDetail('walk')" style="cursor:pointer;">🚶 <span id="walkVal">0</span> m dnes</div>
       <div class="statPill" id="housingPill" onclick="showStatDetail('housing')" style="cursor:pointer;">🏠 <span id="housingVal">bez bydlení</span></div>
       <div class="statPill" id="marketCyclePill" onclick="showStatDetail('market')" style="cursor:pointer;">📊 <span id="marketCycleVal">Stabilní trh</span></div>
@@ -567,7 +574,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '4.4';
+const APP_VERSION = '4.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -3739,7 +3746,13 @@ function gentrify(p){
   if(!(typeof g === 'number') || !isFinite(g) || g < 1) return 1;
   return Math.min(g, GENTRIFY_MAX);
 }
-function effectiveHousePrice(p){ return p.basePrice * gentrify(p) * marketMultiplier() * inflationMult(); }
+function effectiveHousePrice(p){
+  // Lokální událost dnes zlevňuje/zdražuje jen zasažený okrsek — proto se do ceny
+  // promítá tady, ne přes celoměstský marketMultiplier.
+  const lok = localEventFor(p);
+  const lokMult = lok ? (lok.ev.localPriceMult || 1) : 1;
+  return p.basePrice * gentrify(p) * marketMultiplier() * inflationMult() * lokMult;
+}
 
 function houseSoldPct(p){ return Object.values(p.owners||{}).reduce((s,v)=>s+v, 0); }
 function houseFreePct(p){ return Math.max(0, 100 - houseSoldPct(p)); }
@@ -3999,7 +4012,10 @@ function rentEstimateRange(p){
 // během pár korun — hráč pak měl pocit, že ho hra trestá za drobné zdražení.
 // Teď mírné zdražení pořád dává smysl a i výrazně přemrštěná cena někoho občas najde.
 function unitOccupancy(p, unit){
-  const fair = fairRentForHouse(p) * eventMult('rentMult');   // dnešní poptávka po bydlení
+  // Lokální událost (kopání v ulici, nový park) mění poptávku jen v daném okrsku.
+  const lok = localEventFor(p);
+  const lokMult = lok ? (lok.ev.localRentMult || 1) : 1;
+  const fair = fairRentForHouse(p) * eventMult('rentMult') * lokMult;   // dnešní poptávka po bydlení
   let occ;
   if(unit.rentPrice <= fair) occ = 1;   // za férovou cenu (a míň) je plno vždycky
   else {
@@ -6700,6 +6716,7 @@ function initMap(){
   // Markery domů se NEVYTVÁŘEJÍ všechny najednou (2267 kusů zahltí mobil a mapa pak seká
   // nebo appka spadne). Vznikají líně jen pro domy blízko hráče / středu mapy — viz syncHouseMarkers().
   syncHouseMarkers();
+  safeCall(() => prekresliLokalniUdalost());
   // Posun prstem vystřelí `moveend` klidně několikrát za sebou. Bez zdržení se přepočet
   // pouštěl pokaždé a mapa při tažení trhala.
   let prekresliTimer = null;
@@ -6771,7 +6788,35 @@ function updateHeaderStats(){
   if(currentUser){
     const u = ensureWalkDay(world.users[currentUser.name]);
     if(!u) return; // hráč ještě není načtený (pojistka proti pádu)
-    document.getElementById('balanceVal').textContent = Math.round(u.balance);
+    // Zůstatek: když přibylo aspoň na korunu, krátce pulzne — ať je vidět, že se něco děje.
+    const elBal = document.getElementById('balanceVal');
+    const novy = Math.round(u.balance);
+    const stary = parseInt(elBal.textContent, 10);
+    if(!isNaN(stary) && novy > stary){
+      elBal.classList.remove('tikPulz');
+      void elBal.offsetWidth;          // vynutit restart animace
+      elBal.classList.add('tikPulz');
+    }
+    elBal.textContent = novy;
+
+    // Hodinová sazba z čisté bilance. Přepočítáváme jen jednou za pár vteřin — financeBreakdown
+    // prochází všechny domy a firmy, takže by se to každou sekundu zbytečně vleklo.
+    const elRate = document.getElementById('rateVal');
+    if(elRate){
+      if(!window._rateCache || Date.now() - window._rateCache.ts > 4000){
+        const fb = safeCall(() => financeBreakdown(currentUser.name));
+        window._rateCache = { ts: Date.now(), net: fb ? fb.net : 0 };
+      }
+      const zaHodinu = (window._rateCache.net || 0) / 24;
+      const kladne = zaHodinu >= 0;
+      elRate.className = 'rate ' + (kladne ? 'up' : 'down');
+      // Práh držíme hodně nízko: hráč s malým příjmem musí taky vidět, že mu něco chodí —
+      // právě jemu to jinak připadá, že hra nefunguje.
+      const abs = Math.abs(zaHodinu);
+      elRate.textContent = abs < 0.005 ? ''
+        : `${kladne ? '▲' : '▼'} ${abs < 1 ? abs.toFixed(2) : (abs < 10 ? abs.toFixed(1) : Math.round(abs))}/h`;
+      elRate.title = `Čistá bilance ${Math.round(window._rateCache.net)} Kč/den — nájem, firmy a solár minus náklady, daně a splátky.`;
+    }
     document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
     const status = housingStatus(currentUser.name);
     const dailyCost = dailyHousingCost(currentUser.name);
@@ -6852,11 +6897,44 @@ function renderSelected(id){
   if(gentrify(p) > 1.01){
     html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${gentrify(p).toFixed(2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
   }
+  // Lokální událost u tohohle konkrétního domu — ať hráč ví, proč jsou dnes čísla jiná.
+  const lokU = localEventFor(p);
+  if(lokU){
+    const dobre = (lokU.ev.localRentMult || 1) >= 1;
+    const barva = dobre ? 'var(--accent)' : 'var(--orange)';
+    const zmenaNajmu = Math.round(((lokU.ev.localRentMult || 1) - 1) * 100);
+    const zmenaCeny = Math.round(((lokU.ev.localPriceMult || 1) - 1) * 100);
+    html += `<div style="background:var(--bg);border-left:3px solid ${barva};border-radius:8px;padding:8px;margin-top:6px;">
+      <p style="margin:0;font-size:0.95em;color:${barva};"><b>${lokU.ev.emoji} ${lokU.ev.name}</b> — tenhle dům je v zasažené oblasti</p>
+      <p style="margin:2px 0 0;font-size:0.87em;color:var(--muted);">${lokU.ev.desc}</p>
+      <p style="margin:3px 0 0;font-size:0.87em;">Dnes: poptávka po nájmu <b style="color:${barva}">${zmenaNajmu > 0 ? '+' : ''}${zmenaNajmu} %</b>${zmenaCeny ? ` · cena domu <b style="color:${barva}">${zmenaCeny > 0 ? '+' : ''}${zmenaCeny} %</b>` : ''}</p>
+      <p style="margin:3px 0 0;font-size:0.83em;color:var(--muted);">Platí jen dnes a jen tady — zítra bude jinde.</p>
+    </div>`;
+  }
+
   if(p.salesHistory && p.salesHistory.length){
     html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
-      <p style="font-size:0.92em;margin:0 0 4px;color:var(--accent2)">📜 Nedávné prodeje tohoto domu:</p>`;
-    p.salesHistory.forEach(s => {
-      html += `<p style="font-size:0.85em;color:var(--muted);margin:1px 0;">den ${s.day}: ${s.pct} % za ${Math.round(s.pricePerPct*s.pct).toLocaleString('cs-CZ')} Kč <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span></p>`;
+      <p style="font-size:0.92em;margin:0 0 4px;color:var(--accent2)">📜 Kronika domu — kdo ho kdy vlastnil:</p>`;
+    const hist = asArray(p.salesHistory);
+    hist.forEach((s, i) => {
+      // Šipka porovnává cenu za procento s předchozím (starším) prodejem — hráč tak rovnou
+      // vidí, jestli dům v čase zdražuje, nebo padá.
+      const starsi = hist[i + 1];
+      let trend = '';
+      if(starsi && starsi.pricePerPct){
+        const zmena = Math.round((s.pricePerPct / starsi.pricePerPct - 1) * 100);
+        if(Math.abs(zmena) >= 2){
+          trend = zmena > 0
+            ? ` <span style="color:var(--accent)">▲ ${zmena} %</span>`
+            : ` <span style="color:var(--danger)">▼ ${Math.abs(zmena)} %</span>`;
+        }
+      }
+      const ucastnici = (s.od && s.komu)
+        ? `<span style="color:var(--text)">${escapeHtml(s.od)}</span> → <span style="color:var(--text)">${escapeHtml(s.komu)}</span>`
+        : '';
+      html += `<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">
+        den ${s.day}: ${ucastnici ? ucastnici + ' · ' : ''}${s.pct} % za <b>${Math.round(s.celkem || s.pricePerPct*s.pct).toLocaleString('cs-CZ')} Kč</b>
+        <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span>${trend}</p>`;
     });
     html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Skutečné prodeje ovlivňují cenu domu — tak vzniká tržní hodnota.</p></div>`;
   }
@@ -7290,6 +7368,32 @@ function kudyText(cil, d){
   return smer ? `${vzdalenost} ${smer}` : `${vzdalenost} odtud`;
 }
 
+// Kruh lokální události na mapě. Bez něj by hráč nepoznal, proč se mu zrovna tady
+// hůř pronajímá — a hlavně by neměl důvod někam jít.
+let lokalniKruh = null, lokalniZnacka = null, lokalniKlic = null;
+function prekresliLokalniUdalost(){
+  if(!map) return;
+  const c = lokalniDnes();
+  const klic = (c.ev && c.stred) ? `${world.day}|${c.ev.id}|${c.stred.lat.toFixed(5)}` : '';
+  if(klic === lokalniKlic) return;          // nic se nezměnilo, nesaháme na mapu
+  lokalniKlic = klic;
+
+  if(lokalniKruh){ map.removeLayer(lokalniKruh); lokalniKruh = null; }
+  if(lokalniZnacka){ map.removeLayer(lokalniZnacka); lokalniZnacka = null; }
+  if(!c.ev || !c.stred) return;
+  const ev = c.ev;
+  const stred = c.stred;
+  const dobre = (ev.localRentMult || 1) >= 1;
+  const barva = dobre ? '#4ade80' : '#fb923c';
+  lokalniKruh = L.circle([stred.lat, stred.lng], {
+    radius: ev.radius || 250, color: barva, weight: 2, dashArray: '6,6',
+    fillColor: barva, fillOpacity: 0.08, interactive: false
+  }).addTo(map);
+  lokalniZnacka = L.marker([stred.lat, stred.lng], {
+    icon: L.divIcon({html:`<div class="parcelMarker" style="background:${barva};color:#0f1115;">${ev.emoji}</div>`, className:'', iconSize:[26,26]})
+  }).addTo(map).bindTooltip(`${ev.emoji} ${ev.name}${stred.nazev ? ' — ' + stred.nazev : ''}`);
+}
+
 function flyToParcel(id){
   const p = world.parcels[id];
   if(!p) return;
@@ -7488,6 +7592,7 @@ async function buyHouseStake(id){
   p.owners[currentUser.name] = predKoupi + pct;
   stampOwners(p, currentUser.name);
   zapisNedokoncenyNakup(currentUser.name, p.id, predKoupi, pct, cost);
+  recordSale(p, cost, pct, 'město', currentUser.name);
 
   // Gentrifikace: nákup dočasně zvedne ceny i oblíbenost okolních domů (do 150 m) úměrně velikosti nákupu.
   // Bez dalších nákupů v okolí efekt postupně odezní (viz GENTRIFY_DECAY_PER_DAY v ticku).
@@ -7660,18 +7765,28 @@ async function cancelListing(listingId){
 // Koupě z inzerátu s pevnou cenou (odkudkoliv, bez GPS)
 // Zaznamená skutečný prodej podílu a posune hodnotu domu směrem k realizované ceně.
 // Ceny tak vznikají z reálných transakcí mezi hráči (komparativní prodeje), ne jen z pevného vzorce.
-function recordSale(p, totalPrice, pct){
+function recordSale(p, totalPrice, pct, od, komu){
   if(!p || pct <= 0) return;
   const pricePerPct = totalPrice / pct; // cena za 1 %
   // "očistíme" cenu od dočasných vlivů (cyklus, gentrifikace, inflace), ať dostaneme strukturální hodnotu
-  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult());
+  // Dělíme i lokálním násobitelem — jinak by se dnešní dočasná sleva (rozkopaná ulice)
+  // zapsala do `basePrice` NATRVALO a dům by po skončení události zůstal levnější.
+  const lokU = localEventFor(p);
+  const lokMult = lokU ? (lokU.ev.localPriceMult || 1) : 1;
+  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult() * lokMult);
   const structuralBase = structuralPerPct * 100; // odpovídající basePrice
   // posun basePrice o 30 % k realizované ceně (zbytek setrvačnost — jeden prodej cenu neurčí úplně)
   p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
   // uložit do historie prodejů (posledních 5)
   if(!p.salesHistory) p.salesHistory = [];
-  p.salesHistory.unshift({ pricePerPct: Math.round(pricePerPct), pct: Math.round(pct*10)/10, day: world.day });
-  if(p.salesHistory.length > 5) p.salesHistory.length = 5;
+  // Kdo komu a kdy — z toho vznikne čitelný příběh domu. `ts` navíc slouží ke slučování
+  // historie mezi zařízeními (viz adoptWorld), proto tu musí být vždy.
+  p.salesHistory.unshift({
+    pricePerPct: Math.round(pricePerPct), pct: Math.round(pct*10)/10,
+    day: world.day, ts: Date.now(),
+    od: od || null, komu: komu || null, celkem: Math.round(totalPrice)
+  });
+  if(p.salesHistory.length > 12) p.salesHistory.length = 12;
 }
 
 async function buyListing(listingId){
@@ -7694,7 +7809,7 @@ async function buyListing(listingId){
   p.owners[currentUser.name] = predKoupi + l.pct;
   stampOwners(p, l.seller, currentUser.name);
   zapisNedokoncenyNakup(currentUser.name, p.id, predKoupi, l.pct, l.price);
-  recordSale(p, l.price, l.pct); // reálný prodej posune hodnotu domu
+  recordSale(p, l.price, l.pct, l.seller, currentUser.name); // reálný prodej posune hodnotu domu
   addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} od hráče ${l.seller} za ${l.price} Kč.`);
   closeListing(listingId);
   saveWorld(); refreshAll(); renderMarket();
@@ -7748,7 +7863,7 @@ function resolveAuctions(){
       if(p.owners[l.seller] <= 0.001) delete p.owners[l.seller];
       p.owners[l.highestBidder] = (p.owners[l.highestBidder]||0) + l.pct;
       stampOwners(p, l.seller, l.highestBidder);
-      recordSale(p, l.currentBid, l.pct); // vydražená cena posune hodnotu domu
+      recordSale(p, l.currentBid, l.pct, l.seller, l.highestBidder); // vydražená cena posune hodnotu domu
       addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${l.currentBid} Kč.`);
     } else if(l.highestBidder && world.users[l.highestBidder]){
       // prodej se nekonal (prodejce už podíl nemá) — vrátit dražiteli peníze
@@ -8016,7 +8131,7 @@ async function buyHouseStakeOnMortgage(id){
     dailyRate: MORTGAGE_ANNUAL_RATE / DAYS_PER_YEAR, missedDays: 0
   });
 
-  recordSale(p2, cena, pct);
+  recordSale(p2, cena, pct, 'město', currentUser.name);
   addNews('trade', `🏦 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${p2.id.replace('h_','#')} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`);
   saveWorld(); refreshAll(); playSound('buy');
   showAlert(`Hotovo! Vlastníš ${pct.toFixed(1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
@@ -8704,7 +8819,61 @@ const CITY_EVENTS = [
   {id:'nalezy',   emoji:'💰', name:'Ztráty a nálezy',
    desc:'Po městě se dnes válí víc peněz než jindy — balíky jsou štědřejší.',
    pickupMult:1.5},
+
+  // LOKÁLNÍ události — netýkají se celého města, ale jednoho okrsku. Ten se určí
+  // deterministicky z čísla dne, takže vyjde stejně na všech zařízeních. Na mapě je
+  // vidět jako barevný kruh, takže se hráč může rozhodnout, jestli tam dnes zajde.
+  {id:'rekonstrukce', emoji:'🚧', name:'Rekonstrukce ulice',
+   desc:'V jedné části města se kope. Domy v okolí se hůř pronajímají, ale kdo tam koupí teď, koupí levně.',
+   lokalni:true, radius:280, localRentMult:0.6, localPriceMult:0.85},
+  {id:'novapark',  emoji:'🌳', name:'Otevřel nový park',
+   desc:'Jedna čtvrť prokoukla — bydlení v okolí je najednou žádané.',
+   lokalni:true, radius:300, localRentMult:1.35, localPriceMult:1.15},
+  {id:'havarie',   emoji:'💧', name:'Havárie vodovodu',
+   desc:'V jedné části města neteče voda. Nájemníci se odtud dnes stěhují a ceny stojí.',
+   lokalni:true, radius:220, localRentMult:0.5, localPriceMult:0.9},
 ];
+
+// Střed dnešní lokální události. Vybírá se z pevných míst zájmu, aby to bylo někde,
+// kde se hráči reálně pohybují — ne uprostřed pole.
+// POZOR na výkon: tohle se volá z effectiveHousePrice, tedy pro každý dům při každém ticku
+// i při každém překreslení mapy — desetitisíckrát za minutu. Bez zapamatování by se pokaždé
+// znovu skládalo pole všech podniků a míst zájmu.
+let _lokCache = { den: null, pocetPodniku: -1, stred: null, ev: null };
+function lokalniDnes(){
+  const den = world && world.day;
+  if(typeof den !== 'number') return { den: null, ev: null, stred: null };
+  const podniky = Object.values(world.businesses || {}).filter(b => b && typeof b.lat === 'number');
+  // Do klíče patří i počet podniků: při prvním načtení se ceny počítají DŘÍV, než se podniky
+  // stihnou vytvořit. Bez toho by se na celý den zapamatoval náhradní střed (radnice).
+  if(_lokCache.den === den && _lokCache.pocetPodniku === podniky.length) return _lokCache;
+
+  const ev = todaysCityEvent(den);
+  let stred = null;
+  if(ev && ev.lokalni){
+    const body = LANDMARK_DEFS.concat(podniky);
+    if(body.length){
+      const idx = Math.abs((den * 2654435761) % 2147483647) % body.length;
+      stred = { lat: body[idx].lat, lng: body[idx].lng, nazev: body[idx].name };
+    } else {
+      stred = { lat: CITY_CENTER[0], lng: CITY_CENTER[1], nazev: null };
+    }
+  }
+  _lokCache = { den, pocetPodniku: podniky.length, ev: (ev && ev.lokalni) ? ev : null, stred };
+  return _lokCache;
+}
+function localEventCenter(){ return lokalniDnes().stred || { lat: CITY_CENTER[0], lng: CITY_CENTER[1] }; }
+
+// Je tenhle dům dnes zasažený lokální událostí?
+function localEventFor(p){
+  const c = lokalniDnes();
+  if(!c.ev || !c.stred || !p) return null;
+  // Hrubý předfiltr podle stupňů — haversine je drahý a naprostá většina domů je mimo.
+  const limit = (c.ev.radius || 250) / 111000 * 1.6;
+  if(Math.abs(p.lat - c.stred.lat) > limit || Math.abs(p.lng - c.stred.lng) > limit * 1.6) return null;
+  const d = haversine({lat:p.lat, lng:p.lng}, c.stred);
+  return d <= (c.ev.radius || 250) ? { ev: c.ev, stred: c.stred, d } : null;
+}
 // Losuje se podle HERNÍHO dne, ne podle kalendářního. Herní den je odvozený z pevného
 // počátku hry, takže vyjde stejně na všech zařízeních — a hlavně se mění i při dopočítávání
 // zameškaných dnů. Dřív se tu bral calendarDay(), který je při dopočtu pořád stejný, takže
@@ -8787,9 +8956,12 @@ function renderDaily(){
 
   // --- dnešní událost ve městě ---
   const ev = todaysCityEvent();
+  const lokStred = (ev && ev.lokalni) ? localEventCenter() : null;
+  const lokD = (lokStred && playerPos) ? haversine(playerPos, lokStred) : null;
   let html = `<div class="card" style="border-left:3px solid var(--gold);">
     <h3>${ev.emoji} Dnes ve městě: ${ev.name}</h3>
     <p style="font-size:0.9em;margin:2px 0;">${ev.desc}</p>
+    ${lokStred ? `<p style="font-size:0.88em;margin:4px 0 0;color:var(--gold)">📍 Týká se okolí ${escapeHtml(lokStred.nazev || 'jednoho místa')}${lokD !== null ? ` — ${kudyText(lokStred, lokD)}` : ''}. Na mapě je to vyznačené kruhem.</p>` : ''}
   </div>`;
 
   // --- poslední náhodné setkání ---
@@ -11704,6 +11876,7 @@ window.onload = async () => {
   initMap();
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
+  setInterval(() => safeCall(() => prekresliLokalniUdalost()), 15000);
   // Kontrola nákupů běží i bez příchozí synchronizace — kdyby hráč zůstal chvíli sám
   // (slabý signál, appka na pozadí), peníze se mu vrátí i tak.
   setInterval(() => {
