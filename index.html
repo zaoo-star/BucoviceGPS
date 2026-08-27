@@ -82,6 +82,13 @@
     padding:2px;border-radius:16px;
   }
   #sideRail::-webkit-scrollbar{display:none;}
+  /* Deník má vlastní ikonu na LEVÉ straně: pravá lišta je plná a deník je věc, do které
+     hráč kouká často. Posazená je nad střed, aby si nelezla do cesty s ovládáním zoomu
+     vlevo dole ani s informačními pilulkami nahoře. */
+  #leftRail{
+    position:absolute;left:10px;top:46%;transform:translateY(-50%);z-index:400;
+    display:flex;flex-direction:column;gap:10px;
+  }
   .railBtn{
     width:54px;height:54px;border-radius:15px;background:rgba(23,26,33,0.92);
     border:1px solid var(--border);color:var(--text);font-size:24px;
@@ -379,6 +386,12 @@
     <button class="railBtn" data-tab="admin" title="Admin" id="adminRailBtn" style="display:none;">🔧</button>
   </div>
 
+  <!-- Deník má vlastní ikonu na LEVÉ straně: pravá lišta je plná a deník je věc,
+       do které hráč kouká často — nemá smysl ji schovávat za noviny. -->
+  <div id="leftRail">
+    <button class="railBtn" data-tab="denik" id="denikRailBtn" title="Můj deník">📔</button>
+  </div>
+
   <div id="bottomSheet">
     <div id="sheetHeader">
       <span id="sheetTitle">Vybraný dům</span>
@@ -574,7 +587,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '4.8';
+const APP_VERSION = '4.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -10368,8 +10381,17 @@ function sendChat(){
   renderChat(true);   // vlastní zprávu chceme vidět → sjet na konec
 }
 
+// Deník sdílí panel s novinami — má ale vlastní ikonu (📔 vlevo), takže se otevírá přímo.
 let denikRezim = 'mesto';   // 'mesto' = noviny, 'ja' = osobní deník
-function prepniDenik(rezim){ denikRezim = rezim; renderNews(); }
+function prepniDenik(rezim){
+  denikRezim = rezim;
+  // Titulek i zvýrazněná ikona musí odpovídat tomu, co je zrovna vidět.
+  const t = document.getElementById('sheetTitle');
+  if(t) t.textContent = (rezim === 'ja') ? 'Můj deník' : (SHEET_TITLES['news'] || 'Městské noviny');
+  document.querySelectorAll('.railBtn').forEach(b => b.classList.toggle('active',
+    b.dataset.tab === (rezim === 'ja' ? 'denik' : 'news')));
+  renderNews();
+}
 
 const DENIK_IKONY = { buy:'🏠', sell:'💸', repair:'🔧', upgrade:'🛠️', work:'💼',
                       pickup:'💰', quest:'🎯', landmark:'📍', other:'•' };
@@ -10380,11 +10402,10 @@ function renderDenik(el){
   const akce = asArray(u.denik);
   const souhrny = asArray(u.souhrny);
 
-  let html = prepinacDeniku();
-  html += `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co jsi dnes dělal ty — nejnovější nahoře. Průběžné příjmy z nájmu a firem se sem nepíšou po haléřích, ale sečtou se do souhrnu dne.</p>`;
+  let html = `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co jsi dnes dělal ty — nejnovější nahoře. Průběžné příjmy z nájmu a firem se sem nepíšou po haléřích, ale sečtou se do souhrnu dne.</p>`;
 
   if(!akce.length && !souhrny.length){
-    html += `<div class="empty-state">Zatím prázdno. Jakmile sebereš balík, opravíš byt nebo koupíš podíl, objeví se to tady.</div>`;
+    html += `<div class="empty-state">Zatím prázdno. Jakmile sebereš balík, opravíš byt nebo koupíš podíl, objeví se to tady.<br><br>Souhrn dne se ukládá každou půlnoc.</div>`;
     el.innerHTML = html;
     return;
   }
@@ -10441,20 +10462,15 @@ function renderDenik(el){
   el.innerHTML = html;
 }
 
-function prepinacDeniku(){
-  const b = (id, popis) => `<button class="${denikRezim === id ? '' : 'secondary'}" style="flex:1;" onclick="prepniDenik('${id}')">${popis}</button>`;
-  return `<div class="row" style="margin-bottom:8px;">${b('mesto','📰 Město')}${b('ja','📔 Můj deník')}</div>`;
-}
-
 function renderNews(){
   const el = document.getElementById('newsContent');
   if(denikRezim === 'ja'){ renderDenik(el); return; }
   const news = world.news || [];
   if(!news.length){
-    el.innerHTML = prepinacDeniku() + `<div class="empty-state">Zatím se nic nestalo. Až někdo koupí dům, nastoupí do práce nebo se přidá nový hráč, objeví se to tady.</div>`;
+    el.innerHTML = `<div class="empty-state">Zatím se nic nestalo. Až někdo koupí dům, nastoupí do práce nebo se přidá nový hráč, objeví se to tady.</div>`;
     return;
   }
-  let html = prepinacDeniku() + `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co se děje ve městě — nejnovější nahoře. ${countPlayers()>1?'':'(Až budete hrát víc hráčů, uvidíš tu i jejich akce.)'}</p>`;
+  let html = `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co se děje ve městě — nejnovější nahoře. ${countPlayers()>1?'':'(Až budete hrát víc hráčů, uvidíš tu i jejich akce.)'}</p>`;
   news.forEach(n => {
     const st = NEWS_STYLE[n.type] || {color:'var(--text)'};
     html += `<div class="card" style="border-left:3px solid ${st.color};padding:8px 10px;margin-bottom:6px;">
@@ -11980,14 +11996,21 @@ const SHEET_TITLES = {
 };
 
 function openSheet(tabName){
+  // Deník je samostatná ikona, ale bydlí ve stejném panelu jako noviny — jen v jiném režimu.
+  // Díky tomu nemusí mít vlastní <div> a přepínač nahoře funguje dál.
+  const jeDenik = (tabName === 'denik');
+  if(jeDenik){ denikRezim = 'ja'; tabName = 'news'; }
+  else if(tabName === 'news'){ denikRezim = 'mesto'; }
+
   // Zapamatovat otevřený panel. Kdyby appku přesto něco obnovilo (nativní obal APK, pád
   // prohlížeče, aktualizace), hráč se vrátí tam, kde byl — ne na úvodní obrazovku.
   try { localStorage.setItem('bucpoly_panel', JSON.stringify({ tab: tabName, ts: Date.now() })); } catch(e){}
-  document.querySelectorAll('.railBtn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  document.querySelectorAll('.railBtn').forEach(b => b.classList.toggle('active',
+    b.dataset.tab === (jeDenik ? 'denik' : tabName)));
   document.querySelectorAll('.panelContent').forEach(p => p.classList.remove('active'));
   const target = document.getElementById('tab-' + tabName);
   if(target) target.classList.add('active');
-  document.getElementById('sheetTitle').textContent = SHEET_TITLES[tabName] || '';
+  document.getElementById('sheetTitle').textContent = jeDenik ? 'Můj deník' : (SHEET_TITLES[tabName] || '');
   document.getElementById('bottomSheet').classList.add('open');
   const sheetBody = document.getElementById('sheetBody');
   if(sheetBody) sheetBody.scrollTop = 0;   // nový panel začíná odshora
