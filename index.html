@@ -592,7 +592,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '5.2';
+const APP_VERSION = '5.4';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6991,9 +6991,12 @@ function updateHeaderStats(){
         : 0;
       const kladne = naskocilo >= 0;
       elRate.className = 'rate ' + (kladne ? 'up' : 'down');
+      // „370 dnes" hráči četli jako dnešní výsledek a nesedělo jim to s denní bilancí.
+      // Je to ale jen to, co se vyplatí O PŮLNOCI — plat a balíky už na účtu jsou.
+      // Proto to říkáme rovnou v textu, ne až v popisku.
       elRate.textContent = Math.abs(naskocilo) < 0.5 ? ''
-        : `${kladne ? '▲' : '▼'} ${Math.round(Math.abs(naskocilo)).toLocaleString('cs-CZ')} dnes`;
-      elRate.title = 'Kolik se dnes nasčítalo z nájmu, firem a soláru po odečtení účtů. Připíše se ti to najednou o půlnoci.';
+        : `${kladne ? '▲' : '▼'}${Math.round(Math.abs(naskocilo)).toLocaleString('cs-CZ')} o půlnoci`;
+      elRate.title = 'Kolik se dnes nasčítalo z nájmu, firem a soláru po odečtení účtů a splátek. Připíše se ti to najednou o půlnoci. Plat, balíky a odměny za úkoly v tom nejsou — ty dostáváš hned.';
     }
     document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
     const status = housingStatus(currentUser.name);
@@ -10101,6 +10104,28 @@ function renderStatDetail(which){
     const pasivni = f.income.filter(i => !i.label.includes('Plat')).reduce((s,i)=>s+i.amount,0);
     const aktivni = f.totalIncome - pasivni;
 
+    // Dnešní pohyb rozepsaný tak, aby bylo jasné, co UŽ na účtu je a co teprve přijde.
+    const s3 = u.denSoucty && u.denSouctyDen === world.day ? u.denSoucty : null;
+    const uzMam = s3 ? (s3.mzdy||0) + (s3.akce||0) : 0;
+    const prijde = s3
+      ? ((s3.najem||0)+(s3.firmy||0)+(s3.solar||0)+(s3.uroky_sporeni||0))
+        - ((s3.naklady||0)+(s3.dane||0)+(s3.uroky||0)+(s3.najemne||0))
+      : 0;
+    const dnesCelkem = uzMam + prijde;
+    const barva = v => v >= 0 ? 'var(--accent)' : 'var(--danger)';
+    const znam = v => (v >= 0 ? '+' : '−') + kc(Math.abs(v));
+
+    html += `<div class="card" style="border-left:3px solid var(--gold);">
+      <h3>📆 Dnešek</h3>
+      <p style="margin:3px 0;">✅ Už máš na účtu: <b style="color:${barva(uzMam)}">${znam(uzMam)} Kč</b>
+        <br><span style="font-size:0.85em;color:var(--muted);">Plat, balíky a odměny za úkoly — ty chodí hned.</span></p>
+      <p style="margin:6px 0 3px;">🕛 O půlnoci ${prijde >= 0 ? 'přijde' : 'odejde'}: <b style="color:${barva(prijde)}">${znam(prijde)} Kč</b>
+        <br><span style="font-size:0.85em;color:var(--muted);">Nájem, firmy a solár minus účty, daně a splátky. Tohle číslo vidíš nahoře vedle zůstatku.</span></p>
+      <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">
+        Dnešní výsledek celkem: <b style="color:${barva(dnesCelkem)}">${znam(dnesCelkem)} Kč</b></p>
+      <p style="font-size:0.82em;color:var(--muted);margin:4px 0 0;">Podrobný rozpis se po půlnoci uloží do deníku jako „Souhrn dne".</p>
+    </div>`;
+
     html += `<div class="card"><h3>💰 Kde máš peníze</h3>
       <p>V hotovosti: <b style="color:var(--gold)">${kc(u.balance)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— můžeš hned utratit</span></p>
       <p>Na spoření: <b>${kc(u.savings)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— úročí se ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % ročně</span></p>
@@ -10559,12 +10584,16 @@ function renderFinance(){
   // 1) ROZPOČET — příjmy vs výdaje s předpovědí
   html += `<div class="card">
     <h3>📊 Denní rozpočet</h3>
-    <p style="font-size:0.85em;color:var(--muted)">Kolik ti každý den přiteče a odteče (odhad podle současného stavu).</p>`;
+    <p style="font-size:0.85em;color:var(--muted)">Kolik ti každý den přiteče a odteče (odhad podle současného stavu).</p>
+    <p style="font-size:0.82em;color:var(--muted);margin:2px 0 6px;">🕛 = vyplácí se najednou o půlnoci · ⚡ = chodí hned, jakmile si to vyděláš</p>`;
   html += `<p style="margin-top:6px;color:var(--accent)"><b>Příjmy: +${Math.round(f.totalIncome)} Kč/den</b></p>`;
-  f.income.forEach(i=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${i.label}: +${Math.round(i.amount)} Kč</p>`);
+  // U každé položky značka, kdy se peníze objeví — bez toho hráči nesedělo číslo
+  // v hlavičce s denní bilancí.
+  const kdy = l => /Plat|Spropitné/.test(l) ? '⚡' : '🕛';
+  f.income.forEach(i=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${kdy(i.label)} ${i.label}: +${Math.round(i.amount)} Kč</p>`);
   if(!f.income.length) html += `<p style="font-size:0.9em;margin-left:10px;color:var(--muted)">zatím žádné — zkus práci nebo pronájem</p>`;
   html += `<p style="margin-top:6px;color:var(--danger)"><b>Výdaje: −${Math.round(f.totalExpense)} Kč/den</b></p>`;
-  f.expense.forEach(e=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${e.label}: −${Math.round(e.amount)} Kč</p>`);
+  f.expense.forEach(e=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">🕛 ${e.label}: −${Math.round(e.amount)} Kč</p>`);
   const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
   html += `<p style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">Denní bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
 
@@ -10587,7 +10616,10 @@ function renderFinance(){
   }
   if(f.liabilities.length){
     html += `<p style="color:var(--danger);margin-top:6px;"><b>❤️ Pasiva (berou peníze):</b></p>`;
-    f.liabilities.forEach(a=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${escapeHtml(a.label)}: ${a.value<0?'dluh ':''}${Math.round(Math.abs(a.value)).toLocaleString('cs-CZ')} Kč · ${Math.round(a.dayFlow)} Kč/den</p>`);
+    // Malé částky zaokrouhlené na celé koruny vycházely jako „0 Kč/den", což u pasiva vypadá
+    // jako chyba ve výpočtu. Pod korunu proto ukážeme desetinu.
+    const tok = v => (Math.abs(v) < 1 ? v.toFixed(1) : Math.round(v).toLocaleString('cs-CZ'));
+    f.liabilities.forEach(a=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${escapeHtml(a.label)}: ${a.value<0?'dluh ':''}${Math.round(Math.abs(a.value)).toLocaleString('cs-CZ')} Kč · ${tok(a.dayFlow)} Kč/den${a.label==='Půjčka'?' <span style="color:var(--muted);font-size:0.9em;">(úrok)</span>':''}</p>`);
   }
   if(!f.assets.length && !f.liabilities.length) html += `<p style="font-size:0.9em;color:var(--muted);margin-top:6px;">Zatím nevlastníš žádný majetek. Kup podíl v domě nebo firmě a začni budovat aktiva.</p>`;
   // Dopočet, aby čísla seděla s denní bilancí nahoře. Bez toho si hráč sečte
@@ -10598,15 +10630,20 @@ function renderFinance(){
     html += `<p style="border-top:1px solid var(--border);padding-top:6px;margin-top:8px;font-size:0.9em;">
       Z majetku ti plyne <b style="color:${majetekTok>=0?'var(--accent)':'var(--danger)'}">${majetekTok>=0?'+':''}${Math.round(majetekTok)} Kč/den</b>.</p>
       ${(() => {
-        // Rovnice musí SEDĚT. Dřív tu bylo jen „majetek − život = bilance", jenže do bilance
-        // patří i plat a splátky, které majetek nejsou — a součet pak nevycházel
-        // (32 − 45 rozhodně není 212).
-        const zbytek = f.net - majetekTok + zivot;   // co není z majetku ani ze života
-        return zbytek > 0.5
-          ? `<p style="font-size:0.9em;margin:2px 0;">Práce (majetek to není, musíš pro ni chodit): <b style="color:var(--accent)">+${Math.round(zbytek)} Kč/den</b></p>`
-          : (zbytek < -0.5
-              ? `<p style="font-size:0.9em;margin:2px 0;">Splátky dluhů: <b style="color:var(--danger)">${Math.round(zbytek)} Kč/den</b></p>`
-              : '');
+        // Rozpad musí být POCTIVÝ, ne jen sedět v součtu. Dřív se všechno, co nebylo z majetku
+        // ani ze života, slilo do jednoho řádku — a ten dostal nálepku „Splátky dluhů", i když
+        // v sobě měl schovaný plat (−220 = plat 225 − splátky 450 + úrok 5). Rozepsáno zvlášť.
+        const prace = f.income.filter(i => /Plat|Spropitné/.test(i.label))
+                              .reduce((a, i) => a + i.amount, 0);
+        // Úrok z půjčky je už započítaný výš u pasiva „Půjčka" — tady odečítáme jen jistinu,
+        // aby se nepočítal dvakrát.
+        const splRadek = f.expense.find(e => /Splátky/.test(e.label));
+        const urokVMajetku = asArray(u.loans).reduce((a, l) => a + (l.balance * l.dailyRate), 0);
+        const jistina = splRadek ? Math.max(0, splRadek.amount - urokVMajetku) : 0;
+        let out = '';
+        if(prace > 0.5) out += `<p style="font-size:0.9em;margin:2px 0;">Práce (majetek to není, musíš pro ni chodit): <b style="color:var(--accent)">+${Math.round(prace)} Kč/den</b></p>`;
+        if(jistina > 0.5) out += `<p style="font-size:0.9em;margin:2px 0;">Splátky dluhů (jistina): <b style="color:var(--danger)">−${Math.round(jistina)} Kč/den</b><br><span style="color:var(--muted);font-size:0.88em;">O tuhle část nepřicházíš — snižuje ti dluh.</span></p>`;
+        return out;
       })()}
       <p style="font-size:0.9em;margin:2px 0;">Život a bydlení (to majetek není): <b style="color:var(--danger)">−${Math.round(zivot)} Kč/den</b></p>
       <p style="font-size:0.9em;margin:2px 0;border-top:1px solid var(--border);padding-top:3px;">= denní bilance <b style="color:${f.net>=0?'var(--accent)':'var(--danger)'}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
