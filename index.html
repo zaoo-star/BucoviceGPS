@@ -592,7 +592,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '5.1';
+const APP_VERSION = '5.2';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8171,10 +8171,21 @@ function financeBreakdown(name){
   let tax=0;
   Object.values(world.parcels).forEach(p=>{ const pct=p.owners?.[name]||0; if(pct>0) tax += effectiveHousePrice(p)*(pct/100)*PROPERTY_TAX_RATE/DAYS_PER_YEAR; });
   if(tax>0.5) expense.push({label:'🏛️ Daň z nemovitosti', amount: tax});
-  // úrok z půjček
-  let loanInterest=0;
-  (u.loans||[]).forEach(l=>{ loanInterest += l.balance * l.dailyRate; });
-  if(loanInterest>0.5) expense.push({label:'💵 Úrok z půjček', amount: loanInterest});
+  // Splátky půjček. Dřív se tu počítal JEN úrok (pár korun), ale banka strhává celou
+  // splátku včetně jistiny — u půjčky 10 000 Kč to je skoro 200 Kč denně. Rozpočet tak
+  // hlásil výdaje 54 Kč/den, zatímco reálně odcházelo 250 Kč, a „rezerva na 48 dní"
+  // byla čtyřikrát optimističtější, než jaká byla doopravdy.
+  let splatky = 0, uroky = 0;
+  (u.loans||[]).forEach(l => {
+    uroky += l.balance * l.dailyRate;
+    const podil = l.type === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
+    splatky += Math.min(l.principal * podil, l.balance);
+  });
+  if(splatky > 0.5) expense.push({
+    label: `🏦 Splátky půjček (z toho úrok ${Math.round(uroky)} Kč)`,
+    amount: splatky,
+    poznamka: 'Jistina ti zároveň snižuje dluh — o majetek nepřicházíš, jen se přesouvá.'
+  });
 
   const totalIncome = income.reduce((s,i)=>s+i.amount,0);
   const totalExpense = expense.reduce((s,e)=>s+e.amount,0);
@@ -10586,8 +10597,19 @@ function renderFinance(){
     const zivot = (f.expense.find(e => e.label && e.label.indexOf('Život') >= 0) || {amount:0}).amount;
     html += `<p style="border-top:1px solid var(--border);padding-top:6px;margin-top:8px;font-size:0.9em;">
       Z majetku ti plyne <b style="color:${majetekTok>=0?'var(--accent)':'var(--danger)'}">${majetekTok>=0?'+':''}${Math.round(majetekTok)} Kč/den</b>.</p>
+      ${(() => {
+        // Rovnice musí SEDĚT. Dřív tu bylo jen „majetek − život = bilance", jenže do bilance
+        // patří i plat a splátky, které majetek nejsou — a součet pak nevycházel
+        // (32 − 45 rozhodně není 212).
+        const zbytek = f.net - majetekTok + zivot;   // co není z majetku ani ze života
+        return zbytek > 0.5
+          ? `<p style="font-size:0.9em;margin:2px 0;">Práce (majetek to není, musíš pro ni chodit): <b style="color:var(--accent)">+${Math.round(zbytek)} Kč/den</b></p>`
+          : (zbytek < -0.5
+              ? `<p style="font-size:0.9em;margin:2px 0;">Splátky dluhů: <b style="color:var(--danger)">${Math.round(zbytek)} Kč/den</b></p>`
+              : '');
+      })()}
       <p style="font-size:0.9em;margin:2px 0;">Život a bydlení (to majetek není): <b style="color:var(--danger)">−${Math.round(zivot)} Kč/den</b></p>
-      <p style="font-size:0.9em;margin:2px 0;">= denní bilance <b style="color:${f.net>=0?'var(--accent)':'var(--danger)'}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
+      <p style="font-size:0.9em;margin:2px 0;border-top:1px solid var(--border);padding-top:3px;">= denní bilance <b style="color:${f.net>=0?'var(--accent)':'var(--danger)'}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
   }
   html += `</div>`;
 
@@ -10642,7 +10664,7 @@ function renderFinance(){
     <h3>🛟 Tvoje rezerva</h3>
     <p>Hotovost + spoření: <b>${Math.round(cash).toLocaleString('cs-CZ')} Kč</b></p>
     <p>Kdyby ti <b>vypadly všechny příjmy</b>, vydržíš: <b style="color:${reserveColor}">${daysReserve>=999?'dlouho':daysReserve+' dní'}</b></p>
-    <p style="font-size:0.85em;color:var(--muted)">To je nejhorší možný případ — počítá se s tím, že nic nevyděláváš a jen platíš výdaje (${Math.round(dailyBurn)} Kč/den).${
+    <p style="font-size:0.85em;color:var(--muted)">To je nejhorší možný případ — počítá se s tím, že nic nevyděláváš a jen platíš výdaje (${Math.round(dailyBurn)} Kč/den včetně splátek dluhů).${
       f.net < -0.5 && f.daysUntilBroke !== null
         ? ` Když ti příjmy zůstanou, vydržíš déle: <b>${f.daysUntilBroke} dní</b> (viz denní rozpočet nahoře).`
         : ''
