@@ -574,7 +574,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '4.6';
+const APP_VERSION = '4.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1003,7 +1003,10 @@ function checkPickups(){
   (world.pickups.list || []).forEach(pk => {
     if(got.includes(pk.id)) return;
     if(haversine(playerPos, {lat:pk.lat, lng:pk.lng}) <= PICKUP_COLLECT_RADIUS){
-      u.balance += pk.reward * inflationMult() * eventMult('pickupMult');
+      const odmena = pk.reward * inflationMult() * eventMult('pickupMult');
+      u.balance += odmena;
+      pricti(u, 'akce', odmena);
+      zapisDoDeniku('pickup', pk.bonus ? 'Sebral jsem bonusový balík peněz' : 'Sebral jsem balík peněz', odmena);
       got.push(pk.id);
       collectedAny = true;
       playSound('coin');
@@ -1127,6 +1130,8 @@ function checkQuests(){
       u.questDone.push(qid);
       changed = true;
       showToast(`${q.icon} Úkol splněn: ${q.name} · +${reward} Kč`);
+      pricti(u, 'akce', reward);
+      zapisDoDeniku('quest', `Splnil jsem úkol: ${q.name}`, reward);
       notifyPlayer('Úkol splněn!', `${q.name} — získáváš ${reward} Kč`);
       playSound('coin');
     }
@@ -1143,6 +1148,8 @@ function checkQuests(){
     u.balance += bonus;
     changed = true;
     showAlert(`🏅 Splnil jsi všechny dnešní úkoly! Bonus ${bonus} Kč.`);
+    pricti(u, 'akce', bonus);
+    zapisDoDeniku('quest', 'Splnil jsem všechny dnešní úkoly', bonus);
     notifyPlayer('Všechny úkoly hotové!', `Bonus ${bonus} Kč`);
     playSound('coin');
   }
@@ -1189,6 +1196,8 @@ function checkLandmarks(){
     if(haversine(playerPos, {lat:lm.lat, lng:lm.lng}) <= LANDMARK_VISIT_RADIUS){
       const reward = Math.round(LANDMARK_REWARD * inflationMult() * eventMult('landmarkMult'));
       u.balance += reward;
+      pricti(u, 'akce', reward);
+      zapisDoDeniku('landmark', `Navštívil jsem ${lm.name}`, reward);
       got.push(lm.id);
       any = true;
       playSound('coin');
@@ -4485,6 +4494,8 @@ function migrateWorld(){
         if(u.currentJobId === undefined) u.currentJobId = null;
         // Vlastní razítko pro výpočet peněz. Kdo ho nemá, začíná teď — ne od začátku věků.
         if(typeof u.lastTick !== 'number') u.lastTick = Date.now();
+        u.denik = asArray(u.denik);
+        u.souhrny = asArray(u.souhrny);
         u.totalDistance = cislo(u.totalDistance, 0, 0, 100000000);
         u.totalShifts = cislo(u.totalShifts, 0, 0, 1000000);
         u.peakWorth = cislo(u.peakWorth, u.balance, 0, 1000000000);
@@ -4981,6 +4992,16 @@ function adoptWorldVnitrni(incoming){
       }
       // Razítko výpočtu peněz musí jít jen dopředu — jinak by se stejný čas proplatil dvakrát.
       ja.lastTick = Math.max(ja.lastTick || 0, cloudMe.lastTick || 0);
+
+      // Deník a souhrny se SLUČUJÍ, ne přepisují — hráč může hrát na dvou zařízeních
+      // a nesmí kvůli tomu o zápisy přijít. Klíčem je čas záznamu.
+      const spojit = (aa, bb, klic, limit) => {
+        const mapa = new Map();
+        [...asArray(bb), ...asArray(aa)].forEach(x => { if(x) mapa.set(klic(x), x); });
+        return Array.from(mapa.values()).sort((x, y) => (y.ts || 0) - (x.ts || 0)).slice(0, limit);
+      };
+      ja.denik = spojit(ja.denik, cloudMe.denik, x => `${x.ts}|${x.text}`, DENIK_MAX);
+      ja.souhrny = spojit(ja.souhrny, cloudMe.souhrny, x => `den${x.den}`, SOUHRNU_MAX);
       ['lastWorkedCalDay','totalShifts','totalDistance',
        'questBonusDay','streakDay','streakBest','peakWorth'].forEach(vyssi);
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
@@ -5311,6 +5332,57 @@ const NEWS_MAX = 60;
 // Kolik ID smazaných zpráv si pamatujeme. Náhrobek musí přežít déle než samotná zpráva
 // v chatu, jinak by ji vzkřísilo zařízení, které o smazání nevědělo.
 const DELETED_MSGS_MAX = 500;
+// ===== OSOBNÍ DENÍK =====
+// Noviny jsou kronika města — sem se píše, co udělal HRÁČ SÁM. Sebrané balíky, opravy,
+// nákupy, směny. K tomu se každou půlnoc uloží souhrn dne (co vydělal, co utratil, kolik
+// nachodil), protože průběžné příjmy po haléřích v deníku nedávají smysl.
+const DENIK_MAX = 70;          // jednotlivé akce
+const SOUHRNU_MAX = 14;        // denních souhrnů
+
+function zapisDoDeniku(typ, text, castka){
+  if(!currentUser) return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  u.denik = asArray(u.denik);
+  u.denik.unshift({
+    ts: Date.now(), den: world.day, typ,
+    text: String(text).slice(0, 160),
+    castka: (typeof castka === 'number' && isFinite(castka)) ? Math.round(castka) : null
+  });
+  if(u.denik.length > DENIK_MAX) u.denik.length = DENIK_MAX;
+}
+
+// Denní počitadla — plní je tick(), aby souhrn nemusel nic dopočítávat zpětně.
+function pricti(u, klic, kolik){
+  if(!u || !isFinite(kolik) || !kolik) return;
+  if(!u.denSoucty || u.denSouctyDen !== world.day){
+    u.denSoucty = { najem:0, firmy:0, solar:0, naklady:0, dane:0, uroky:0, mzdy:0, akce:0 };
+    u.denSouctyDen = world.day;
+  }
+  u.denSoucty[klic] = (u.denSoucty[klic] || 0) + kolik;
+}
+
+// Souhrn uzavřeného dne. Volá se při přechodu na nový den, ještě než se počitadla vynulují.
+function uzavriDen(u, denKtery){
+  if(!u) return;
+  const s = u.denSoucty;
+  if(!s) return;
+  const prijem = (s.najem||0) + (s.firmy||0) + (s.solar||0) + (s.mzdy||0) + (s.akce||0);
+  const vydaje = (s.naklady||0) + (s.dane||0) + (s.uroky||0);
+  if(prijem < 1 && vydaje < 1) return;      // den bez pohybu nemá smysl zapisovat
+  u.souhrny = asArray(u.souhrny);
+  u.souhrny.unshift({
+    den: denKtery, ts: Date.now(),
+    najem: Math.round(s.najem||0), firmy: Math.round(s.firmy||0), solar: Math.round(s.solar||0),
+    mzdy: Math.round(s.mzdy||0), akce: Math.round(s.akce||0),
+    naklady: Math.round(s.naklady||0), dane: Math.round(s.dane||0), uroky: Math.round(s.uroky||0),
+    metry: Math.round(u.distanceToday || 0),
+    zustatek: Math.round(u.balance || 0)
+  });
+  if(u.souhrny.length > SOUHRNU_MAX) u.souhrny.length = SOUHRNU_MAX;
+  u.denSoucty = null;
+}
+
 function addNews(type, text){
   if(!world.news) world.news = [];
   // Pojistka proti duplicitám: tentýž text ke stejnému hernímu dni se do novin nepřidá
@@ -5430,6 +5502,7 @@ function tickVnitrni(){
     cost *= (1 - livingCostDiscountFromUpgrades(u.name));   // zateplení/solár v domě, kde bydlím
     if(isNewbieProtected(u)) cost = 0;   // nováček má prvních pár dní klid
     u.balance -= cost * mojeDayFraction;
+    pricti(u, 'naklady', cost * mojeDayFraction);
 
     // daň z nemovitosti: 4 % hodnoty tvého podílu ročně (ze všech domů, včetně bydlení)
     let taxableValue = 0;
@@ -5438,7 +5511,9 @@ function tickVnitrni(){
       if(pct > 0) taxableValue += effectiveHousePrice(p) * (pct/100);
     });
     if(taxableValue > 0){
-      u.balance -= taxableValue * PROPERTY_TAX_RATE / DAYS_PER_YEAR * mojeDayFraction;
+      const danDnes = taxableValue * PROPERTY_TAX_RATE / DAYS_PER_YEAR * mojeDayFraction;
+      u.balance -= danDnes;
+      pricti(u, 'dane', danDnes);
     }
 
     // úrok ze spořicího účtu (peníze uložené v bance rostou — bezpečně, ale pomalu)
@@ -5486,7 +5561,11 @@ function tickVnitrni(){
         // Výnos si připisuje jen ten, kdo zrovna hraje — za dobu, kterou vidí on sám.
         if(collected > 0 && ja){
           const mujPodil = (p.owners?.[ja.name] || 0) / 100;
-          if(mujPodil > 0) ja.balance += collected * mujPodil * mojeDayFraction;
+          if(mujPodil > 0){
+            const kolik = collected * mujPodil * mojeDayFraction;
+            ja.balance += kolik;
+            pricti(ja, 'najem', kolik);
+          }
         }
         // obsazený byt (hráč, NPC nebo poptávka) se opotřebovává; prázdný chátrá pomaleji
         const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : 0;   // buď někdo bydlí, nebo ne
@@ -5500,7 +5579,11 @@ function tickVnitrni(){
     const solar = solarBonusForHouse(p);
     if(solar > 0 && ja){
       const mujPodil = (p.owners?.[ja.name] || 0) / 100;
-      if(mujPodil > 0) ja.balance += solar * mujPodil * mojeDayFraction;
+      if(mujPodil > 0){
+        const kolik = solar * mujPodil * mojeDayFraction;
+        ja.balance += kolik;
+        pricti(ja, 'solar', kolik);
+      }
     }
   });
 
@@ -5515,7 +5598,11 @@ function tickVnitrni(){
   if(ja){
     Object.values(world.businesses).forEach(biz => {
       const pct = biz.owners?.[ja.name] || 0;
-      if(pct > 0) ja.balance += biz.hourlyYield * inflationMult() * (pct/100) * hoursElapsed;
+      if(pct > 0){
+        const kolik = biz.hourlyYield * inflationMult() * (pct/100) * hoursElapsed;
+        ja.balance += kolik;
+        pricti(ja, 'firmy', kolik);
+      }
     });
   }
 
@@ -5528,6 +5615,7 @@ function tickVnitrni(){
         const minPay = Math.min(loan.principal * podil * mojeDayFraction, loan.balance);
         if(u.balance >= minPay){
           u.balance -= minPay;
+          pricti(u, 'uroky', minPay);
           loan.balance -= minPay;
           loan.missedDays = Math.max(0, (loan.missedDays || 0) - mojeDayFraction * 2); // řádné placení dřívější výpadky "smaže" rychleji
         } else {
@@ -5711,6 +5799,11 @@ function cancelDormantListingsFor(name){
 }
 
 function onNewDay(catchUp){
+  // Souhrn uzavíráme JEŠTĚ PŘED tím, než se den posune dál — jinak by se zapsal
+  // pod nesprávným číslem dne.
+  if(currentUser && world.users[currentUser.name]){
+    safeCall(() => uzavriDen(world.users[currentUser.name], (world.day || 1) - 1));
+  }
   if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
   tryFillVacantUnits();          // volné byty si najdou nájemníky podle ceny
   // Při dopočítávání zameškaných dnů se událost nevypisuje — hráč u toho nebyl a noviny
@@ -6183,20 +6276,62 @@ async function encounterKupec(enc, u){
     return;
   }
   const p = moje[0];
-  const pct = Math.min(50, p.owners[u.name]);          // koupí nejvýš polovinu
+  const mam = p.owners[u.name];
+  const pct = Math.min(50, mam);                       // koupí nejvýš polovinu
   const trzni = housePricePerPercent(p) * pct;
   const nabidka = Math.round(trzni * (1 + enc.bonus/100));
+  const zbude = mam - pct;
+
+  // KTERÝ dům to je. Hráči mají klidně dvacet domů a číslo jim nic neřekne — Eva kvůli tomu
+  // nabídku odmítla, protože se bála prodat zrovna ten, do kterého investovala.
+  const kde = orientacniBod(p);
+  const d = playerPos ? haversine(playerPos, {lat:p.lat, lng:p.lng}) : null;
+  const bytu = asArray(p.units).length;
+  const obsazenych = asArray(p.units).filter(x => x && (x.tenant || x.npc)).length;
+  const vylepseni = Object.keys(p.upgrades || {}).length;
+
+  let popis = `🏠 Dům ${p.id.replace('h_','#')}`;
+  if(kde) popis += ` (${kde})`;
+  if(d !== null) popis += `\n📍 ${kudyText(p, d)}`;
+  popis += `\n💰 Celková hodnota: ${Math.round(effectiveHousePrice(p)).toLocaleString('cs-CZ')} Kč`;
+  if(bytu) popis += `\n🛏️ ${bytu} ${bytu===1?'byt':(bytu<5?'byty':'bytů')}, obsazeno ${obsazenych}`;
+  if(vylepseni) popis += `\n🔧 Vylepšení: ${Object.keys(p.upgrades).map(k => HOUSE_UPGRADES[k]?.name || k).join(', ')}`;
+
+  // Co prodej udělá. Nejdůležitější je ztráta rozhodovacího práva — o tu se Eva bála
+  // a hra jí to neřekla.
+  let dusledky = `\n\nCo se stane:\n• Zbude ti ${zbude.toFixed(0)} % domu\n• Nájem ti bude chodit dál, ale jen z těch ${zbude.toFixed(0)} %`;
+  if(mam > 50 && zbude <= 50){
+    dusledky += `\n⚠️ PŘIJDEŠ O ROZHODOVÁNÍ o domě (teď ho máš). Kupec pak sám určuje nájem, opravy i přestavbu — a ty s tím nic nenaděláš.`;
+  }
+  if(vylepseni) dusledky += `\n• Vylepšení zůstávají domu, nevrátí se ti`;
+
   const ok = await showConfirm(
-    `🧳 Kupec z okolí\n\n„Zajímá mě dům ${p.id.replace('h_','#')}. Prodáš mi ${pct.toFixed(0)} %?\n` +
-    `Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — to je o ${enc.bonus} % víc, než kolik je běžná cena."\n\n` +
-    `(Tržní hodnota: ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)\n\nProdat?`);
+    `🧳 Kupec z okolí\n\n„Zajímá mě tenhle dům. Prodáš mi ${pct.toFixed(0)} %? Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — o ${enc.bonus} % víc, než je běžná cena."\n\n` +
+    popis +
+    `\n\nNabídka: ${nabidka.toLocaleString('cs-CZ')} Kč za ${pct.toFixed(0)} % (tržní cena ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)` +
+    dusledky +
+    `\n\nProdat?`);
   if(!ok){ showToast('Nabídku jsi odmítl.'); return; }
+
+  const kontrola = muzuProdat(u.name, p.id, pct);
+  if(!kontrola.ok){
+    await showAlert(`Tenhle podíl ručí za hypotéku, prodat ho nejde. Volně máš jen ${kontrola.volne.toFixed(1)} %.`);
+    return;
+  }
+
   p.owners[u.name] -= pct;
   if(p.owners[u.name] < 0.001) delete p.owners[u.name];
   u.balance += nabidka;
   stampHouse(p);
+  // Chybělo tu razítko podílů — bez něj se prodej při synchronizaci nemusel udržet
+  // a hráč mohl skončit s penězi i podílem, nebo naopak přijít o obojí.
+  stampOwners(p, u.name);
+  pricti(u, 'akce', nabidka);
+  zapisDoDeniku('sell', `Prodal jsem kupci ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
+  recordSale(p, nabidka, pct, u.name, 'kupec z okolí');
   addNews('sale', `🧳 ${u.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`);
-  await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.`);
+  await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.\n\nV domě ti zbývá ${zbude.toFixed(0)} %${zbude > 50 ? ' — pořád o něm rozhoduješ ty.' : (zbude > 0 ? ' — nájem ti chodí dál, ale o domě už rozhoduje někdo jiný.' : '.')}`);
+  saveWorld();
   refreshAll();
 }
 
@@ -6217,7 +6352,7 @@ async function encounterNajemnik(enc, u){
   const nabidka = Math.round(ferovy * (1 + enc.najemBonus/100));
   const stav = Math.round(cil.p.units[cil.idx].condition || 0);
   const ok = await showConfirm(
-    `🔑 Zájemce o bydlení\n\n„Sháním byt a viděl jsem, že máš volný v domě ${cil.p.id.replace('h_','#')}.\n` +
+    `🔑 Zájemce o bydlení\n\n„Sháním byt a viděl jsem, že máš volný v domě ${cil.p.id.replace('h_','#')}${orientacniBod(cil.p) ? ' (' + orientacniBod(cil.p) + ')' : ''}.\n` +
     `Nabízím ${nabidka} Kč denně — to je o ${enc.najemBonus} % víc, než je běžné."\n\n` +
     `(Běžný nájem: ${ferovy} Kč · stav bytu: ${stav} %)\n\n` +
     `${stav < 50 ? '⚠️ Byt je ve špatném stavu — brzy se odstěhuje.\n\n' : ''}Nastěhovat?`);
@@ -6228,6 +6363,7 @@ async function encounterNajemnik(enc, u){
   stampHouse(cil.p);
   addNews('rental', `🔑 Do domu ${cil.p.id.replace('h_','#')} se nastěhoval nový nájemník (${nabidka} Kč/den).`);
   await showAlert(`Nastěhováno! Bude ti platit ${nabidka} Kč denně.`);
+  saveWorld();   // bez uložení se nastěhování mohlo ztratit při příští synchronizaci
   refreshAll();
 }
 
@@ -6306,7 +6442,7 @@ async function encounterZnalec(enc, u){
     `Vem si dům ${t.p.id.replace('h_','#')} — ${duvod}.\n\n` +
     `Většinový podíl vyjde asi na ${t.zaVetsinu.toLocaleString('cs-CZ')} Kč a nesl by ti kolem ` +
     `${Math.round(t.denniNajem * 0.51)} Kč denně. Zaplatí se ti zhruba za ${t.navratnost} dní.\n\n` +
-    `Je to ${Math.round(t.vzdalenost)} metrů odsud — mrkni na mapu, svítí zeleně."`);
+    `Je to ${kudyText(t.p, t.vzdalenost)}${orientacniBod(t.p) ? ', ' + orientacniBod(t.p) : ''} — na mapě svítí zeleně."`);
 
   // zvýraznit ho na mapě, ať ho hráč najde
   recommendedIds[t.p.id] = true;
@@ -7607,6 +7743,7 @@ async function buyHouseStake(id){
   });
   p.popularity = (p.popularity || 0) + pct/100;
 
+  zapisDoDeniku('buy', `Koupil jsem ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
   addNews('buy', `🏠 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${cost} Kč.`);
   saveWorld(); refreshAll();
   playSound('buy');
@@ -7692,6 +7829,7 @@ async function sellHouseStake(id){
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
   stampOwners(p, currentUser.name);
   if(!houseHasOwner(p)){ p.useType = null; delete p.units; stampHouse(p); }
+  zapisDoDeniku('sell', `Prodal jsem městu ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}`, refund);
   addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${refund} Kč.`);
   saveWorld(); refreshAll();
   playSound('sell');
@@ -10230,14 +10368,93 @@ function sendChat(){
   renderChat(true);   // vlastní zprávu chceme vidět → sjet na konec
 }
 
-function renderNews(){
-  const el = document.getElementById('newsContent');
-  const news = world.news || [];
-  if(!news.length){
-    el.innerHTML = `<div class="empty-state">Zatím se nic nestalo. Až někdo koupí dům, nastoupí do práce nebo se přidá nový hráč, objeví se to tady.</div>`;
+let denikRezim = 'mesto';   // 'mesto' = noviny, 'ja' = osobní deník
+function prepniDenik(rezim){ denikRezim = rezim; renderNews(); }
+
+const DENIK_IKONY = { buy:'🏠', sell:'💸', repair:'🔧', upgrade:'🛠️', work:'💼',
+                      pickup:'💰', quest:'🎯', landmark:'📍', other:'•' };
+
+function renderDenik(el){
+  const u = currentUser ? world.users[currentUser.name] : null;
+  if(!u){ el.innerHTML = '<div class="empty-state">Nejdřív se přihlas.</div>'; return; }
+  const akce = asArray(u.denik);
+  const souhrny = asArray(u.souhrny);
+
+  let html = prepinacDeniku();
+  html += `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co jsi dnes dělal ty — nejnovější nahoře. Průběžné příjmy z nájmu a firem se sem nepíšou po haléřích, ale sečtou se do souhrnu dne.</p>`;
+
+  if(!akce.length && !souhrny.length){
+    html += `<div class="empty-state">Zatím prázdno. Jakmile sebereš balík, opravíš byt nebo koupíš podíl, objeví se to tady.</div>`;
+    el.innerHTML = html;
     return;
   }
-  let html = `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co se děje ve městě — nejnovější nahoře. ${countPlayers()>1?'':'(Až budete hrát víc hráčů, uvidíš tu i jejich akce.)'}</p>`;
+
+  // Akce a souhrny promícháme podle dne, ať to čte jako opravdový deník.
+  const polozky = [
+    ...akce.map(a => ({ druh:'akce', den:a.den, ts:a.ts, a })),
+    ...souhrny.map(sh => ({ druh:'souhrn', den:sh.den, ts:sh.ts, sh }))
+  ].sort((x, y) => (y.den - x.den) || (y.ts - x.ts));
+
+  let poslDen = null;
+  polozky.forEach(it => {
+    if(it.den !== poslDen){
+      poslDen = it.den;
+      html += `<p style="font-size:0.82em;color:var(--muted);margin:10px 0 4px;border-bottom:1px solid var(--border);padding-bottom:2px;">Den ${it.den}</p>`;
+    }
+    if(it.druh === 'akce'){
+      const a = it.a;
+      const kladne = (a.castka || 0) > 0;
+      html += `<div class="card" style="padding:6px 9px;margin-bottom:4px;">
+        <p style="margin:0;font-size:0.92em;">${DENIK_IKONY[a.typ] || DENIK_IKONY.other} ${escapeHtml(a.text)}
+          ${a.castka ? `<b style="color:${kladne ? 'var(--accent)' : 'var(--danger)'}">${kladne ? '+' : ''}${a.castka.toLocaleString('cs-CZ')} Kč</b>` : ''}</p>
+        <p style="margin:1px 0 0;font-size:0.72em;color:var(--muted);">${timeAgo(a.ts)}</p>
+      </div>`;
+    } else {
+      const sh = it.sh;
+      const prijem = sh.najem + sh.firmy + sh.solar + sh.mzdy + sh.akce;
+      const vydaje = sh.naklady + sh.dane + sh.uroky;
+      const bilance = prijem - vydaje;
+      const radek = (jm, v, barva) => v >= 1 ? `<p style="margin:1px 0;font-size:0.86em;color:var(--muted);">${jm}: <b style="color:${barva}">${v >= 0 ? '+' : ''}${v.toLocaleString('cs-CZ')} Kč</b></p>` : '';
+      html += `<div class="card" style="border-left:3px solid var(--gold);padding:8px 10px;margin-bottom:6px;">
+        <p style="margin:0 0 3px;font-weight:600;">📊 Souhrn dne ${sh.den}</p>
+        ${radek('🏘️ Nájem', sh.najem, 'var(--accent)')}
+        ${radek('🏢 Firmy', sh.firmy, 'var(--accent)')}
+        ${radek('☀️ Solár', sh.solar, 'var(--accent)')}
+        ${radek('💼 Mzda', sh.mzdy, 'var(--accent)')}
+        ${radek('🎯 Balíky a úkoly', sh.akce, 'var(--accent)')}
+        ${radek('🍞 Život a bydlení', sh.naklady, 'var(--danger)')}
+        ${radek('🏛️ Daně', sh.dane, 'var(--danger)')}
+        ${radek('🏦 Splátky', sh.uroky, 'var(--danger)')}
+        <p style="margin:4px 0 0;border-top:1px solid var(--border);padding-top:3px;font-size:0.92em;">
+          Bilance dne: <b style="color:${bilance >= 0 ? 'var(--accent)' : 'var(--danger)'}">${bilance >= 0 ? '+' : ''}${Math.round(bilance).toLocaleString('cs-CZ')} Kč</b>
+          · nachozeno <b>${(sh.metry/1000).toFixed(1).replace('.', ',')} km</b>
+          · zůstatek na konci <b>${sh.zustatek.toLocaleString('cs-CZ')} Kč</b></p>
+      </div>`;
+    }
+  });
+
+  html += infoBox('Co je můj deník?', `
+    <p><b>Tvoje vlastní historie.</b> Noviny píšou, co se děje ve městě — deník píše, co jsi udělal <b>ty</b>.</p>
+    <p><b>Souhrn dne</b> se uloží každou půlnoc: kolik ti přišlo z nájmu, z firem a ze soláru, kolik jsi utratil za život a daně, kolik jsi nachodil.</p>
+    <p style="color:var(--muted)">Drží se posledních ${DENIK_MAX} akcí a ${SOUHRNU_MAX} dnů.</p>
+  `);
+  el.innerHTML = html;
+}
+
+function prepinacDeniku(){
+  const b = (id, popis) => `<button class="${denikRezim === id ? '' : 'secondary'}" style="flex:1;" onclick="prepniDenik('${id}')">${popis}</button>`;
+  return `<div class="row" style="margin-bottom:8px;">${b('mesto','📰 Město')}${b('ja','📔 Můj deník')}</div>`;
+}
+
+function renderNews(){
+  const el = document.getElementById('newsContent');
+  if(denikRezim === 'ja'){ renderDenik(el); return; }
+  const news = world.news || [];
+  if(!news.length){
+    el.innerHTML = prepinacDeniku() + `<div class="empty-state">Zatím se nic nestalo. Až někdo koupí dům, nastoupí do práce nebo se přidá nový hráč, objeví se to tady.</div>`;
+    return;
+  }
+  let html = prepinacDeniku() + `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co se děje ve městě — nejnovější nahoře. ${countPlayers()>1?'':'(Až budete hrát víc hráčů, uvidíš tu i jejich akce.)'}</p>`;
   news.forEach(n => {
     const st = NEWS_STYLE[n.type] || {color:'var(--text)'};
     html += `<div class="card" style="border-left:3px solid ${st.color};padding:8px 10px;margin-bottom:6px;">
@@ -11218,6 +11435,7 @@ async function installUpgrade(id, key){
   if(!p.upgrades) p.upgrades = {};
   p.upgrades[key] = true;
   stampHouse(p);
+  zapisDoDeniku('upgrade', `${up.icon} ${up.name} — dům ${p.id.replace('h_','#')}`, -cost);
   addNews('rental', `${up.icon} ${currentUser.name} vylepšil dům ${p.id.replace('h_','#')} — ${up.name}.`);
   playSound('success');
   saveWorld(); refreshAll();
@@ -11238,6 +11456,7 @@ async function repairUnit(id, idx){
   me.balance -= cost;
   unit.condition = 100;
   stampUnit(unit);
+  zapisDoDeniku('repair', `Opravil jsem byt v domě ${p.id.replace('h_','#')} (+${Math.round(missing)} % stavu)`, -cost);
   stampHouse(p);
   // počítadlo oprav pro denní úkol (nuluje se s novým dnem)
   const today = calendarDay();
@@ -11456,6 +11675,8 @@ function workShift(jobId){
     const zmena = Math.round((nasobekUdalosti - 1) * 100);
     msg += `\n\n${ev ? ev.emoji + ' ' + ev.name : 'Dnešní událost'}: mzdy ${zmena > 0 ? '+' : ''}${zmena} % (základ ${Math.round(job.salary*inflationMult())} Kč → ${zaklad} Kč).`;
   }
+  pricti(me, 'mzdy', total);
+  zapisDoDeniku('work', `Odpracoval jsem směnu — ${job.name}`, total);
   playSound(gotTip ? 'coin' : 'work');
   showAlert(msg);
 }
