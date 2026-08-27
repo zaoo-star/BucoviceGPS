@@ -43,11 +43,16 @@
     overscroll-behavior-y:contain;
   }
 
+  /* Pravý okraj drží odstup od lišty s ikonami (54 px široká + 10 px mezera).
+     Bez toho delší pilulka („vlastní bydlení (29 Kč/den, −35 % za vylepšení)")
+     zajela pod ikony a nešla dočíst. */
   #topBar{
-    position:absolute;top:0;left:0;right:0;z-index:350;
-    padding:10px 10px 0 10px;display:flex;flex-direction:column;gap:6px;
+    position:absolute;top:0;left:0;right:74px;z-index:350;
+    padding:10px 0 0 10px;display:flex;flex-direction:column;gap:6px;
     pointer-events:none;
   }
+  /* Když se pilulka i tak nevejde, radši se zkrátí třemi tečkami, než aby přetekla. */
+  .statPill{max-width:100%;overflow:hidden;text-overflow:ellipsis;}
   .statsRow{display:flex;gap:6px;flex-wrap:wrap;pointer-events:none;}
   /* Živý ukazatel příjmu. Zůstatek roste o haléře, takže na první pohled vypadá zamrzlý —
      hráči kvůli tomu hlásili, že jim peníze vůbec nechodí. Sazba za hodinu je čitelná. */
@@ -587,7 +592,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '5.0';
+const APP_VERSION = '5.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6813,16 +6818,36 @@ function iconFor(p){
 // někdo jiný — proto zůstává uvedený i on.
 //
 // Kdyby vypadl i tenhle zdroj, přepneme se na další v pořadí automaticky.
+// KLÍČ K CARTO MAPÁM (nepovinný).
+// CARTO od 26. 8. 2026 vyžaduje u rastrových dlaždic klíč — bez něj přes mapu běží
+// vodoznak „API KEY REQUIRED". Dlaždice fungují dál, je to jen upozornění.
+// Klíč je ZDARMA (5 milionů dlaždic měsíčně, nekomerční použití) a nevyžaduje účet:
+//   https://carto.com/basemaps/apikey/
+// Až ho budeš mít, vlož ho sem mezi uvozovky a CARTO se použije jako první.
+// Dokud je prázdný, hra CARTO přeskočí a jede na jiných zdrojích bez vodoznaku.
+const CARTO_API_KEY = '';
+
 const PODKLADY = [
-  { url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+  // CARTO Voyager — nejhezčí podklad, ale jen s klíčem (jinak vodoznak).
+  ...(CARTO_API_KEY ? [{
+    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=' + CARTO_API_KEY,
     subdomains: 'abcd', maxZoom: 20,
-    attribution: '© OpenStreetMap · © CARTO' },
-  { url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-    subdomains: 'abcd', maxZoom: 20,
-    attribution: '© OpenStreetMap · © CARTO' },
-  { url: 'https://tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
+    attribution: '© OpenStreetMap · © CARTO' }] : []),
+
+  // Bez klíče: vykreslení od francouzské komunity OpenStreetMap. Stejná data,
+  // popisky v místním jazyce, žádný vodoznak.
+  { url: 'https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png',
     subdomains: 'abc', maxZoom: 19,
-    attribution: '© OpenStreetMap · © OpenStreetMap France' }
+    attribution: '© OpenStreetMap · © OpenStreetMap France' },
+
+  // Záloha, kdyby první zdroj vypadl.
+  { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    subdomains: '', maxZoom: 19,
+    attribution: '© OpenStreetMap · Esri' },
+
+  { url: 'https://tile.openstreetmap.de/{z}/{x}/{y}.png',
+    subdomains: 'abc', maxZoom: 19,
+    attribution: '© OpenStreetMap Deutschland' }
 ];
 
 let podkladIndex = 0;
