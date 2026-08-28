@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '5.7';
+const APP_VERSION = '5.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -10548,6 +10548,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'5.8', datum:'2026-08-28', body:[
+    ['zmena','Firmy vydělávají zase víc. Minulá úprava je stáhla moc dolů — teď se podíl vrátí zhruba za 150 dní místo 250. Proti domům (~400 dní) je to skoro trojnásobek.'],
+  ]},
   { verze:'5.7', datum:'2026-08-28', body:[
     ['novinka','Přibyl tenhle přehled změn (🆕 vlevo). Uvidíš tu, co jsme opravili a co je nového.'],
   ]},
@@ -11900,10 +11903,10 @@ function pricePerPercent(biz){ return biz.totalValue / 100; }
 // protože jakmile na ně hráč nastřádal, domy ztratily smysl.
 // Firmy mají vydělávat VÍC než domy — je to větší a dražší investice, ke které se hráč
 // musí propracovat. Jen ne pětkrát, jako dřív, protože pak nemá smysl kupovat domy vůbec.
-// Cílíme na návratnost kolem 250 dní proti ~384 u domů, tedy zhruba 1,5× lepší.
-// Reálně je ten rozdíl ještě o něco větší: dům chátrá, potřebuje opravy a nájemníci
-// se stěhují, kdežto firma jede pořád sama.
-const BUSINESS_YIELD_MULT = 0.28;      // 75 dní → zhruba 250 dní
+// Verze 5.6 to stáhla na 250 dní a hráčům to přišlo málo — firma za statisíce má být
+// znát. Cílíme proto na ~150 dní proti ~400 u domů, tedy zhruba 2,7× lepší.
+// Pořád je to daleko od původních 75 dní, kdy se domy nevyplatilo kupovat vůbec.
+const BUSINESS_YIELD_MULT = 0.5;       // 75 dní → zhruba 150 dní
 
 // Velké firmy vynášejí o něco hůř než malé — jinak by se vždycky vyplatilo dát všechno
 // do té největší a menší podniky by nikoho nezajímaly.
@@ -11944,7 +11947,7 @@ function renderBusinesses(){
     });
   }
   let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>
-    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům (zhruba <b>250 dní</b> proti <b>400</b>) a nic u něj neřešíš — nechátrá a nikdo se neodstěhuje. Zato je dražší a bydlet v něm nejde. <b>Menší firmy</b> nesou na každou korunu o něco víc než ty velké.</p>`;
+    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům (zhruba <b>150 dní</b> proti <b>400</b>) a nic u něj neřešíš — nechátrá a nikdo se neodstěhuje. Zato je dražší a bydlet v něm nejde. <b>Menší firmy</b> nesou na každou korunu o něco víc než ty velké.</p>`;
   html += list.map(biz => {
     const sold = soldPct(biz);
     const myPct = currentUser ? (biz.owners[currentUser.name] || 0) : 0;
