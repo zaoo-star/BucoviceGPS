@@ -90,6 +90,12 @@
   /* Deník má vlastní ikonu na LEVÉ straně: pravá lišta je plná a deník je věc, do které
      hráč kouká často. Posazená je nad střed, aby si nelezla do cesty s ovládáním zoomu
      vlevo dole ani s informačními pilulkami nahoře. */
+  /* Tečka u ikony novinek, dokud si je hráč nepřečte. Jinak by o změnách nevěděl. */
+  .railBtn{position:relative;}
+  .railBtn .tecka{
+    position:absolute;top:5px;right:5px;width:10px;height:10px;border-radius:50%;
+    background:var(--accent);border:2px solid var(--panel);
+  }
   #leftRail{
     position:absolute;left:10px;top:46%;transform:translateY(-50%);z-index:400;
     display:flex;flex-direction:column;gap:10px;
@@ -395,6 +401,7 @@
        do které hráč kouká často — nemá smysl ji schovávat za noviny. -->
   <div id="leftRail">
     <button class="railBtn" data-tab="denik" id="denikRailBtn" title="Můj deník">📔</button>
+    <button class="railBtn" data-tab="zmeny" id="zmenyRailBtn" title="Co je nového">🆕</button>
   </div>
 
   <div id="bottomSheet">
@@ -427,6 +434,10 @@
       <div class="panelContent" id="tab-profile">
         <div id="profileContent" class="empty-state">Načítám profil...</div>
       </div>
+      <div class="panelContent" id="tab-zmeny">
+        <div id="zmenyContent" class="empty-state">Načítám...</div>
+      </div>
+
       <div class="panelContent" id="tab-news">
         <div id="newsContent" class="empty-state">Načítám noviny...</div>
       </div>
@@ -592,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '5.5';
+const APP_VERSION = '5.7';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -5626,7 +5637,7 @@ function tickVnitrni(){
   if(ja){
     Object.values(world.businesses).forEach(biz => {
       const pct = biz.owners?.[ja.name] || 0;
-      if(pct > 0) pricti(ja, 'firmy', biz.hourlyYield * inflationMult() * (pct/100) * hoursElapsed);
+      if(pct > 0) pricti(ja, 'firmy', bizYieldPerHour(biz) * inflationMult() * (pct/100) * hoursElapsed);
     });
   }
 
@@ -8136,7 +8147,7 @@ function financeBreakdown(name){
   let bizIncome = 0;
   Object.values(world.businesses).forEach(b => {
     const pct = b.owners?.[name]||0;
-    if(pct>0) bizIncome += b.hourlyYield * inflationMult() * (pct/100) * 24;
+    if(pct>0) bizIncome += bizYieldPerDay(b) * inflationMult() * (pct/100);
   });
   if(bizIncome>0) income.push({label:'📈 Výnos z podniků', amount: bizIncome});
   // spoření úrok
@@ -8216,7 +8227,7 @@ function financeBreakdown(name){
   });
   Object.values(world.businesses).forEach(b=>{
     const pct=b.owners[name]||0; if(pct<=0) return;
-    assets.push({label:b.name, value: pricePerPercent(b)*pct, dayFlow: b.hourlyYield*inflationMult()*(pct/100)*24});
+    assets.push({label:b.name, value: pricePerPercent(b)*pct, dayFlow: bizYieldPerDay(b)*inflationMult()*(pct/100)});
   });
   (u.loans||[]).forEach(l=>{ liabilities.push({label:'Půjčka', value:-l.balance, dayFlow:-l.balance*l.dailyRate}); });
 
@@ -9708,7 +9719,7 @@ function adminPlayerDetail(name){
   let tf = firmy.length ? '' : r('stav', 'žádné');
   firmy.forEach(b => {
     const podil = b.owners[name] || 0;
-    tf += r(escapeHtml(b.name), podil.toFixed(1) + ' % · ' + kc(b.hourlyYield*podil/100*24) + ' Kč/den · hodnota podílu ' + kc(b.totalValue*podil/100) + ' Kč');
+    tf += r(escapeHtml(b.name), podil.toFixed(1) + ' % · ' + kc(bizYieldPerDay(b)*podil/100) + ' Kč/den · hodnota podílu ' + kc(b.totalValue*podil/100) + ' Kč');
   });
   h += sekce('📈 Podniky (' + firmy.length + ')', tf);
 
@@ -10528,6 +10539,96 @@ function renderDenik(el){
     <p style="color:var(--muted)">Drží se posledních ${DENIK_MAX} akcí a ${SOUHRNU_MAX} dnů.</p>
   `);
   el.innerHTML = html;
+}
+
+// ===== CO JE NOVÉHO =====
+// Seznam změn pro hráče. Přidávej NAHORU jako nový záznam. Formát:
+//   { verze:'5.7', datum:'2026-08-28', body:[ ['typ','text'], ... ] }
+// Typy: 'oprava' 🔧 · 'novinka' ✨ · 'zmena' ⚖️ (úprava pravidel) · 'info' ℹ️
+// Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
+// jestli hráč běží na aktuální verzi.
+const ZMENY = [
+  { verze:'5.7', datum:'2026-08-28', body:[
+    ['novinka','Přibyl tenhle přehled změn (🆕 vlevo). Uvidíš tu, co jsme opravili a co je nového.'],
+  ]},
+  { verze:'5.6', datum:'2026-08-28', body:[
+    ['zmena','Firmy vydělávají méně než dřív. Byly pětkrát výhodnější než domy, teď jsou zhruba 1,5× — investice do nemovitostí má zase smysl.'],
+    ['zmena','Menší firmy nesou na každou vloženou korunu o něco víc než ty velké.'],
+    ['oprava','Ve finančním přehledu nesouhlasil součet domů s položkou „V majetku“. Obojí teď počítá stejnou cenu.'],
+  ]},
+  { verze:'5.4', datum:'2026-08-28', body:[
+    ['novinka','U zůstatku nahoře je vidět, kolik se dnes nasčítalo k půlnoční výplatě.'],
+    ['novinka','Po klepnutí na zůstatek se rozepíše dnešek: co už máš na účtu a co přijde o půlnoci.'],
+    ['oprava','Denní rozpočet ukazoval u půjček jen úrok místo celé splátky. Rezerva „vydržíš X dní“ tak byla několikanásobně optimističtější, než jaká byla doopravdy.'],
+  ]},
+  { verze:'5.0', datum:'2026-08-27', body:[
+    ['zmena','Nájem, výnos z firem a solár se připisují najednou o půlnoci jako vyúčtování, ne po haléřích během dne. Plat, balíky a odměny za úkoly chodí dál hned.'],
+    ['oprava','Peníze z nájmu a firem chodily jen zlomkem, když hrál někdo další. Každý hráč má teď vlastní výpočet a dostane vše, co mu náleží.'],
+  ]},
+  { verze:'4.8', datum:'2026-08-26', body:[
+    ['novinka','Přibyl osobní deník (📔 vlevo) — co jsi kdy udělal a souhrn každého dne.'],
+    ['novinka','Práce u firem po celém městě, ne jen na radnici. Nastupuje se i pracuje přímo na místě.'],
+    ['novinka','Doporučené domy ukazují směr, orientační bod a tlačítko „Ukázat na mapě“.'],
+    ['novinka','Lokální události — rekonstrukce ulice, nový park, havárie vody. Týkají se jen části města a jsou na mapě vyznačené kruhem.'],
+  ]},
+  { verze:'4.0', datum:'2026-08-25', body:[
+    ['oprava','Hráči přicházeli o práci a museli nastupovat znovu. Počet míst teď omezuje jen nábor, ne zaměstnání.'],
+    ['oprava','Denní úkoly se ráno samy označily za splněné a vyplatily odměnu za nic.'],
+    ['oprava','Vylepšení domů (klimatizace, solár) mizela při synchronizaci i s penězi za ně.'],
+    ['oprava','Nájemníci byli vyhazováni s hláškou, že v bytě bydlí majitel.'],
+  ]},
+];
+
+function renderZmeny(){
+  const el = document.getElementById('zmenyContent');
+  if(!el) return;
+  const ikony = { oprava:'🔧', novinka:'✨', zmena:'⚖️', info:'ℹ️' };
+  const nazvy  = { oprava:'Opraveno', novinka:'Novinka', zmena:'Změna pravidel', info:'Info' };
+  const barvy  = { oprava:'var(--accent2)', novinka:'var(--accent)', zmena:'var(--gold)', info:'var(--muted)' };
+
+  let html = `<p style="font-size:0.88em;color:var(--muted);margin-bottom:10px;">Co se ve hře změnilo. Když něco nefunguje nebo tě něco napadne, napiš do chatu — spousta věcí tady vznikla přesně tak.</p>`;
+
+  html += ZMENY.map((z, i) => {
+    const aktualni = z.verze === APP_VERSION;
+    return `<div class="card" style="${i === 0 ? 'border-left:3px solid var(--accent);' : ''}">
+      <h3 style="margin-bottom:2px;">Verze ${z.verze}
+        ${aktualni ? '<span class="badge badge-res">hraješ tuhle</span>' : ''}</h3>
+      <p style="font-size:0.82em;color:var(--muted);margin:0 0 6px;">${datumCesky(z.datum)}</p>
+      ${z.body.map(([typ, text]) => `
+        <p style="margin:5px 0;font-size:0.92em;">
+          <span style="color:${barvy[typ] || 'var(--muted)'};">${ikony[typ] || '•'} ${nazvy[typ] || ''}:</span>
+          ${escapeHtml(text)}</p>`).join('')}
+    </div>`;
+  }).join('');
+
+  // Kdyby hráč běžel na starší verzi, ať to pozná — jinak hlásí chyby, které jsou dávno opravené.
+  if(!ZMENY.some(z => z.verze === APP_VERSION)){
+    html = `<div class="card" style="border-left:3px solid var(--gold);">
+      <p style="margin:0;">Hraješ verzi <b>${APP_VERSION}</b>, která tu ještě není popsaná — nebo máš starší verzi uloženou v telefonu.
+      Zkus appku zavřít a znovu otevřít.</p></div>` + html;
+  }
+  el.innerHTML = html;
+}
+
+// Ukáže tečku u ikony, když hráč ještě neviděl novinky k aktuální verzi.
+function oznacNoveZmeny(){
+  const btn = document.getElementById('zmenyRailBtn');
+  if(!btn) return;
+  let videno = null;
+  try { videno = localStorage.getItem('bucpoly_zmeny_videno'); } catch(e){}
+  const stara = btn.querySelector('.tecka');
+  if(videno === APP_VERSION){ if(stara) stara.remove(); return; }
+  if(!stara){
+    const t = document.createElement('span');
+    t.className = 'tecka';
+    btn.appendChild(t);
+  }
+}
+
+function datumCesky(iso){
+  const [r, m, d] = String(iso).split('-');
+  const mesice = ['ledna','února','března','dubna','května','června','července','srpna','září','října','listopadu','prosince'];
+  return `${parseInt(d, 10)}. ${mesice[parseInt(m, 10) - 1] || ''} ${r}`;
 }
 
 function renderNews(){
@@ -11793,6 +11894,29 @@ function workShift(jobId){
 function soldPct(biz){ return Object.values(biz.owners).reduce((s,v)=>s+v, 0); }
 function pricePerPercent(biz){ return biz.totalValue / 100; }
 
+// ===== VÝNOS PODNIKŮ =====
+// Původní `hourlyYield` v datech dával všem firmám návratnost 75 dní, zatímco domy
+// se vracely za 384. Firmy tak byly pětkrát výhodnější — a to je v realitní hře špatně,
+// protože jakmile na ně hráč nastřádal, domy ztratily smysl.
+// Firmy mají vydělávat VÍC než domy — je to větší a dražší investice, ke které se hráč
+// musí propracovat. Jen ne pětkrát, jako dřív, protože pak nemá smysl kupovat domy vůbec.
+// Cílíme na návratnost kolem 250 dní proti ~384 u domů, tedy zhruba 1,5× lepší.
+// Reálně je ten rozdíl ještě o něco větší: dům chátrá, potřebuje opravy a nájemníci
+// se stěhují, kdežto firma jede pořád sama.
+const BUSINESS_YIELD_MULT = 0.28;      // 75 dní → zhruba 250 dní
+
+// Velké firmy vynášejí o něco hůř než malé — jinak by se vždycky vyplatilo dát všechno
+// do té největší a menší podniky by nikoho nezajímaly.
+const BIZ_REFERENCE_VALUE = 150000;
+function bizYieldPerHour(biz){
+  if(!biz) return 0;
+  const zaklad = (biz.hourlyYield || 0) * BUSINESS_YIELD_MULT;
+  const velikost = Math.max(1, biz.totalValue || BIZ_REFERENCE_VALUE);
+  const korekce = Math.pow(BIZ_REFERENCE_VALUE / velikost, 0.18);
+  return zaklad * Math.min(1.25, Math.max(0.75, korekce));
+}
+function bizYieldPerDay(biz){ return bizYieldPerHour(biz) * 24; }
+
 function businessPopupHtml(bizId){
   const biz = world.businesses[bizId];
   const sold = soldPct(biz);
@@ -11801,7 +11925,7 @@ function businessPopupHtml(bizId){
   return `<div style="font-size:1em;min-width:180px;">
     <b>${biz.emoji} ${escapeHtml(biz.name)}</b><br>
     <span style="color:#888">${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount})</span><br>
-    Cena za 1 %: <b>${Math.round(pricePerPercent(biz)).toLocaleString('cs-CZ')} Kč</b> (nese ${(biz.hourlyYield*inflationMult()*24/100).toFixed(1)} Kč/den)<br>
+    Cena za 1 %: <b>${Math.round(pricePerPercent(biz)).toLocaleString('cs-CZ')} Kč</b> (nese ${(bizYieldPerDay(biz)*inflationMult()/100).toFixed(1)} Kč/den)<br>
     Prodáno: ${sold.toFixed(1)} % (${ownerCount} vlastníků)<br>
     ${myPct>0 ? `Tvůj podíl: <b>${myPct.toFixed(1)} %</b><br>` : ''}
     <button style="margin-top:6px;" onclick="buyStake('${biz.id}')">Koupit podíl</button>
@@ -11811,28 +11935,30 @@ function businessPopupHtml(bizId){
 
 function renderBusinesses(){
   const el = document.getElementById('businessesContent');
-  const list = Object.values(world.businesses).sort((a,b)=>b.hourlyYield-a.hourlyYield);
+  const list = Object.values(world.businesses).sort((a,b)=>bizYieldPerDay(b)-bizYieldPerDay(a));
   let myTotalIncome = 0;
   if(currentUser){
     list.forEach(biz => {
       const pct = biz.owners[currentUser.name] || 0;
-      if(pct>0) myTotalIncome += biz.hourlyYield * (pct/100);
+      if(pct>0) myTotalIncome += bizYieldPerHour(biz) * (pct/100);
     });
   }
-  let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>`;
+  let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>
+    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům (zhruba <b>250 dní</b> proti <b>400</b>) a nic u něj neřešíš — nechátrá a nikdo se neodstěhuje. Zato je dražší a bydlet v něm nejde. <b>Menší firmy</b> nesou na každou korunu o něco víc než ty velké.</p>`;
   html += list.map(biz => {
     const sold = soldPct(biz);
     const myPct = currentUser ? (biz.owners[currentUser.name] || 0) : 0;
     const near = canInteract(biz.lat, biz.lng, INTERACTION_RADIUS);
     const per1Cost = Math.round(pricePerPercent(biz));
-    const per1Day = biz.hourlyYield * inflationMult() * 24 / 100; // co nese 1 % za den
+    const per1Day = bizYieldPerDay(biz) * inflationMult() / 100; // co nese 1 % za den
     const paybackDays = per1Day > 0 ? Math.round(per1Cost / per1Day) : 0; // za kolik dní se vrátí
     return `<div class="card">
       <h3>${biz.emoji} ${escapeHtml(biz.name)} ${myPct>0 ? '<span class="badge badge-res">tvůj podíl</span>':''}</h3>
       <p>${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount} recenzí)</p>
       <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
-      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> · prodáno ${sold.toFixed(0)} %</p>
-      ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → vydělává ti <b style="color:var(--accent)">${(biz.hourlyYield*inflationMult()*myPct/100*24).toFixed(1)} Kč/den</b></p>` : ''}
+      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> · prodáno ${sold.toFixed(0)} %${
+        biz.totalValue >= 300000 ? ' · <span title="U velkých firem je výnos na každou vloženou korunu o něco nižší než u malých.">velká firma</span>' : ''}</p>
+      ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → vydělává ti <b style="color:var(--accent)">${(bizYieldPerDay(biz)*inflationMult()*myPct/100).toFixed(1)} Kč/den</b></p>` : ''}
       ${distanceNoteHtml(biz.lat, biz.lng, INTERACTION_RADIUS)}
       <div class="row">
         <button ${near?'':'disabled'} onclick="buyStake('${biz.id}')">Koupit podíl</button>
@@ -11868,14 +11994,14 @@ async function buyStake(bizId){
   const available = 100 - soldPct(biz);
   if(available <= 0){ showAlert('Podnik je celý rozprodaný.'); return; }
   const per1 = Math.round(pricePerPercent(biz));
-  const per1DayInfo = (biz.hourlyYield*inflationMult()*24/100).toFixed(1);
+  const per1DayInfo = (bizYieldPerDay(biz)*inflationMult()/100).toFixed(1);
   const pct = parseFloat(await showPrompt(`Kolik % koupit? Volných ${available.toFixed(1)} %.\n1 % stojí ${per1.toLocaleString('cs-CZ')} Kč a nese ${per1DayInfo} Kč/den.`, Math.min(5, available)));
   if(isNaN(pct) || pct <= 0) return;
   if(pct > available){ showAlert(`Tolik volných % není — max ${available.toFixed(1)} %.`); return; }
   const cost = Math.round(pricePerPercent(biz) * pct);
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert('Nemáš dost peněz.'); return; }
-  const denne = biz.hourlyYield * inflationMult() * (pct/100) * 24;
+  const denne = bizYieldPerDay(biz) * inflationMult() * (pct/100);
   if(!(await showConfirm(
     `Koupit ${pct.toFixed(1)} % podniku ${biz.name}?\n\n` +
     `Zaplatíš: ${cost.toLocaleString('cs-CZ')} Kč\n` +
@@ -11898,7 +12024,7 @@ async function sellStake(bizId){
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct){ showAlert('Tolik nevlastníš.'); return; }
   const refund = Math.round(pricePerPercent(biz) * pct * BUSINESS_SELL_RATIO);
-  const ztrataDenne = biz.hourlyYield * inflationMult() * (pct/100) * 24;
+  const ztrataDenne = bizYieldPerDay(biz) * inflationMult() * (pct/100);
   if(!(await showConfirm(
     `Prodat ${pct.toFixed(1)} % podniku ${biz.name} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n` +
     `Přijdeš o příjem ${Math.round(ztrataDenne)} Kč/den.\n` +
@@ -12083,7 +12209,7 @@ function tryAutoLogin(){
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
 const SHEET_TITLES = {
   selected:'Vybraný dům', mine:'Moje nemovitosti',
-  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy'
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy', zmeny:'🆕 Co je nového'
 };
 
 function openSheet(tabName){
@@ -12105,6 +12231,12 @@ function openSheet(tabName){
   document.getElementById('bottomSheet').classList.add('open');
   const sheetBody = document.getElementById('sheetBody');
   if(sheetBody) sheetBody.scrollTop = 0;   // nový panel začíná odshora
+  if(tabName === 'zmeny'){
+    renderZmeny();
+    // Přečteno — tečku u ikony schováme, dokud nepřijde další verze.
+    try { localStorage.setItem('bucpoly_zmeny_videno', APP_VERSION); } catch(e){}
+    oznacNoveZmeny();
+  }
   if(tabName === 'mine') renderMine();
   if(tabName === 'jobs') renderJobs();
   if(tabName === 'businesses') renderBusinesses();
@@ -12223,6 +12355,7 @@ window.onload = async () => {
   loadAdminFlag();
   nastavZachytChyb();
   nastavOchranuProtiObnoveni();
+  safeCall(() => oznacNoveZmeny());
   loadNotifyFlag();
   initFirebaseSync();   // pak se na pozadí připojí ke sdílenému světu (multiplayer)
   if(tryAutoLogin()) obnovPosledniPanel();
