@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '5.8';
+const APP_VERSION = '5.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -9719,7 +9719,7 @@ function adminPlayerDetail(name){
   let tf = firmy.length ? '' : r('stav', 'žádné');
   firmy.forEach(b => {
     const podil = b.owners[name] || 0;
-    tf += r(escapeHtml(b.name), podil.toFixed(1) + ' % · ' + kc(bizYieldPerDay(b)*podil/100) + ' Kč/den · hodnota podílu ' + kc(b.totalValue*podil/100) + ' Kč');
+    tf += r(escapeHtml(b.name), podil.toFixed(1) + ' % · ' + kc(bizYieldPerDay(b)*podil/100) + ' Kč/den · hodnota podílu ' + kc(bizTotalValue(b)*podil/100) + ' Kč');
   });
   h += sekce('📈 Podniky (' + firmy.length + ')', tf);
 
@@ -10548,15 +10548,20 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'5.9', datum:'2026-08-28', body:[
+    ['zmena','Firmy vydělávají jako na začátku — plný výnos je zpátky. Zdražil ale podíl: za stejné peníze koupíš zhruba polovinu procent než dřív.'],
+    ['info','Komu firma patřila už předtím, tomu se nic nesnížilo. Naopak — denní příjem má zpátky v plné výši a hodnota jeho podílu se zdvojnásobila.'],
+    ['info','Protože podíly ve firmách teď mají vyšší hodnotu, poskočilo čisté jmění a přeskládal se žebříček. Není to chyba, jen jednorázový přepočet.'],
+    ['info','Podíl ve firmě se vrátí zhruba za 140 dní, dům za 400. Menší podniky nesou na každou korunu o něco víc než ty velké.'],
+  ]},
   { verze:'5.8', datum:'2026-08-28', body:[
-    ['zmena','Firmy vydělávají zase víc. Minulá úprava je stáhla moc dolů — teď se podíl vrátí zhruba za 150 dní místo 250. Proti domům (~400 dní) je to skoro trojnásobek.'],
+    ['info','Ladili jsme výnos firem — ve verzi 5.6 byl stažený moc nízko, tady se vracel nahoru. Konečnou podobu má od verze 5.9.'],
   ]},
   { verze:'5.7', datum:'2026-08-28', body:[
     ['novinka','Přibyl tenhle přehled změn (🆕 vlevo). Uvidíš tu, co jsme opravili a co je nového.'],
   ]},
   { verze:'5.6', datum:'2026-08-28', body:[
-    ['zmena','Firmy vydělávají méně než dřív. Byly pětkrát výhodnější než domy, teď jsou zhruba 1,5× — investice do nemovitostí má zase smysl.'],
-    ['zmena','Menší firmy nesou na každou vloženou korunu o něco víc než ty velké.'],
+    ['zmena','Menší firmy nesou na každou vloženou korunu o něco víc než ty velké — aby se nevyplatilo dát všechno jen do té největší.'],
     ['oprava','Ve finančním přehledu nesouhlasil součet domů s položkou „V majetku“. Obojí teď počítá stejnou cenu.'],
   ]},
   { verze:'5.4', datum:'2026-08-28', body:[
@@ -11895,7 +11900,15 @@ function workShift(jobId){
 // ===== PODNIKY (frakční vlastnictví) =====
 
 function soldPct(biz){ return Object.values(biz.owners).reduce((s,v)=>s+v, 0); }
-function pricePerPercent(biz){ return biz.totalValue / 100; }
+// Podíl ve firmě je DRAŽŠÍ, než říkají surová data. Výnos zůstal původní (firmy mají
+// vydělávat pořádně), ale za stejné peníze koupíš míň procent — a tím se srovná
+// návratnost, aniž bychom museli sahat na příjem.
+// Návratnost = cena ÷ výnos, takže dvojnásobná cena = dvojnásobná návratnost:
+//   75 dní × 2 = 150 dní (domy mají ~400).
+const BUSINESS_PRICE_MULT = 2.0;
+function bizTotalValue(biz){ return (biz && biz.totalValue || 0) * BUSINESS_PRICE_MULT; }
+
+function pricePerPercent(biz){ return bizTotalValue(biz) / 100; }
 
 // ===== VÝNOS PODNIKŮ =====
 // Původní `hourlyYield` v datech dával všem firmám návratnost 75 dní, zatímco domy
@@ -11903,18 +11916,18 @@ function pricePerPercent(biz){ return biz.totalValue / 100; }
 // protože jakmile na ně hráč nastřádal, domy ztratily smysl.
 // Firmy mají vydělávat VÍC než domy — je to větší a dražší investice, ke které se hráč
 // musí propracovat. Jen ne pětkrát, jako dřív, protože pak nemá smysl kupovat domy vůbec.
-// Verze 5.6 to stáhla na 250 dní a hráčům to přišlo málo — firma za statisíce má být
-// znát. Cílíme proto na ~150 dní proti ~400 u domů, tedy zhruba 2,7× lepší.
-// Pořád je to daleko od původních 75 dní, kdy se domy nevyplatilo kupovat vůbec.
-const BUSINESS_YIELD_MULT = 0.5;       // 75 dní → zhruba 150 dní
+// Původně se firmy vracely za 75 dní a domy za 400 — firmy byly tak výhodné, že domy
+// ztratily smysl. Řešíme to CENOU, ne příjmem: výnos zůstává plný (velká investice má být
+// znát na denních číslech), ale podíl stojí dvojnásobek, takže návratnost vyjde ~150 dní.
+const BUSINESS_YIELD_MULT = 1.0;       // výnos zůstává původní — brzdou je cena, ne příjem
 
 // Velké firmy vynášejí o něco hůř než malé — jinak by se vždycky vyplatilo dát všechno
 // do té největší a menší podniky by nikoho nezajímaly.
-const BIZ_REFERENCE_VALUE = 150000;
+const BIZ_REFERENCE_VALUE = 300000;   // po zdražení odpovídá dřívějším 150 tis.
 function bizYieldPerHour(biz){
   if(!biz) return 0;
   const zaklad = (biz.hourlyYield || 0) * BUSINESS_YIELD_MULT;
-  const velikost = Math.max(1, biz.totalValue || BIZ_REFERENCE_VALUE);
+  const velikost = Math.max(1, bizTotalValue(biz) || BIZ_REFERENCE_VALUE);
   const korekce = Math.pow(BIZ_REFERENCE_VALUE / velikost, 0.18);
   return zaklad * Math.min(1.25, Math.max(0.75, korekce));
 }
@@ -11947,7 +11960,7 @@ function renderBusinesses(){
     });
   }
   let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>
-    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům (zhruba <b>150 dní</b> proti <b>400</b>) a nic u něj neřešíš — nechátrá a nikdo se neodstěhuje. Zato je dražší a bydlet v něm nejde. <b>Menší firmy</b> nesou na každou korunu o něco víc než ty velké.</p>`;
+    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům — vrátí se zhruba za <b>150 dní</b> proti <b>400</b> u domu — a nic u něj neřešíš: nechátrá, nepotřebuje opravy a nikdo se neodstěhuje. Zato je drahý a bydlet v něm nejde. <b>Menší podniky</b> nesou na každou vloženou korunu o něco víc než ty velké.</p>`;
   html += list.map(biz => {
     const sold = soldPct(biz);
     const myPct = currentUser ? (biz.owners[currentUser.name] || 0) : 0;
@@ -11960,7 +11973,7 @@ function renderBusinesses(){
       <p>${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount} recenzí)</p>
       <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
       <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> · prodáno ${sold.toFixed(0)} %${
-        biz.totalValue >= 300000 ? ' · <span title="U velkých firem je výnos na každou vloženou korunu o něco nižší než u malých.">velká firma</span>' : ''}</p>
+        bizTotalValue(biz) >= 600000 ? ' · <span title="U velkých firem je výnos na každou vloženou korunu o něco nižší než u malých.">velká firma</span>' : ''}</p>
       ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → vydělává ti <b style="color:var(--accent)">${(bizYieldPerDay(biz)*inflationMult()*myPct/100).toFixed(1)} Kč/den</b></p>` : ''}
       ${distanceNoteHtml(biz.lat, biz.lng, INTERACTION_RADIUS)}
       <div class="row">
