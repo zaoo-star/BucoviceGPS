@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.1';
+const APP_VERSION = '6.2';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1258,7 +1258,7 @@ function flagSuspiciousMove(){
   if(u.gpsFlags >= CHEAT_FLAG_LIMIT && !u.walkBlocked){
     u.walkBlocked = true;
     saveWorld();
-    showAlert('⚠️ Poloha skáče nesmyslně rychle (doprava nebo falešná GPS). Odměny za chůzi jsou do konce dne pozastavené. Zítra se to samo obnoví.');
+    showAlert('⚠️ Poloha skáče nesmyslně rychle\n\nHra zaznamenala několik skoků, které se nedají ujít pěšky — typicky jízdu autem, vlakem nebo zapnutou falešnou polohu.\n\nOdměny za chůzi jsou do konce dne pozastavené. Všechno ostatní funguje dál: balíky, práce, nájem i nákupy.\n\nZítra se to samo obnoví. Pokud jsi nikam nejel, může za to nepřesná GPS ve městě — pomůže vyjít z budovy nebo chvíli počkat, počítadlo se poctivou chůzí samo snižuje.');
   }
 }
 // Poctivý krok → počítadlo podezření pomalu klesá (aby chybu GPS neodnesl slušný hráč).
@@ -7013,6 +7013,16 @@ function updateHeaderStats(){
     const status = housingStatus(currentUser.name);
     const dailyCost = dailyHousingCost(currentUser.name);
     const housingEl = document.getElementById('housingVal');
+
+    // Nováček neplatí za bydlení nic — ať to vidí bez ohledu na to, jestli už někde bydlí.
+    // Jinak ho po skončení lhůty překvapí, že mu najednou začaly ubývat peníze.
+    if(isNewbieProtected(u)){
+      const kde = status === 'owner' ? 'vlastní bydlení' : (status === 'tenant' ? 'v nájmu' : 'bez bydlení');
+      housingEl.textContent = `${kde} — 0 Kč/den, ochranná lhůta ještě ${newbieDaysLeft(u)} ${newbieDaysLeft(u)===1?'den':'dní'}`;
+      housingEl.parentElement.style.color = 'var(--gold)';
+      return;
+    }
+
     if(status === 'owner'){
       const slevaPct = Math.round(livingCostDiscountFromUpgrades(currentUser.name) * 100);
       housingEl.textContent = slevaPct > 0
@@ -7452,6 +7462,16 @@ function renderSelected(id){
       </div>`;
     });
   }
+
+  // Nad detailem domu visí tři řádky (lokalita, trh, zvýšený zájem) a nikde se nedalo
+  // zjistit, co znamenají — hlavně jestli mají vliv na cenu, nebo je to jen popisek.
+  html += infoBox('Co ovlivňuje cenu domu?', `
+    <p><b>${popInfo.stars} Lokalita</b> — kolik podílů se v tomhle okolí za celou dobu koupilo. Je to jen <b>ukazatel zájmu ostatních</b>, na cenu vliv nemá. Hvězdičky přibývají a nikdy neubývají.</p>
+    <p><b>📊 Trh (${cyc.label})</b> — nálada v celém městě. Střídá se sama a hýbe cenami všech domů (teď ×${marketMultiplier().toFixed(2)}). V recesi se levněji nakupuje, v konjunktuře dráž prodává.</p>
+    <p><b>🔥 Zvýšený zájem</b> — když někdo koupí podíl poblíž, okolní domy krátce podraží. Bez dalších nákupů to samo odezní.</p>
+    <p><b>🚧 Lokální událost</b> — rekonstrukce, nový park nebo havárie. Platí jen dnes a jen v okruhu, který je vyznačený na mapě.</p>
+    <div class="ex">Trvalý základ ceny mění jen <b>skutečné prodeje</b>: co se za dům reálně zaplatí, posune jeho hodnotu. Zbytek jsou dočasné vlivy.</div>
+  `);
 
   html += infoBox('Jak funguje pronájem a čekání na nájemníka?', `
     <p><b>Byt buď někdo obývá, nebo ne.</b> Žádné poloviny: když máš nájemníka, platí ti <b>celý nájem každý den</b>. Když je byt prázdný, nevydělává <b>nic</b>.</p>
@@ -10577,6 +10597,11 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'6.2', datum:'2026-08-29', body:[
+    ['novinka','V detailu domu je nová nápověda „Co ovlivňuje cenu domu?“ — hvězdičky lokality, tržní cyklus, zvýšený zájem i lokální události. Konečně je jasné, co cenu opravdu mění a co je jen ukazatel.'],
+    ['novinka','Nováčci vidí v hlavičce, že jsou v ochranné lhůtě a kolik dní jim zbývá — ať je nepřekvapí, až začnou platit životní náklady.'],
+    ['info','Když se pozastaví odměny za chůzi kvůli skákající poloze, hra teď vysvětlí proč, co dál funguje a jak se to samo srovná.'],
+  ]},
   { verze:'6.1', datum:'2026-08-29', body:[
     ['novinka','U domu je teď rovnou vidět, kolik ti bude chodit při TVÉM podílu — nemusíš násobit „Kč na procento“ sám.'],
     ['novinka','Tlačítko „Koupit na hypotéku“ vysvětluje, co udělá: kolik dáš hned, kolik půjčí banka a jaká bude denní splátka.'],
