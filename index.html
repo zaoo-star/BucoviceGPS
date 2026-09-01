@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.0';
+const APP_VERSION = '6.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -7194,8 +7194,24 @@ function renderSelected(id){
     }</p>`;
   }
   if(free > 0) html += `<button ${near?'':'disabled'} onclick="buyHouseStake('${p.id}')">Koupit podíl${near?'':' (musíš být u domu)'}</button>`;
-  if(free > 0 && currentUser) html += `<button class="secondary" ${near?'':'disabled'} onclick="buyHouseStakeOnMortgage('${p.id}')">🏦 Na hypotéku (${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % předem)</button>`;
+  if(free > 0 && currentUser) html += `<button class="secondary" ${near?'':'disabled'} onclick="buyHouseStakeOnMortgage('${p.id}')">🏦 Koupit na hypotéku${near?'':' (musíš být u domu)'}</button>`;
   html += `</div>`;
+
+  // Hypotéka se dřív jmenovala jen „Na hypotéku (20 % předem)" a hráči netušili, co udělá.
+  // Ukážeme rovnou čísla TOHOHLE domu na příkladu 10 %, ať je vidět, kolik dá člověk z kapsy.
+  if(free > 0 && currentUser){
+    const ukazkaPct = Math.min(10, free);
+    const cenaUkazka = houseMarketPricePerPercent(p) * ukazkaPct;
+    const akontace = Math.round(cenaUkazka * MORTGAGE_DOWNPAYMENT_RATIO);
+    const uver = Math.round(cenaUkazka - akontace);
+    const splatka = Math.round(uver * MORTGAGE_MIN_PAYMENT_RATIO);
+    html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
+      🏦 <b>Hypotéka</b> = zaplatíš jen ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny, zbytek půjčí banka za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně
+      (běžná půjčka stojí ${Math.round(LOAN_ANNUAL_RATE*100)} %). Dům jí ručí, proto je levnější.<br>
+      Třeba ${ukazkaPct.toFixed(0)} % tohoto domu: dáš <b>${akontace.toLocaleString('cs-CZ')} Kč</b> hned,
+      banka půjčí ${uver.toLocaleString('cs-CZ')} Kč a strhává si ~${splatka} Kč denně.
+      Když přestaneš splácet, vezme si zpátky <b>právě tenhle podíl</b>.</p>`;
+  }
   // Návratnost: bez ní hráč nemá jak poznat, jestli je dům dobrá koupě. Cena za procento
   // se totiž mezi domy liší víc než nájem, takže levnější dům bývá lepší investice.
   if(free > 0){
@@ -7209,10 +7225,23 @@ function renderSelected(id){
     if(cisty > 0){
       const dni = Math.round(cenaZaProcento / cisty);
       const rocne = Math.round(cisty * DAYS_PER_YEAR / cenaZaProcento * 100);
+      // Když je nastavený nájem nad férovou cenou, tahle čísla platí jen do chvíle, než se
+      // nájemníci odstěhují. Bez upozornění to vypadá jako zaručený výnos 279 % ročně.
+      const ferovy = fairRentForHouse(p) * Math.max(1, asArray(p.units).length || p.levels || 1);
+      const prestreleno = p.useType === 'rental' && najemDenne > ferovy * 1.1;
+      // Hráči si museli sami násobit „Kč na procento × můj podíl". Spočítáme to za ně —
+      // a u toho, kdo v domě ještě nic nemá, ukážeme příklad na 10 %.
+      const mujTok = myPct > 0 ? cisty * myPct : null;
       html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
         📈 Za plně obsazený dům: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
-        Zaplatí se za <b>${dni} dní</b> — to je ${rocne} % ročně.
-        ${p.useType !== 'rental' ? ' <i>Platí, až dům předěláš na pronájem.</i>' : ''}</p>`;
+        ${mujTok !== null
+          ? `Při tvých <b>${myPct.toFixed(1)} %</b> to je <b style="color:var(--accent)">${Math.round(mujTok)} Kč/den</b> pro tebe.`
+          : `Za ${Math.min(10, free).toFixed(0)} % by ti chodilo <b style="color:var(--accent)">${Math.round(cisty * Math.min(10, free))} Kč/den</b>.`}
+        Podíl se zaplatí za <b>${dni} dní</b> — to je ${rocne} % ročně.
+        ${p.useType !== 'rental' ? ' <i>Platí, až dům předěláš na pronájem.</i>' : ''}</p>
+        ${prestreleno ? `<p style="font-size:0.85em;color:var(--orange);margin:2px 0 0 0;">
+          ⚠️ Počítáno z nastaveného nájmu ${Math.round(najemDenne)} Kč/den, což je nad férovou cenou
+          (${Math.round(ferovy)} Kč). Za tuhle cenu budou byty část času prázdné, takže skutečný výnos bude nižší.</p>` : ''}`;
     }
   }
   html += `<div class="row">`;
@@ -10548,6 +10577,11 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'6.1', datum:'2026-08-29', body:[
+    ['novinka','U domu je teď rovnou vidět, kolik ti bude chodit při TVÉM podílu — nemusíš násobit „Kč na procento“ sám.'],
+    ['novinka','Tlačítko „Koupit na hypotéku“ vysvětluje, co udělá: kolik dáš hned, kolik půjčí banka a jaká bude denní splátka.'],
+    ['info','Když máš nastavený nájem nad férovou cenou, hra u výnosu upozorní, že byty budou část času prázdné a skutečný výnos bude nižší.'],
+  ]},
   { verze:'6.0', datum:'2026-08-29', body:[
     ['zmena','Všechny firmy zase vydělávají stejně vzhledem k ceně — malý podnik i velká firma se vrátí za stejnou dobu. Krátce tu byla výhoda pro menší podniky, ale působila obráceně, než by člověk čekal.'],
   ]},
