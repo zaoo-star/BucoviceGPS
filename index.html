@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.2';
+const APP_VERSION = '6.4';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -903,6 +903,30 @@ function npcNeedsText(npc){
   (npc.needs||[]).forEach(n => { if(HOUSE_UPGRADES[n]) parts.push(HOUSE_UPGRADES[n].icon + ' ' + HOUSE_UPGRADES[n].name); });
   return 'Požaduje: ' + parts.join(', ');
 }
+// Co dané vylepšení tomuhle domu konkrétně přinese. Popisky říkaly jen „vydělává ti každý
+// den" — hráč pak nevěděl, jestli se 912 Kč vrátí za měsíc, nebo za rok.
+function upgradePrinos(p, key){
+  const cena = houseUpgradeCost(p, key);
+  const bytu = Math.max(1, asArray(p.units).length || p.levels || 1);
+  const bydlimTu = asArray(p.units).some(u => u && u.ownerOccupied) || p.useType === 'residence';
+
+  if(key === 'solar'){
+    // Solár nese peníze u každého domu, i prázdného, a k tomu sráží účty za bydlení.
+    const denne = fairRentForHouse(p) * SOLAR_RENT_RATIO * bytu;
+    const usporа = bydlimTu ? LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) * SOLAR_LIVING_SAVE : 0;
+    const celkem = denne + usporа;
+    return { denne: celkem, dni: celkem > 0 ? Math.round(cena / celkem) : null,
+      popis: `vydělá ${denne.toFixed(1)} Kč/den${usporа > 0 ? ` a ušetří ${usporа.toFixed(1)} Kč/den na účtech` : ''}` };
+  }
+  if(key === 'insulation' || key === 'ac'){
+    const podil = key === 'insulation' ? INSULATION_LIVING_SAVE : AC_LIVING_SAVE;
+    const usporа = bydlimTu ? LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) * podil : 0;
+    return { denne: usporа, dni: usporа > 0 ? Math.round(cena / usporа) : null,
+      popis: usporа > 0 ? `ušetří ${usporа.toFixed(1)} Kč/den na účtech` : 'sníží účty, až v domě budeš bydlet' };
+  }
+  return { denne: 0, dni: null, popis: '' };
+}
+
 function houseUpgradeCost(p, key){ return Math.round(effectiveHousePrice(p) * HOUSE_UPGRADES[key].costRatio); }
 // Solární bonus za celý dům/den (nezávisí na obsazenosti)
 function solarBonusForHouse(p){
@@ -5423,9 +5447,14 @@ function uzavriDen(u, denKtery){
   // Zápis do deníku a upozornění — ať výplata nezůstane bez povšimnutí.
   const cistej = Math.round(kVyplate - kStrzeni);
   if(Math.abs(cistej) >= 1 && currentUser && u.name === currentUser.name){
+    // Zápis musí patřit ke stejnému dni jako souhrn. `zapisDoDeniku` bere `world.day`,
+    // jenže ten už je posunutý na nový den — zápis se pak v deníku objevil o den výš
+    // než souhrn, ke kterému patří.
     zapisDoDeniku('payout', cistej >= 0
       ? `Denní vyúčtování — nájem, firmy a solár minus účty`
       : `Denní vyúčtování — účty byly vyšší než příjem`, cistej);
+    const zapis = asArray(u.denik)[0];
+    if(zapis) zapis.den = denKtery;
     notifyPlayer('Denní vyúčtování',
       `${cistej >= 0 ? 'Přišlo ti ' : 'Strhlo se ti '}${Math.abs(cistej).toLocaleString('cs-CZ')} Kč za den ${denKtery}.`);
   }
@@ -7224,7 +7253,9 @@ function renderSelected(id){
   }
   // Návratnost: bez ní hráč nemá jak poznat, jestli je dům dobrá koupě. Cena za procento
   // se totiž mezi domy liší víc než nájem, takže levnější dům bývá lepší investice.
-  if(free > 0){
+  // POZOR: dřív se to ukazovalo jen tam, kde zbývaly volné podíly (`free > 0`) — kdo dům
+  // vlastnil celý, neviděl u něj výnos vůbec. Přitom to zajímá právě jeho.
+  if(free > 0 || myPct > 0){
     const cenaZaProcento = houseMarketPricePerPercent(p);
     const najemDenne = (p.useType === 'rental' && p.units && p.units.length)
       ? asArray(p.units).reduce((s2, un) => s2 + ((un && un.condition > 0) ? (un.rentPrice || 0) : 0), 0)
@@ -7246,7 +7277,9 @@ function renderSelected(id){
         📈 Za plně obsazený dům: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
         ${mujTok !== null
           ? `Při tvých <b>${myPct.toFixed(1)} %</b> to je <b style="color:var(--accent)">${Math.round(mujTok)} Kč/den</b> pro tebe.`
-          : `Za ${Math.min(10, free).toFixed(0)} % by ti chodilo <b style="color:var(--accent)">${Math.round(cisty * Math.min(10, free))} Kč/den</b>.`}
+          : (free > 0
+              ? `Za ${Math.min(10, free).toFixed(0)} % by ti chodilo <b style="color:var(--accent)">${Math.round(cisty * Math.min(10, free))} Kč/den</b>.`
+              : 'Dům je celý rozebraný — volné podíly tu nejsou.')}
         Podíl se zaplatí za <b>${dni} dní</b> — to je ${rocne} % ročně.
         ${p.useType !== 'rental' ? ' <i>Platí, až dům předěláš na pronájem.</i>' : ''}</p>
         ${prestreleno ? `<p style="font-size:0.85em;color:var(--orange);margin:2px 0 0 0;">
@@ -7321,6 +7354,17 @@ function renderSelected(id){
       html += `<div style="border:1px solid ${has?'var(--accent)':'var(--border)'};border-radius:8px;padding:8px;margin-top:6px;">
         <p style="margin:0;font-weight:600;color:${has?'var(--accent)':'var(--text)'}">${up.icon} ${up.name} ${has?'✓ máš':''}</p>
         <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${efekt}</p>
+        ${(() => {
+          // Konkrétní čísla pro TENHLE dům. Bez nich hráč nepozná, jestli se 912 Kč
+          // vrátí za měsíc, nebo za rok — a radši nekoupí nic.
+          if(has) return '';
+          const pr = upgradePrinos(p, k);
+          if(!pr || pr.denne <= 0.05) return pr && pr.popis
+            ? `<p style="margin:2px 0;font-size:0.85em;color:var(--muted)">U tohohle domu ${pr.popis}.</p>` : '';
+          return `<p style="margin:2px 0;font-size:0.85em;color:var(--accent);">
+            💡 U tohohle domu ${pr.popis} — dohromady <b>${pr.denne.toFixed(1)} Kč/den</b>${
+            pr.dni ? `, takže se vrátí za <b>${pr.dni} dní</b>` : ''}.</p>`;
+        })()}
         ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
       </div>`;
     });
@@ -10563,7 +10607,12 @@ function renderDenik(el){
       const prijem = sh.najem + sh.firmy + sh.solar + sh.mzdy + sh.akce;
       const vydaje = sh.naklady + sh.dane + sh.uroky;
       const bilance = prijem - vydaje;
-      const radek = (jm, v, barva) => v >= 1 ? `<p style="margin:1px 0;font-size:0.86em;color:var(--muted);">${jm}: <b style="color:${barva}">${v >= 0 ? '+' : ''}${v.toLocaleString('cs-CZ')} Kč</b></p>` : '';
+      // Výdaje se v souhrnu ukládají jako KLADNÁ čísla, takže se vypisovaly jako
+      // „Splátky: +605 Kč" — vypadalo to, že hráč vydělal, i když ho to stálo.
+      // Znaménko proto určujeme podle toho, jestli jde o příjem, ne podle hodnoty.
+      const radek = (jm, v, barva, vydaj) => v >= 1
+        ? `<p style="margin:1px 0;font-size:0.86em;color:var(--muted);">${jm}: <b style="color:${barva}">${vydaj ? '−' : '+'}${v.toLocaleString('cs-CZ')} Kč</b></p>`
+        : '';
       html += `<div class="card" style="border-left:3px solid var(--gold);padding:8px 10px;margin-bottom:6px;">
         <p style="margin:0 0 3px;font-weight:600;">📊 Souhrn dne ${sh.den}</p>
         ${radek('🏘️ Nájem', sh.najem, 'var(--accent)')}
@@ -10571,9 +10620,13 @@ function renderDenik(el){
         ${radek('☀️ Solár', sh.solar, 'var(--accent)')}
         ${radek('💼 Mzda', sh.mzdy, 'var(--accent)')}
         ${radek('🎯 Balíky a úkoly', sh.akce, 'var(--accent)')}
-        ${radek('🍞 Život a bydlení', sh.naklady, 'var(--danger)')}
-        ${radek('🏛️ Daně', sh.dane, 'var(--danger)')}
-        ${radek('🏦 Splátky', sh.uroky, 'var(--danger)')}
+        ${radek('🍞 Život a bydlení', sh.naklady, 'var(--danger)', true)}
+        ${radek('🏛️ Daně', sh.dane, 'var(--danger)', true)}
+        ${radek('🏦 Splátky', sh.uroky, 'var(--danger)', true)}
+        ${radek('🔑 Nájemné, které platím', sh.najemne || 0, 'var(--danger)', true)}
+        ${typeof sh.vyplaceno === 'number' ? `<p style="margin:3px 0 0;font-size:0.82em;color:var(--muted);">
+          Z toho o půlnoci ${sh.vyplaceno >= 0 ? 'přišlo' : 'odešlo'} <b>${sh.vyplaceno >= 0 ? '+' : '−'}${Math.abs(sh.vyplaceno).toLocaleString('cs-CZ')} Kč</b> —
+          zbytek (plat, balíky, úkoly) jsi dostal hned během dne.</p>` : ''}
         <p style="margin:4px 0 0;border-top:1px solid var(--border);padding-top:3px;font-size:0.92em;">
           Bilance dne: <b style="color:${bilance >= 0 ? 'var(--accent)' : 'var(--danger)'}">${bilance >= 0 ? '+' : ''}${Math.round(bilance).toLocaleString('cs-CZ')} Kč</b>
           · nachozeno <b>${(sh.metry/1000).toFixed(1).replace('.', ',')} km</b>
@@ -10597,6 +10650,15 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'6.4', datum:'2026-08-29', body:[
+    ['oprava','V souhrnu dne se výdaje ukazovaly s plusem („Splátky: +605 Kč“), takže to vypadalo jako příjem. Teď mají správně mínus.'],
+    ['oprava','Zápis „Denní vyúčtování“ se v deníku objevoval o den výš než souhrn, ke kterému patřil.'],
+    ['novinka','Souhrn dne teď rozlišuje, kolik se strhlo o půlnoci a kolik jsi dostal hned během dne.'],
+  ]},
+  { verze:'6.3', datum:'2026-08-29', body:[
+    ['oprava','Kdo vlastnil celý dům, neviděl u něj vůbec výnos ani návratnost — ukazovalo se to jen u domů, kde zbývaly volné podíly. Teď to vidí každý majitel.'],
+    ['novinka','U každého vylepšení je napsáno, co konkrétně přinese v TOMHLE domě: kolik Kč/den a za kolik dní se vrátí.'],
+  ]},
   { verze:'6.2', datum:'2026-08-29', body:[
     ['novinka','V detailu domu je nová nápověda „Co ovlivňuje cenu domu?“ — hvězdičky lokality, tržní cyklus, zvýšený zájem i lokální události. Konečně je jasné, co cenu opravdu mění a co je jen ukazatel.'],
     ['novinka','Nováčci vidí v hlavičce, že jsou v ochranné lhůtě a kolik dní jim zbývá — ať je nepřekvapí, až začnou platit životní náklady.'],
