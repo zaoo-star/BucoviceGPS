@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.4';
+const APP_VERSION = '6.5';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6986,7 +6986,14 @@ function refreshAll(){
   // Při překreslení respektovat, čí profil je zrovna otevřený — dřív se tu vždycky
   // vynutil ten VLASTNÍ, takže se prohlížený cizí profil při každé synchronizaci
   // (několikrát za minutu) sám přepnul zpátky na tebe.
-  safe(() => { const t=document.getElementById('tab-profile'); if(t && t.classList.contains('active') && currentUser) viewProfile(profileViewTarget || currentUser.name); });
+  // POZOR: tady se smí jen PŘEKRESLIT, ne otevírat. Dřív se volalo viewProfile(), které
+  // panel zároveň otevírá — a protože zavření nesundalo z panelu třídu `active`, každé
+  // překreslení (několikrát za minutu) profil znovu vytáhlo na obrazovku. Nešel zavřít.
+  safe(() => {
+    const t = document.getElementById('tab-profile');
+    const otevreno = document.getElementById('bottomSheet')?.classList.contains('open');
+    if(t && t.classList.contains('active') && otevreno && currentUser) renderProfile();
+  });
   safe(() => checkAchievements());
   // vrátit hráče tam, kde četl (chat si pozici řeší sám ve své funkci)
   if(sheet && scrollPred > 0) sheet.scrollTop = scrollPred;
@@ -10650,6 +10657,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'6.5', datum:'2026-08-29', body:[
+    ['oprava','Profil jiného hráče se po zavření sám znovu otevíral a nešel zavřít. Panel zůstával označený jako otevřený a každé obnovení dat ho vytáhlo zpátky.'],
+  ]},
   { verze:'6.4', datum:'2026-08-29', body:[
     ['oprava','V souhrnu dne se výdaje ukazovaly s plusem („Splátky: +605 Kč“), takže to vypadalo jako příjem. Teď mají správně mínus.'],
     ['oprava','Zápis „Denní vyúčtování“ se v deníku objevoval o den výš než souhrn, ke kterému patřil.'],
@@ -12395,6 +12405,10 @@ function closeSheet(){
   try { localStorage.removeItem('bucpoly_panel'); } catch(e){}
   document.getElementById('bottomSheet').classList.remove('open');
   document.querySelectorAll('.railBtn').forEach(b => b.classList.remove('active'));
+  // Zrušit i označení panelu — jinak zůstane „aktivní" i po zavření a překreslovací
+  // smyčky si myslí, že se na něj hráč pořád dívá.
+  document.querySelectorAll('.panelContent').forEach(p => p.classList.remove('active'));
+  profileViewTarget = null;   // příště se otevře můj vlastní profil, ne naposledy prohlížený
 }
 
 document.querySelectorAll('.railBtn').forEach(btn => {
