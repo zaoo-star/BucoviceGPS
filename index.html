@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.8';
+const APP_VERSION = '6.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6357,7 +6357,7 @@ async function encounterKupec(enc, u){
   const kde = orientacniBod(p);
   const d = playerPos ? haversine(playerPos, {lat:p.lat, lng:p.lng}) : null;
   const bytu = asArray(p.units).length;
-  const obsazenych = asArray(p.units).filter(x => x && (x.tenant || x.npc)).length;
+  const obsazenych = asArray(p.units).filter(x => x && (x.tenant || x.npc || x.ownerOccupied)).length;
   const vylepseni = Object.keys(p.upgrades || {}).length;
 
   let popis = `🏠 Dům ${p.id.replace('h_','#')}`;
@@ -7629,10 +7629,22 @@ function renderMine(){
       ${p.useType==='rental' && p.units ? (() => {
         const byty = asArray(p.units);
         const obsazene = byty.filter(u => u && (u.tenant || u.npc));
+        const mojeByty = byty.filter(u => u && u.ownerOccupied);
         const vydelava = obsazene.reduce((s,u) => s + (u.rentPrice||0), 0);
         const prazdne = byty.filter(u => u && !u.tenant && !u.npc && !u.ownerOccupied && (u.condition||0) > 0).length;
         const rozbite = byty.filter(u => u && (u.condition||0) <= 40).length;
-        let radky = `<p>${byty.length} ${byty.length===1?'byt':'bytů'} · obsazeno ${obsazene.length} · vyděláváš <b style="color:var(--gold)">${vydelava} Kč/den</b></p>`;
+        // Byt, ve kterém bydlí sám majitel, se dřív počítal jako PRÁZDNÝ — hráči to četli
+        // jako „nikdo tam nebydlí, proto nic nevydělává". Bydlí tam, jen sám sobě nájem
+        // neplatí. Uvádíme to proto zvlášť.
+        const obsazenoCelkem = obsazene.length + mojeByty.length;
+        let radky = `<p>${byty.length} ${byty.length===1?'byt':'bytů'} · obsazeno ${obsazenoCelkem}${
+          mojeByty.length ? ` <span style="color:var(--accent)">(z toho ${mojeByty.length===1?'1 tvůj':mojeByty.length+' tvoje'})</span>` : ''
+        } · vyděláváš <b style="color:var(--gold)">${vydelava} Kč/den</b></p>`;
+        if(mojeByty.length){
+          const usetri = Math.round(LIVING_COST - dailyHousingCost(currentUser.name));
+          radky += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🏠 V ${mojeByty.length===1?'jednom bytě':'bytech'} bydlíš ty — sám sobě nájem neplatíš, proto z ${mojeByty.length===1?'něj':'nich'} nic nechodí.${
+            usetri > 0 ? ` Šetříš ale <b>${usetri} Kč/den</b> na životních nákladech.` : ''}</p>`;
+        }
         if(prazdne > 0) radky += `<p style="font-size:0.88em;color:var(--orange);margin:2px 0;">⚠️ ${prazdne} ${prazdne===1?'byt stojí prázdný':'bytů stojí prázdných'} — zvaž nižší nájem</p>`;
         if(rozbite > 0) radky += `<p style="font-size:0.88em;color:var(--danger);margin:2px 0;">🔧 ${rozbite} ${rozbite===1?'byt potřebuje opravit':'bytů potřebuje opravit'}</p>`;
         return radky;
@@ -10682,6 +10694,10 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'6.9', datum:'2026-09-08', body:[
+    ['oprava','Byt, ve kterém bydlíš ty sám, se počítal jako prázdný — vypadalo to, že v domě nikdo nebydlí. Teď se počítá jako obsazený a je označený jako tvůj.'],
+    ['info','Z bytu, ve kterém bydlíš, ti nechodí nájem (sám sobě ho neplatíš), zato šetříš na životních nákladech. Hra to teď u domu napíše.'],
+  ]},
   { verze:'6.8', datum:'2026-09-08', body:[
     ['novinka','Žebříček je podrobnější. U každého hráče je vidět jmění, počet domů i s obsazeností bytů, počet firem, denní příjem a z čeho plyne (nájem / firmy / práce), nachozené kilometry, odpracované směny, série přihlášení, doba ve hře a dluh.'],
     ['novinka','Přibyly tři nové žebříčky: podle denního příjmu, počtu firem a odpracovaných směn.'],
@@ -11421,7 +11437,8 @@ function renderLeaderboard(){
     // ne jen kolik má. Někdo staví na nájmu, jiný na firmách, jiný na platu.
     const domy = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
     const bytu = domy.reduce((n, p) => n + asArray(p.units).length, 0);
-    const obsazenych = domy.reduce((n, p) => n + asArray(p.units).filter(x => x && (x.tenant || x.npc)).length, 0);
+    // Byt, kde bydlí sám majitel, je taky obsazený — jen z něj nechodí nájem.
+    const obsazenych = domy.reduce((n, p) => n + asArray(p.units).filter(x => x && (x.tenant || x.npc || x.ownerOccupied)).length, 0);
     const firmy = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0);
     const f = safeCall(() => financeBreakdown(u.name)) || {income:[], expense:[], net:0};
     const zPolozky = re => (f.income || []).filter(i => re.test(i.label)).reduce((a,i)=>a+i.amount, 0);
