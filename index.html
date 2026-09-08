@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.5';
+const APP_VERSION = '6.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -5409,7 +5409,7 @@ function zapisDoDeniku(typ, text, castka){
 function pricti(u, klic, kolik){
   if(!u || !isFinite(kolik) || !kolik) return;
   if(!u.denSoucty || u.denSouctyDen !== world.day){
-    u.denSoucty = { najem:0, firmy:0, solar:0, naklady:0, dane:0, uroky:0, mzdy:0, akce:0, najemne:0, uroky_sporeni:0 };
+    u.denSoucty = { najem:0, firmy:0, solar:0, naklady:0, dane:0, uroky:0, mzdy:0, akce:0, najemne:0, uroky_sporeni:0, metry:0 };
     u.denSouctyDen = world.day;
   }
   u.denSoucty[klic] = (u.denSoucty[klic] || 0) + kolik;
@@ -5424,13 +5424,20 @@ function uzavriDen(u, denKtery){
   if(!s) return;
   // Mzdy a jednorázové akce (balíky, úkoly) se vyplácejí HNED při akci — do výplaty
   // se počítají jen do souhrnu, aby seděla bilance dne.
-  const kVyplate = (s.najem||0) + (s.firmy||0) + (s.solar||0) + (s.uroky_sporeni||0);
+  // CHYBA opravená ve verzi 6.6: úrok ze spoření se počítal správně, ale připisoval se
+  // do HOTOVOSTI společně s nájmem a firmami — samotná částka na spoření se tak nikdy
+  // nezvyšovala. Kdo tam měl 7 000 Kč, měl je tam pořád stejně i po týdnu.
+  // Úrok teď jde tam, kam patří: na spoření, ne do peněženky.
+  const kVyplate = (s.najem||0) + (s.firmy||0) + (s.solar||0);
   const kStrzeni = (s.naklady||0) + (s.dane||0) + (s.uroky||0) + (s.najemne||0);
   u.balance += kVyplate - kStrzeni;
+  u.savings = (u.savings || 0) + (s.uroky_sporeni || 0);
 
   const prijem = kVyplate + (s.mzdy||0) + (s.akce||0);
   const vydaje = kStrzeni;
-  if(prijem < 1 && vydaje < 1) return;      // den bez pohybu nemá smysl zapisovat
+  // Den bez pohybu se nezapisuje — ale nachozené kilometry se za pohyb počítají taky,
+  // jinak by se den strávený chůzí bez příjmu do deníku vůbec nedostal.
+  if(prijem < 1 && vydaje < 1 && (s.metry || 0) < 100) return;
   u.souhrny = asArray(u.souhrny);
   u.souhrny.unshift({
     den: denKtery, ts: Date.now(),
@@ -5439,7 +5446,7 @@ function uzavriDen(u, denKtery){
     naklady: Math.round(s.naklady||0), dane: Math.round(s.dane||0), uroky: Math.round(s.uroky||0),
     najemne: Math.round(s.najemne||0), sporeni: Math.round(s.uroky_sporeni||0),
     vyplaceno: Math.round(kVyplate - kStrzeni),
-    metry: Math.round(u.distanceToday || 0),
+    metry: Math.round(s.metry || u.distanceToday || 0),
     zustatek: Math.round(u.balance || 0)
   });
   if(u.souhrny.length > SOUHRNU_MAX) u.souhrny.length = SOUHRNU_MAX;
@@ -6393,7 +6400,12 @@ async function encounterKupec(enc, u){
   zapisDoDeniku('sell', `Prodal jsem kupci ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
   recordSale(p, nabidka, pct, u.name, 'kupec z okolí');
   addNews('sale', `🧳 ${u.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`);
-  await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.\n\nV domě ti zbývá ${zbude.toFixed(0)} %${zbude > 50 ? ' — pořád o něm rozhoduješ ty.' : (zbude > 0 ? ' — nájem ti chodí dál, ale o domě už rozhoduje někdo jiný.' : '.')}`);
+  // Hráči po prodeji nevěděli, KTERÝ dům to byl, a museli to dohledávat podle podílů.
+  await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.\n\n` +
+    `🏠 Dům ${p.id.replace('h_','#')}${kde ? ' (' + kde + ')' : ''}\n` +
+    `Prodal jsi ${pct.toFixed(0)} %, zbývá ti ${zbude.toFixed(0)} %` +
+    `${zbude > 50 ? ' — pořád o něm rozhoduješ ty.' : (zbude > 0 ? ' — nájem ti chodí dál, ale o domě už rozhoduje někdo jiný.' : '.')}\n\n` +
+    `Záznam najdeš v deníku (📔).`);
   saveWorld();
   refreshAll();
 }
@@ -6623,6 +6635,9 @@ function creditWalking(dist){
   u.balance += reward;
   u.walkEarnedToday += reward;
   u.distanceToday = (u.distanceToday || 0) + dist;
+  // Do souhrnu dne si metry vedeme ZVLÁŠŤ. `distanceToday` se totiž nuluje v ensureWalkDay
+  // hned po půlnoci — a to se stihne dřív, než se uloží souhrn, takže v něm bylo pořád 0,0 km.
+  pricti(u, 'metry', dist);
   u.totalDistance = (u.totalDistance || 0) + dist;
   // Jednou za den dát vědět, že další kroky už peníze nenesou — ať hráč netápe,
   // proč mu přestalo přibývat.
@@ -7766,6 +7781,16 @@ function renderJobs(){
 
   const uRadnice = canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS);
   html += `<p style="font-size:0.92em;color:var(--muted);margin:10px 0 4px;">🏛️ Městská zaměstnání — nastupuje se na radnici (postupuj od nejnižších)</p>`;
+  // Platy v seznamu se přepočítávají dnešní událostí. Bez poznámky to vypadá, že se
+  // mzdy natrvalo změnily — hráči hlásili „dnes je o 50 % vyšší výplata".
+  const mzdaMultSeznam = eventMult('wageMult');
+  if(Math.abs(mzdaMultSeznam - 1) > 0.001){
+    const evM = todaysCityEvent(world.day);
+    html += `<p style="font-size:0.88em;color:var(--gold);margin:0 0 6px;">
+      ${evM ? evM.emoji + ' ' + evM.name : 'Dnešní událost'}: platy jsou dnes
+      ${mzdaMultSeznam > 1 ? 'o ' + Math.round((mzdaMultSeznam-1)*100) + ' % vyšší' : 'o ' + Math.round((1-mzdaMultSeznam)*100) + ' % nižší'}
+      než obvykle. Zítra se vrátí zpátky.</p>`;
+  }
   html += Object.values(world.jobs)
     .filter(j => !(current && current.job.id===j.id))
     .sort((a,b)=>a.tier-b.tier || a.salary-b.salary)
@@ -10657,6 +10682,19 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'6.8', datum:'2026-09-08', body:[
+    ['novinka','Žebříček je podrobnější. U každého hráče je vidět jmění, počet domů i s obsazeností bytů, počet firem, denní příjem a z čeho plyne (nájem / firmy / práce), nachozené kilometry, odpracované směny, série přihlášení, doba ve hře a dluh.'],
+    ['novinka','Přibyly tři nové žebříčky: podle denního příjmu, počtu firem a odpracovaných směn.'],
+    ['novinka','Pruh u každého hráče ukazuje, jak daleko je od prvního místa. Nahoře je souhrn, kolik majetku vlastní celé město dohromady.'],
+  ]},
+  { verze:'6.7', datum:'2026-09-08', body:[
+    ['oprava','V souhrnu dne bylo pořád „nachozeno 0,0 km“. Počítadlo se nulovalo dřív, než se souhrn uložil.'],
+    ['novinka','V seznamu prací je vidět, když dnešní událost mění platy — jinak to vypadalo, že se mzdy natrvalo zvedly.'],
+    ['novinka','Po prodeji podílu kupci z okolí hra napíše, o který dům šlo a kolik ti v něm zbývá.'],
+  ]},
+  { verze:'6.6', datum:'2026-09-08', body:[
+    ['oprava','Spoření se nezhodnocovalo. Úrok se počítal správně, ale připisoval se do hotovosti místo na spořicí účet — částka na spoření tak zůstávala pořád stejná. Teď úrok roste tam, kde má.'],
+  ]},
   { verze:'6.5', datum:'2026-08-29', body:[
     ['oprava','Profil jiného hráče se po zavření sám znovu otevíral a nešel zavřít. Panel zůstával označený jako otevřený a každé obnovení dat ho vytáhlo zpátky.'],
   ]},
@@ -11378,20 +11416,46 @@ function setLeaderboardMode(mode){ leaderboardMode = mode; renderLeaderboard(); 
 
 function renderLeaderboard(){
   const el = document.getElementById('leaderboardContent');
-  const players = Object.values(world.users).map(u => ({
-    name: u.name,
-    worth: netWorthEstimate(u.name),
-    cash: Math.round(u.balance),
-    houses: Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0).length,
-    distance: Math.round(u.totalDistance || 0)
-  }));
+  const players = Object.values(world.users).map(u => {
+    // Podrobnosti k profilu hráče — ať je z žebříčku poznat, JAK kdo bohatne,
+    // ne jen kolik má. Někdo staví na nájmu, jiný na firmách, jiný na platu.
+    const domy = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
+    const bytu = domy.reduce((n, p) => n + asArray(p.units).length, 0);
+    const obsazenych = domy.reduce((n, p) => n + asArray(p.units).filter(x => x && (x.tenant || x.npc)).length, 0);
+    const firmy = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0);
+    const f = safeCall(() => financeBreakdown(u.name)) || {income:[], expense:[], net:0};
+    const zPolozky = re => (f.income || []).filter(i => re.test(i.label)).reduce((a,i)=>a+i.amount, 0);
+    const maj = safeCall(() => majetekHodnota(u.name)) || {trzni:0};
+    return {
+      name: u.name,
+      worth: netWorthEstimate(u.name),
+      cash: Math.round(u.balance),
+      savings: Math.round(u.savings || 0),
+      majetek: Math.round(maj.trzni),
+      dluh: Math.round(asArray(u.loans).reduce((a,l)=>a+(l.balance||0), 0)),
+      houses: domy.length,
+      bytu, obsazenych,
+      firmy: firmy.length,
+      distance: Math.round(u.totalDistance || 0),
+      smeny: u.totalShifts || 0,
+      prijem: Math.round(f.net || 0),
+      zNajmu: Math.round(zPolozky(/Nájem/)),
+      zFirem: Math.round(zPolozky(/[Ff]irm|podnik/)),
+      zPrace: Math.round(zPolozky(/Plat|Spropitné/)),
+      serie: u.streak || 0,
+      dni: Math.max(1, (world.day || 1) - (u.joinedGameDay || 1) + 1)
+    };
+  });
 
   if(!players.length){ el.innerHTML = '<div class="empty-state">Zatím žádní hráči.</div>'; return; }
 
   const modes = {
-    worth:    {label:'💰 Jmění',      key:'worth',    fmt:v=>Math.round(v).toLocaleString('cs-CZ')+' Kč', note:'Řazeno podle čistého jmění (hotovost + hodnota podílů − dluhy).'},
-    houses:   {label:'🏠 Nemovitosti', key:'houses',   fmt:v=>v+' '+(v===1?'dům':(v>=2&&v<=4?'domy':'domů')), note:'Řazeno podle počtu domů, ve kterých máš podíl.'},
-    distance: {label:'🚶 Nachozeno',   key:'distance', fmt:v=>(v/1000).toFixed(2).replace('.',',')+' km', note:'Řazeno podle celkové nachozené vzdálenosti.'}
+    worth:    {label:'💰 Jmění',      key:'worth',    fmt:v=>Math.round(v).toLocaleString('cs-CZ')+' Kč', note:'Řazeno podle čistého jmění (hotovost + spoření + hodnota podílů − dluhy).'},
+    prijem:   {label:'📈 Příjem',      key:'prijem',   fmt:v=>(v>=0?'+':'')+Math.round(v).toLocaleString('cs-CZ')+' Kč/den', note:'Řazeno podle denní bilance — kdo si za den vydělá nejvíc po odečtení všech výdajů.'},
+    houses:   {label:'🏠 Domy',        key:'houses',   fmt:v=>v+' '+(v===1?'dům':(v>=2&&v<=4?'domy':'domů')), note:'Řazeno podle počtu domů, ve kterých máš podíl.'},
+    firmy:    {label:'🏢 Firmy',       key:'firmy',    fmt:v=>v+' '+(v===1?'podnik':(v>=2&&v<=4?'podniky':'podniků')), note:'Řazeno podle počtu podniků, ve kterých máš podíl.'},
+    distance: {label:'🚶 Nachozeno',   key:'distance', fmt:v=>(v/1000).toFixed(2).replace('.',',')+' km', note:'Řazeno podle celkové nachozené vzdálenosti.'},
+    smeny:    {label:'💼 Směny',       key:'smeny',    fmt:v=>v+' '+(v===1?'směna':(v>=2&&v<=4?'směny':'směn')), note:'Řazeno podle počtu odpracovaných směn.'}
   };
   const m = modes[leaderboardMode];
   players.sort((a,b) => b[m.key] - a[m.key]);
@@ -11403,14 +11467,42 @@ function renderLeaderboard(){
     ).join('') + `</div>`;
   html += `<p style="font-size:0.92em;color:var(--muted);margin-bottom:8px;">${m.note}</p>`;
 
+  // Souhrn celého města — dá měřítko, jestli je moje číslo hodně, nebo málo.
+  const celkemJmeni = players.reduce((a,p)=>a+p.worth, 0);
+  const nejvyssi = Math.max(1, ...players.map(p => p[m.key]));
+  html += `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">
+    Ve městě je <b>${players.length}</b> ${players.length===1?'hráč':(players.length<5?'hráči':'hráčů')},
+    dohromady vlastní majetek za <b>${Math.round(celkemJmeni).toLocaleString('cs-CZ')} Kč</b>.</p>`;
+
   const medals = ['🥇','🥈','🥉'];
   html += players.map((pl, i) => {
     const isMe = pl.name === currentUser?.name;
     const rank = medals[i] || `${i+1}.`;
+    // Pruh ukazuje poměr k vedoucímu hráči — z čísel samotných se odstup pozná hůř.
+    const pomer = Math.max(0, Math.min(100, (pl[m.key] / nejvyssi) * 100));
+
+    // Z čeho hráči plyne příjem. Kdo staví na nájmu, kdo na firmách, kdo chodí do práce.
+    const zdroje = [
+      pl.zNajmu > 0 ? `🏘️ nájem ${pl.zNajmu} Kč` : null,
+      pl.zFirem > 0 ? `🏢 firmy ${pl.zFirem} Kč` : null,
+      pl.zPrace > 0 ? `💼 práce ${pl.zPrace} Kč` : null
+    ].filter(Boolean).join(' · ');
+
     return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':profileAttr(pl.name)}>
       <h3>${rank} ${escapeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}</h3>
-      <p><b style="color:var(--gold)">${m.fmt(pl[m.key])}</b></p>
-      <p style="font-size:0.92em;color:var(--muted)">Jmění ${Math.round(pl.worth).toLocaleString('cs-CZ')} Kč · ${pl.houses} ${pl.houses===1?'dům':'domů'} · ${(pl.distance/1000).toFixed(1).replace('.',',')} km</p>
+      <p style="margin:2px 0;"><b style="color:var(--gold);font-size:1.15em;">${m.fmt(pl[m.key])}</b></p>
+      <div style="background:var(--panel2);border-radius:4px;height:6px;margin:5px 0;overflow:hidden;">
+        <div style="width:${pomer}%;height:100%;background:${isMe?'var(--accent)':'var(--accent2)'};"></div>
+      </div>
+      <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">
+        💰 ${Math.round(pl.worth).toLocaleString('cs-CZ')} Kč jmění ·
+        🏠 ${pl.houses} ${pl.houses===1?'dům':'domů'}${pl.bytu ? ` (${pl.obsazenych}/${pl.bytu} bytů obsazeno)` : ''} ·
+        🏢 ${pl.firmy}</p>
+      <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">
+        📈 ${pl.prijem >= 0 ? '+' : ''}${pl.prijem} Kč/den${zdroje ? ' — ' + zdroje : ''}</p>
+      <p style="font-size:0.84em;color:var(--muted);margin:2px 0;">
+        🚶 ${(pl.distance/1000).toFixed(1).replace('.',',')} km · 💼 ${pl.smeny} směn${pl.serie > 1 ? ` · 🔥 série ${pl.serie} dní` : ''} ·
+        ve hře ${pl.dni} ${pl.dni===1?'den':(pl.dni<5?'dny':'dní')}${pl.dluh > 0 ? ` · <span style="color:var(--danger)">dluh ${pl.dluh.toLocaleString('cs-CZ')} Kč</span>` : ''}</p>
     </div>`;
   }).join('');
 
