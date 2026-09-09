@@ -603,7 +603,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '6.9';
+const APP_VERSION = '7.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -849,7 +849,7 @@ async function moveInNpc(npcId, houseId, unitIdx){
   stampHouse(p);
   // odebrat zájemce z nabídky
   world.npcTenants.list = world.npcTenants.list.filter(n => n.id !== npcId);
-  addNews('rental', `📥 ${npc.name} se nastěhoval do domu ${p.id.replace('h_','#')} (nájem ${u.rentPrice} Kč/den).`);
+  addNews('rental', `📥 ${npc.name} se nastěhoval do domu ${domKratce(p)} (nájem ${u.rentPrice} Kč/den).`);
   playSound('coin');
   saveWorld(); refreshAll();
   showAlert(`${npc.name} se nastěhoval! Bude platit ${u.rentPrice} Kč/den, dokud budeš byt udržovat.`);
@@ -866,7 +866,7 @@ async function evictNpc(houseId, unitIdx){
     `což bývá míň spolehlivé.\n\nNového nájemníka si musíš najít sám.`))) return;
   p.units[unitIdx].npc = null;
   stampHouse(p);
-  addNews('rental', `📤 ${name} byl vystěhován z domu ${p.id.replace('h_','#')}.`);
+  addNews('rental', `📤 ${name} byl vystěhován z domu ${domKratce(p)}.`);
   saveWorld(); refreshAll();
 }
 
@@ -1439,6 +1439,10 @@ function privateJobsList(){
 }
 
 function privateJobById(id){ return privateJobsList().find(j => j.id === id) || null; }
+
+// Přesčas: druhá směna v jednom dni za příplatek, druhý den ale únava.
+const PRESCAS_BONUS = 1.6;    // kolikrát vyšší mzda za přesčas
+const PRESCAS_UNAVA = 0.6;    // kolik zbude z mzdy den po přesčase
 
 const JOB_BAN_DAYS = 7; // po vyčerpání omluvenek a vynechání směny zákaz práce na 7 dní
 const JOB_SICK_DAYS_ALLOWED = 2; // kolik vynechaných směn za sebou appka toleruje, než přijde vyhazov
@@ -4051,6 +4055,125 @@ function stampBizOwners(b, ...jmena){ stampOwnerList(b, jmena); }
 const NAJEM_MAX_NASOBEK = 3;
 function maxRentForHouse(p){ return Math.max(50, Math.round(fairRentForHouse(p) * NAJEM_MAX_NASOBEK)); }
 
+// ===== VLASTNÍ PODNIKÁNÍ =====
+// Z domu, kde má hráč většinu, jde udělat provozovnu. Na rozdíl od podílu ve firmě si
+// tady hráč vybírá MÍSTO — výnos se počítá z poptávky v okolí, ne paušálně.
+// Dobře umístěná provozovna vydělá víc než pronájem, špatně umístěná skoro nic.
+const PROVOZ_TYPY = {
+  vecerka:    { name:'Večerka',      emoji:'🏪', vynos:1.00, radius:250,
+                popis:'Základní zboží. Živí ji hlavně to, kolik lidí bydlí v okolí.' },
+  kavarna:    { name:'Kavárna',      emoji:'☕', vynos:1.15, radius:300,
+                popis:'Potřebuje ruch — místa zájmu, podniky, průchozí ulice.' },
+  pekarna:    { name:'Pekárna',      emoji:'🥐', vynos:1.05, radius:280,
+                popis:'Stálá klientela z okolních domů, ráno nejvíc.' },
+  kadernictvi:{ name:'Kadeřnictví',  emoji:'💇', vynos:1.10, radius:400,
+                popis:'Lidé za ním dojdou dál, konkurence ale hodně bolí.' },
+  fitko:      { name:'Fitness',      emoji:'🏋️', vynos:1.20, radius:450,
+                popis:'Velký spád, ale drahý provoz a hodně citlivé na konkurenci.' },
+  restaurace: { name:'Restaurace',   emoji:'🍽️', vynos:1.25, radius:350,
+                popis:'Nejvyšší výnos, nejvyšší nároky na místo i zásoby.' }
+};
+
+const PROVOZ_INVESTICE = 0.55;    // kolik z hodnoty domu stojí zařízení provozovny
+// Základ výnosu je nastavený tak, aby při průměrné poptávce vyšla návratnost kolem 200 dní —
+// tedy mezi pronájmem (400) a podílem ve firmě (150). Dobré místo se vrátí za ~130 dní,
+// špatné za 400+. V tom je celá hra: nejde o to CO otevřeš, ale KDE.
+const PROVOZ_ZAKLAD = 0.00275;    // základ denního výnosu z hodnoty domu
+const PROVOZ_ZASOBY_DEN = 12;     // o kolik % denně klesnou zásoby
+const PROVOZ_MIN_POPTAVKA = 0.3;
+const PROVOZ_MAX_POPTAVKA = 1.8;
+
+// POZOR na výkon: výpočet prochází všechny domy v okolí, a tick ho volá pro každou
+// provozovnu ve městě. Bez zapamatování to při dvaceti provozovnách znamenalo
+// desítky milisekund každých pět vteřin. Výsledek se mění jen se dnem, s počtem
+// provozoven a s lokální událostí — podle toho je klíč.
+let _popCache = { klic: null, mapa: new Map() };
+function popKlic(){
+  let provozoven = 0;
+  const parcely = world.parcels || {};
+  for(const k in parcely){ if(parcely[k] && parcely[k].useType === 'provozovna') provozoven++; }
+  const c = lokalniDnes();
+  return `${world.day}|${provozoven}|${c.ev ? c.ev.id : ''}`;
+}
+
+// Odhad poptávky na daném místě. Vrací index a rozpad, ať hráč vidí, PROČ je nízká.
+function poptavkaProMisto(p, typId){
+  if(!p || !PROVOZ_TYPY[typId]) return { index:1, popis:'', faktory:[] };
+  const klic = popKlic();
+  if(_popCache.klic !== klic) _popCache = { klic, mapa: new Map() };
+  const cacheK = p.id + '|' + typId;
+  if(_popCache.mapa.has(cacheK)) return _popCache.mapa.get(cacheK);
+  const vysledek = poptavkaVypocet(p, typId);
+  _popCache.mapa.set(cacheK, vysledek);
+  return vysledek;
+}
+
+function poptavkaVypocet(p, typId){
+  const typ = PROVOZ_TYPY[typId];
+  if(!p || !typ) return { index:1, popis:'', faktory:[] };
+  const R = typ.radius;
+  const stred = { lat:p.lat, lng:p.lng };
+  const vOkoli = (o) => haversine(stred, { lat:o.lat, lng:o.lng }) <= R;
+
+  // 1) Kolik lidí v okolí bydlí — počítáme byty a patra okolních domů.
+  let obyvatel = 0;
+  Object.values(world.parcels).forEach(q => {
+    if(!q || q === p) return;
+    if(Math.abs(q.lat - p.lat) > R/111000 * 1.5) return;   // hrubý předfiltr kvůli výkonu
+    if(!vOkoli(q)) return;
+    obyvatel += asArray(q.units).length || (q.levels || 1);
+  });
+
+  // 2) Ruch — místa zájmu a firmy přitáhnou lidi zvenčí.
+  let ruch = 0;
+  LANDMARK_DEFS.concat(asArray(world.landmarks)).forEach(l => { if(l && l.lat && vOkoli(l)) ruch += 3; });
+  Object.values(world.businesses || {}).forEach(b => { if(b && b.lat && vOkoli(b)) ruch += 1; });
+
+  // 3) Konkurence — stejný typ provozovny v okolí si zákazníky rozdělí.
+  let konkurence = 0;
+  Object.values(world.parcels).forEach(q => {
+    if(!q || q === p || q.useType !== 'provozovna' || !q.provoz) return;
+    if(!vOkoli(q)) return;
+    konkurence += (q.provoz.typ === typId) ? 1 : 0.35;   // jiný obor konkuruje jen zčásti
+  });
+
+  // Měřítka jsou nastavená tak, aby se centrum a okraj od sebe opravdu lišily.
+  // Dřív se strop vyčerpal skoro všude a poptávka vycházela stejně dobrá kdekoliv.
+  const zaklad = Math.min(1.00, obyvatel / 120) + Math.min(0.50, ruch / 25);
+  const postih = 1 / (1 + konkurence * 0.55);
+  const lok = localEventFor(p);
+  const udalost = lok ? (lok.ev.localRentMult || 1) : 1;
+  const index = Math.max(PROVOZ_MIN_POPTAVKA, Math.min(PROVOZ_MAX_POPTAVKA,
+    (0.25 + zaklad) * postih * udalost * eventMult('rentMult')));
+
+  const slovy = index >= 1.4 ? 'výborná' : index >= 1.1 ? 'dobrá' : index >= 0.8 ? 'průměrná' : index >= 0.55 ? 'slabá' : 'mizerná';
+  return {
+    index, popis: slovy,
+    faktory: [
+      `${obyvatel} bytů v okolí`,
+      ruch > 0 ? `ruch ${ruch} (místa zájmu a firmy)` : 'žádný ruch v okolí',
+      konkurence > 0 ? `konkurence ${konkurence.toFixed(1)}` : 'bez konkurence',
+      lok ? `${lok.ev.emoji} ${lok.ev.name}` : null
+    ].filter(Boolean)
+  };
+}
+
+// Denní výnos provozovny — poptávka × zásoby × hodnota domu.
+function provozVynos(p){
+  if(!p || p.useType !== 'provozovna' || !p.provoz) return 0;
+  const typ = PROVOZ_TYPY[p.provoz.typ];
+  if(!typ) return 0;
+  const zasoby = Math.max(0, Math.min(100, p.provoz.zasoby ?? 100)) / 100;
+  const poptavka = poptavkaProMisto(p, p.provoz.typ).index;
+  return effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * poptavka * zasoby;
+}
+
+function provozInvestice(p){ return Math.round(effectiveHousePrice(p) * PROVOZ_INVESTICE); }
+function doplneniCena(p){
+  const chybi = Math.max(0, 100 - (p.provoz?.zasoby ?? 100));
+  return Math.round(effectiveHousePrice(p) * 0.0016 * chybi);
+}
+
 function fairRentForHouse(p){
   const numUnits = (p.units && p.units.length) || p.levels || 1;
   // podlaha 35 Kč zajišťuje, že nájemník (35 + TENANT_LIVING_COST) vždy platí víc než vlastník bydlení,
@@ -4109,12 +4232,12 @@ function housingHint(name){
     const mam = (best.owners[name] || 0);
     const chybi = Math.max(0, 50.1 - mam);
     const cena = Math.round(housePricePerPercent(best) * chybi);
-    return `Podíl v domě <b>máš</b> (${mam.toFixed(0)} % v domě ${best.id.replace('h_','#')}), ale na bydlení je potřeba <b>víc než 50 %</b>. ` +
+    return `Podíl v domě <b>máš</b> (${mam.toFixed(0)} % v domě ${domKratce(best)}), ale na bydlení je potřeba <b>víc než 50 %</b>. ` +
            `Chybí ti ${chybi.toFixed(0)} % (~${Math.round(cena).toLocaleString('cs-CZ')} Kč) — dokup je u toho domu. Nebo si zatím <b>najmi byt</b>, i to je levnější než být bez bydlení.`;
   }
   // většinu má, ale dům není určený k bydlení
   if(majority.useType !== 'residence'){
-    return `V domě ${majority.id.replace('h_','#')} máš většinu (${(majority.owners[name]||0).toFixed(0)} %), ale dům zatím <b>není určený k bydlení</b>. ` +
+    return `V domě ${domKratce(majority)} máš většinu (${(majority.owners[name]||0).toFixed(0)} %), ale dům zatím <b>není určený k bydlení</b>. ` +
            `Dojdi k němu a v jeho detailu ho přepni na <b>bydlení</b> — hned ti klesnou náklady.`;
   }
   return '';
@@ -4210,6 +4333,97 @@ async function detectCity(lat, lng){
 // Vrací pole {id, lat, lng, levels} ve stejném tvaru jako vestavěná data Bučovic.
 const CITY_FETCH_RADIUS = 1800;   // m — kolem středu města
 const CITY_MAX_HOUSES = 3000;     // strop, ať appka nezaplave daty
+// ===== SKUTEČNÉ ADRESY DOMŮ =====
+// Čísla popisná a názvy ulic jsou v OpenStreetMap — na mapě je vidět. Stáhneme je jednou
+// a spárujeme s domy podle souřadnic. Ukládají se JEN LOKÁLNĚ (localStorage), ne do světa:
+// pro všechny hráče vyjdou stejně, takže by se sdílením jen nafukovala data v cloudu.
+let ADRESY = {};          // parcelId -> 'Dvorská 149'
+let adresyStav = 'nenacteno';   // nenacteno | stahuji | hotovo | chyba
+
+function adresyKlic(){ return 'bucpoly_adresy_' + ((CITY && CITY.id) || 'bucovice'); }
+
+function nactiAdresy(){
+  try {
+    const raw = localStorage.getItem(adresyKlic());
+    if(raw){ ADRESY = JSON.parse(raw) || {}; adresyStav = 'hotovo'; }
+  } catch(e){ ADRESY = {}; }
+}
+
+// Popisek domu: skutečná adresa, jinak číslo domu ve hře.
+function domLabel(p){
+  if(typeof p === 'string') p = (world.parcels || {})[p] || { id: p };
+  if(!p || !p.id) return '';
+  const a = ADRESY[p.id];
+  return a ? a : 'Dům ' + String(p.id).replace('h_', '#');
+}
+// Krátká varianta do stísněných míst (novinky, deník).
+function domKratce(p){
+  // Přijímá i ID domu (u půjček a nabídek je po ruce jen ono) a snese, když dům neexistuje.
+  if(typeof p === 'string') p = (world.parcels || {})[p] || { id: p };
+  if(!p || !p.id) return '';
+  return ADRESY[p.id] || String(p.id).replace('h_', '#');
+}
+
+async function adminNactiAdresy(){
+  showToast('Stahuji adresy z OpenStreetMap…');
+  try { localStorage.removeItem(adresyKlic()); } catch(e){}
+  adresyStav = 'nenacteno';
+  const n = await stahniAdresy();
+  showAlert(n ? `Načteno ${n} adres. Domy se teď ukazují jako „Dvorská 149" místo „#1929".`
+              : 'Adresy se nepodařilo stáhnout. Zkus to za chvíli — server OpenStreetMap bývá občas přetížený.');
+}
+
+async function stahniAdresy(){
+  if(adresyStav === 'stahuji') return;
+  adresyStav = 'stahuji';
+  const stred = CITY_CENTER;
+  const r = CITY_FETCH_RADIUS || 3000;
+  // Bereme všechno, co má číslo popisné — body i budovy.
+  const dotaz = `[out:json][timeout:60];(node["addr:housenumber"](around:${r},${stred[0]},${stred[1]});` +
+                `way["addr:housenumber"](around:${r},${stred[0]},${stred[1]}););out center 6000;`;
+  const servery = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  for(const server of servery){
+    try {
+      const res = await fetch(server, { method:'POST', body:'data=' + encodeURIComponent(dotaz),
+        headers:{ 'Content-Type':'application/x-www-form-urlencoded' } });
+      if(!res.ok) continue;
+      const data = await res.json();
+      const body = ((data && data.elements) || []).map(el => {
+        const c = el.center || el;
+        const t = el.tags || {};
+        if(typeof c.lat !== 'number' || typeof c.lon !== 'number') return null;
+        if(!t['addr:housenumber']) return null;
+        return { lat:c.lat, lng:c.lon, ulice:t['addr:street'] || '', cislo:t['addr:housenumber'] };
+      }).filter(Boolean);
+      if(!body.length) continue;
+
+      // Párování podle nejbližšího bodu. Adresní bod bývá uvnitř budovy, takže
+      // 25 m je dost velkorysé i pro velké domy a zároveň se netrefí do souseda.
+      const nalezeno = {};
+      const parcely = Object.values(world.parcels || {});
+      body.forEach(b => {
+        let nej = null, nejD = 25;
+        parcely.forEach(p => {
+          if(Math.abs(p.lat - b.lat) > 0.0004 || Math.abs(p.lng - b.lng) > 0.0006) return;
+          const d = haversine({lat:p.lat, lng:p.lng}, b);
+          if(d < nejD){ nejD = d; nej = p; }
+        });
+        if(nej && !nalezeno[nej.id]){
+          nalezeno[nej.id] = (b.ulice ? b.ulice + ' ' : 'č. p. ') + b.cislo;
+        }
+      });
+
+      ADRESY = nalezeno;
+      adresyStav = 'hotovo';
+      try { localStorage.setItem(adresyKlic(), JSON.stringify(ADRESY)); } catch(e){}
+      safeCall(() => refreshAll());
+      return Object.keys(nalezeno).length;
+    } catch(e){ /* zkusíme další server */ }
+  }
+  adresyStav = 'chyba';
+  return 0;
+}
+
 async function fetchHousesFromOSM(lat, lng, radius){
   const r = radius || CITY_FETCH_RADIUS;
   // ptáme se jen na budovy; "center" nám vrátí jeden bod za každou budovu
@@ -4544,6 +4758,7 @@ function migrateWorld(){
         u.balance = cislo(u.balance, START_BALANCE, -50000000, 50000000);
         u.savings = cislo(u.savings, 0, 0, 50000000);
         u.pendingBuys = asArray(u.pendingBuys);
+        u.zakazkyHotove = asArray(u.zakazkyHotove);
         if(u.currentJobId === undefined) u.currentJobId = null;
         // Vlastní razítko pro výpočet peněz. Kdo ho nemá, začíná teď — ne od začátku věků.
         if(typeof u.lastTick !== 'number') u.lastTick = Date.now();
@@ -4586,6 +4801,9 @@ function migrateWorld(){
       });
       Object.values(world.parcels).forEach(p => {
         if(p.useType === 'shop') p.useType = 'residence';
+        // Provozovna bez platného typu (poškozená data) se vrátí na dům bez využití.
+        if(p.useType === 'provozovna' && (!p.provoz || !PROVOZ_TYPY[p.provoz.typ])){ p.useType = null; delete p.provoz; }
+        if(p.provoz && typeof p.provoz.zasoby !== 'number') p.provoz.zasoby = 100;
         delete p.shopName; delete p.shopDesc; delete p.goods;
         delete p.hiring; delete p.employeeName; delete p.employeeSalary;
         // migrace na spoluvlastnictví: starý jediný majitel → 100% podíl
@@ -4981,7 +5199,7 @@ function adoptWorldVnitrni(incoming){
       delete world.users[jmeno];
       Object.values(world.parcels).forEach(p => {
         if(p.owners && p.owners[jmeno] !== undefined) delete p.owners[jmeno];
-        if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+        if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; }
         (p.units || []).forEach(un => { if(un.tenant === jmeno) un.tenant = null; });
       });
       Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[jmeno] !== undefined) delete b.owners[jmeno]; });
@@ -4994,7 +5212,7 @@ function adoptWorldVnitrni(incoming){
       // ať administrátor po zabavení nezablokoval hráči nákup nového domu
       if(p.owners && p.owners[jmeno] !== undefined && (p.mod || 0) <= cas){
         delete p.owners[jmeno];
-        if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+        if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; }
       }
       (p.units || []).forEach(un => { if(un.tenant === jmeno && (p.mod||0) <= cas) un.tenant = null; });
     });
@@ -5097,7 +5315,7 @@ function adoptWorldVnitrni(incoming){
       cloudP.owners = slouceno.owners;
       cloudP.ownerMods = slouceno.ownerMods;
       cloudP.omod = Math.max(zaloha.omod || 0, cloudP.omod || 0);
-      if(!houseHasOwner(cloudP)){ cloudP.useType = null; delete cloudP.units; }
+      if(!houseHasOwner(cloudP)){ cloudP.useType = null; delete cloudP.units; delete cloudP.provoz; }
     });
     // Nejdřív obecně: u KAŽDÉHO domu vyhraje verze s novějším razítkem změny.
     // Bez toho by hráč, který má zastaralá data, mohl svým zápisem smazat cizí přestavbu.
@@ -5250,7 +5468,7 @@ function worldForCloud(){
     const owned = p.owners && Object.keys(p.owners).length > 0;
     const modified = owned || p.useType || (p.units && p.units.length) || p.upgrades ||
                      (p.gentrifyMult && p.gentrifyMult !== 1) || p.popularity || p.salesHistory ||
-                     p.mod || p.omod || p.ownerMods || p.project;
+                     p.mod || p.omod || p.ownerMods || p.project || p.provoz;
     // POZOR na `p.omod`: dům, ze kterého majitel prodal úplně všechno, nemá vlastníka ani byty.
     // Bez razítka podílů by vypadal jako "nedotčený", nešel by do cloudu — a ostatní zařízení
     // by ho dál zobrazovala jako cizí majetek, protože by se o prodeji nikdy nedozvěděla.
@@ -5409,7 +5627,7 @@ function zapisDoDeniku(typ, text, castka){
 function pricti(u, klic, kolik){
   if(!u || !isFinite(kolik) || !kolik) return;
   if(!u.denSoucty || u.denSouctyDen !== world.day){
-    u.denSoucty = { najem:0, firmy:0, solar:0, naklady:0, dane:0, uroky:0, mzdy:0, akce:0, najemne:0, uroky_sporeni:0, metry:0 };
+    u.denSoucty = { najem:0, firmy:0, solar:0, provoz:0, naklady:0, dane:0, uroky:0, mzdy:0, akce:0, najemne:0, uroky_sporeni:0, metry:0 };
     u.denSouctyDen = world.day;
   }
   u.denSoucty[klic] = (u.denSoucty[klic] || 0) + kolik;
@@ -5428,7 +5646,7 @@ function uzavriDen(u, denKtery){
   // do HOTOVOSTI společně s nájmem a firmami — samotná částka na spoření se tak nikdy
   // nezvyšovala. Kdo tam měl 7 000 Kč, měl je tam pořád stejně i po týdnu.
   // Úrok teď jde tam, kam patří: na spoření, ne do peněženky.
-  const kVyplate = (s.najem||0) + (s.firmy||0) + (s.solar||0);
+  const kVyplate = (s.najem||0) + (s.firmy||0) + (s.solar||0) + (s.provoz||0);
   const kStrzeni = (s.naklady||0) + (s.dane||0) + (s.uroky||0) + (s.najemne||0);
   u.balance += kVyplate - kStrzeni;
   u.savings = (u.savings || 0) + (s.uroky_sporeni || 0);
@@ -5442,6 +5660,7 @@ function uzavriDen(u, denKtery){
   u.souhrny.unshift({
     den: denKtery, ts: Date.now(),
     najem: Math.round(s.najem||0), firmy: Math.round(s.firmy||0), solar: Math.round(s.solar||0),
+    provoz: Math.round(s.provoz||0),
     mzdy: Math.round(s.mzdy||0), akce: Math.round(s.akce||0),
     naklady: Math.round(s.naklady||0), dane: Math.round(s.dane||0), uroky: Math.round(s.uroky||0),
     najemne: Math.round(s.najemne||0), sporeni: Math.round(s.uroky_sporeni||0),
@@ -5622,7 +5841,7 @@ function tickVnitrni(){
             const castka = (ja && u.tenant === ja.name) ? collected * mojeDayFraction : 0;
             if(castka > 0) pricti(najemnikUcet, 'najemne', castka);
             if(castka > 0 && najemnikUcet.balance - (najemnikUcet.denSoucty?.najemne || 0) < -LIVING_COST * 3){
-              addNews('rental', `📤 ${u.tenant} se odstěhoval z domu ${p.id.replace('h_','#')} — na nájem ${u.rentPrice} Kč/den už neměl.`);
+              addNews('rental', `📤 ${u.tenant} se odstěhoval z domu ${domKratce(p)} — na nájem ${u.rentPrice} Kč/den už neměl.`);
               u.tenant = null;
               stampHouse(p);
             }
@@ -5630,7 +5849,7 @@ function tickVnitrni(){
             // byt obývá NPC nájemník: platí spolehlivě plný nájem.
             // Když ale byt klesne pod jeho požadovaný stav, NPC se odstěhuje.
             if(u.npc.minCondition !== undefined && u.condition < u.npc.minCondition){
-              addNews('rental', `📤 ${u.npc.name} se odstěhoval z domu ${p.id.replace('h_','#')} — byt se moc zanedbal.`);
+              addNews('rental', `📤 ${u.npc.name} se odstěhoval z domu ${domKratce(p)} — byt se moc zanedbal.`);
               u.npc = null;
             } else {
               collected = u.rentPrice;
@@ -5655,6 +5874,24 @@ function tickVnitrni(){
     }
     // Solární panely vydělávají u KAŽDÉHO domu — i toho, ve kterém majitel bydlí.
     // Dřív to bylo uvnitř bloku pro pronájem, takže u vlastního bydlení se nepřipsalo nic.
+    // Provozovna: výnos podle poptávky a zásob, zásoby ubývají.
+    if(p.useType === 'provozovna' && p.provoz){
+      const predZasoby = p.provoz.zasoby ?? 100;
+      p.provoz.zasoby = Math.max(0, predZasoby - PROVOZ_ZASOBY_DEN * dayFraction);
+      // Upozornit majitele, až zásoby klesnou pod čtvrtinu — jinak si toho všimne,
+      // až když provozovna přestane vydělávat úplně.
+      if(ja && (p.owners?.[ja.name] || 0) > 50 && predZasoby >= 25 && p.provoz.zasoby < 25){
+        const typ = PROVOZ_TYPY[p.provoz.typ];
+        notifyPlayer('Docházejí zásoby',
+          `${typ ? typ.emoji + ' ' + typ.name : 'Provozovna'} v domě ${domKratce(p)} má poslední zásoby. Zajdi je doplnit, jinak přestane vydělávat.`);
+        addNews('rental', `📦 ${ja.name}: docházejí zásoby v domě ${domKratce(p)}.`);
+      }
+      if(ja){
+        const mujPodil = (p.owners?.[ja.name] || 0) / 100;
+        if(mujPodil > 0) pricti(ja, 'provoz', provozVynos(p) * mujPodil * mojeDayFraction);
+      }
+    }
+
     const solar = solarBonusForHouse(p);
     if(solar > 0 && ja){
       const mujPodil = (p.owners?.[ja.name] || 0) / 100;
@@ -5700,7 +5937,7 @@ function tickVnitrni(){
     if(!u.loans) return;
     const doplacene = u.loans.filter(l => l.balance <= 0.5);
     doplacene.forEach(l => {
-      if(l.type === 'mortgage' && l.houseId) addNews('bank', `🎉 ${u.name} doplatil hypotéku na dům ${l.houseId.replace('h_','#')}.`);
+      if(l.type === 'mortgage' && l.houseId) addNews('bank', `🎉 ${u.name} doplatil hypotéku na dům ${domKratce(l.houseId)}.`);
     });
     if(doplacene.length) u.loans = u.loans.filter(l => l.balance > 0.5);
   });
@@ -5778,6 +6015,10 @@ function maybeRandomEvent(){
 
   const ev = events[Math.floor(Math.random()*events.length)];
   u.balance += ev.amount;
+  // Náhodná událost měnila zůstatek, ale do souhrnu dne se nezapsala — hráči pak seděl
+  // rozpad o desítky korun jinak než skutečný pohyb na účtu a nešlo dohledat proč.
+  pricti(u, 'akce', ev.amount);
+  zapisDoDeniku('other', ev.txt, ev.amount);
   // uložit poslední událost, ať ji hráč vidí po návratu
   u.lastEvent = { txt: ev.txt, amount: ev.amount, day: world.day };
   addNews('event', `${ev.txt} (${currentUser.name}, ${ev.amount>=0?'+':''}${ev.amount} Kč)`);
@@ -5814,7 +6055,7 @@ function tryFillVacantUnits(){
       un.npc = { name: jmeno, avatar: typ.avatar, minCondition: typ.minCondition };
       stampHouse(p);
       if(currentUser && (p.owners?.[currentUser.name] || 0) > 50){
-        addNews('rental', `📥 ${jmeno} se nastěhoval do domu ${p.id.replace('h_','#')} (${un.rentPrice} Kč/den).`);
+        addNews('rental', `📥 ${jmeno} se nastěhoval do domu ${domKratce(p)} (${un.rentPrice} Kč/den).`);
       }
     });
   });
@@ -5852,7 +6093,7 @@ function listDormantPlayersHouses(){
       const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'');
       world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct, mod: Date.now(),
         type: 'fixed', price: cena, dormant: true };
-      addNews('market', `🏚️ Dům ${p.id.replace('h_','#')} je znovu na prodej — ${u.name} dlouho nehraje (${pct.toFixed(0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`);
+      addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${pct.toFixed(0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`);
     });
   });
 }
@@ -6360,7 +6601,7 @@ async function encounterKupec(enc, u){
   const obsazenych = asArray(p.units).filter(x => x && (x.tenant || x.npc || x.ownerOccupied)).length;
   const vylepseni = Object.keys(p.upgrades || {}).length;
 
-  let popis = `🏠 Dům ${p.id.replace('h_','#')}`;
+  let popis = `🏠 ${domLabel(p)}`;
   if(kde) popis += ` (${kde})`;
   if(d !== null) popis += `\n📍 ${kudyText(p, d)}`;
   popis += `\n💰 Celková hodnota: ${Math.round(effectiveHousePrice(p)).toLocaleString('cs-CZ')} Kč`;
@@ -6397,12 +6638,12 @@ async function encounterKupec(enc, u){
   // a hráč mohl skončit s penězi i podílem, nebo naopak přijít o obojí.
   stampOwners(p, u.name);
   pricti(u, 'akce', nabidka);
-  zapisDoDeniku('sell', `Prodal jsem kupci ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
+  zapisDoDeniku('sell', `Prodal jsem kupci ${pct.toFixed(0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
   recordSale(p, nabidka, pct, u.name, 'kupec z okolí');
-  addNews('sale', `🧳 ${u.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`);
+  addNews('sale', `🧳 ${u.name} prodal ${pct.toFixed(0)} % domu ${domKratce(p)} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`);
   // Hráči po prodeji nevěděli, KTERÝ dům to byl, a museli to dohledávat podle podílů.
   await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.\n\n` +
-    `🏠 Dům ${p.id.replace('h_','#')}${kde ? ' (' + kde + ')' : ''}\n` +
+    `🏠 ${domLabel(p)}${kde ? ' (' + kde + ')' : ''}\n` +
     `Prodal jsi ${pct.toFixed(0)} %, zbývá ti ${zbude.toFixed(0)} %` +
     `${zbude > 50 ? ' — pořád o něm rozhoduješ ty.' : (zbude > 0 ? ' — nájem ti chodí dál, ale o domě už rozhoduje někdo jiný.' : '.')}\n\n` +
     `Záznam najdeš v deníku (📔).`);
@@ -6427,7 +6668,7 @@ async function encounterNajemnik(enc, u){
   const nabidka = Math.round(ferovy * (1 + enc.najemBonus/100));
   const stav = Math.round(cil.p.units[cil.idx].condition || 0);
   const ok = await showConfirm(
-    `🔑 Zájemce o bydlení\n\n„Sháním byt a viděl jsem, že máš volný v domě ${cil.p.id.replace('h_','#')}${orientacniBod(cil.p) ? ' (' + orientacniBod(cil.p) + ')' : ''}.\n` +
+    `🔑 Zájemce o bydlení\n\n„Sháním byt a viděl jsem, že máš volný v domě ${domKratce(cil.p)}${orientacniBod(cil.p) ? ' (' + orientacniBod(cil.p) + ')' : ''}.\n` +
     `Nabízím ${nabidka} Kč denně — to je o ${enc.najemBonus} % víc, než je běžné."\n\n` +
     `(Běžný nájem: ${ferovy} Kč · stav bytu: ${stav} %)\n\n` +
     `${stav < 50 ? '⚠️ Byt je ve špatném stavu — brzy se odstěhuje.\n\n' : ''}Nastěhovat?`);
@@ -6436,7 +6677,7 @@ async function encounterNajemnik(enc, u){
   cil.p.units[cil.idx].rentPrice = nabidka;
   stampUnit(cil.p.units[cil.idx]);
   stampHouse(cil.p);
-  addNews('rental', `🔑 Do domu ${cil.p.id.replace('h_','#')} se nastěhoval nový nájemník (${nabidka} Kč/den).`);
+  addNews('rental', `🔑 Do domu ${domKratce(cil.p)} se nastěhoval nový nájemník (${nabidka} Kč/den).`);
   await showAlert(`Nastěhováno! Bude ti platit ${nabidka} Kč denně.`);
   saveWorld();   // bez uložení se nastěhování mohlo ztratit při příští synchronizaci
   refreshAll();
@@ -6514,7 +6755,7 @@ async function encounterZnalec(enc, u){
 
   await showAlert(
     `🗺️ Místní znalec\n\n„Bydlím tady odjakživa, tak ti poradím.\n\n` +
-    `Vem si dům ${t.p.id.replace('h_','#')} — ${duvod}.\n\n` +
+    `Vem si dům ${domKratce(t.p)} — ${duvod}.\n\n` +
     `Většinový podíl vyjde asi na ${t.zaVetsinu.toLocaleString('cs-CZ')} Kč a nesl by ti kolem ` +
     `${Math.round(t.denniNajem * 0.51)} Kč denně. Zaplatí se ti zhruba za ${t.navratnost} dní.\n\n` +
     `Je to ${kudyText(t.p, t.vzdalenost)}${orientacniBod(t.p) ? ', ' + orientacniBod(t.p) : ''} — na mapě svítí zeleně."`);
@@ -6842,12 +7083,21 @@ function iconKey(p){
   const owned = houseHasOwner(p);
   const allBroken = !!(p.units && p.units.length && p.units.every(u => u && u.condition <= 0));
   const dosah = !!(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS);
-  return [owned ? 1 : 0, p.useType || '-', allBroken ? 1 : 0, myHousePct(p) > 0 ? 1 : 0,
+  return [owned ? 1 : 0, p.useType || '-', p.provoz?.typ || '-', allBroken ? 1 : 0, myHousePct(p) > 0 ? 1 : 0,
           dosah ? 1 : 0, recommendedIds[p.id] ? 1 : 0].join('|');
 }
 
 function iconFor(p){
   let cls = 'p-empty', emoji = '🏚️';
+  // Provozovna má na mapě vlastní ikonu podle oboru — ať je na první pohled poznat,
+  // kde už někdo podniká (a kde tedy bude konkurence).
+  if(p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ]){
+    const barva = myHousePct(p) > 0 ? 'p-mine' : 'p-rental';
+    let cls2 = 'parcelMarker ' + barva;
+    if(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS) cls2 += ' p-inreach';
+    if(recommendedIds[p.id]) cls2 += ' p-recommended';
+    return L.divIcon({html:`<div class="${cls2}">${PROVOZ_TYPY[p.provoz.typ].emoji}</div>`, className:'', iconSize:[26,26]});
+  }
   const owned = houseHasOwner(p);
   if(owned && p.useType === 'residence'){ cls='p-residence'; emoji='🏠'; }
   else if(owned && p.useType === 'rental'){
@@ -7103,6 +7353,8 @@ function badgeFor(p){
   if(!houseHasOwner(p)) return '<span class="badge badge-empty">Volný</span>';
   if(p.useType === 'residence') return '<span class="badge badge-res">🏠 Bydlení</span>';
   if(p.useType === 'rental') return '<span class="badge badge-rent">🏘️ Pronájem</span>';
+  if(p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ])
+    return `<span class="badge badge-rent">${PROVOZ_TYPY[p.provoz.typ].emoji} ${PROVOZ_TYPY[p.provoz.typ].name}</span>`;
   return '<span class="badge badge-res">Bez využití</span>';
 }
 
@@ -7140,7 +7392,7 @@ function renderSelected(id){
   const free = houseFreePct(p);
   const owned = houseHasOwner(p);
 
-  let html = `<div class="card"><h3>Dům ${p.id.replace('h_','#')} ${badgeFor(p)}</h3>`;
+  let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>`;
   html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
   html += `<p style="font-size:0.92em;color:var(--muted)">${p.levels||1} ${(p.levels||1)===1?'patro':'patra/pater'} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(housePricePerPercent(p))} Kč</p>`;
   const popInfo = popularityInfo(p);
@@ -7162,6 +7414,32 @@ function renderSelected(id){
       <p style="margin:2px 0 0;font-size:0.87em;color:var(--muted);">${lokU.ev.desc}</p>
       <p style="margin:3px 0 0;font-size:0.87em;">Dnes: poptávka po nájmu <b style="color:${barva}">${zmenaNajmu > 0 ? '+' : ''}${zmenaNajmu} %</b>${zmenaCeny ? ` · cena domu <b style="color:${barva}">${zmenaCeny > 0 ? '+' : ''}${zmenaCeny} %</b>` : ''}</p>
       <p style="margin:3px 0 0;font-size:0.83em;color:var(--muted);">Platí jen dnes a jen tady — zítra bude jinde.</p>
+    </div>`;
+  }
+
+  // Karta provozovny — stav zásob, poptávka a co ji ovlivňuje.
+  if(p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ]){
+    const typ = PROVOZ_TYPY[p.provoz.typ];
+    const pop = poptavkaProMisto(p, p.provoz.typ);
+    const zas = Math.round(p.provoz.zasoby ?? 100);
+    const barvaZ = zas > 60 ? 'var(--accent)' : zas > 25 ? 'var(--gold)' : 'var(--danger)';
+    const denne = Math.round(provozVynos(p));
+    const plne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * pop.index);
+    html += `<div class="card" style="border-left:3px solid var(--accent2);">
+      <h3>${typ.emoji} ${typ.name}</h3>
+      <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">${typ.popis}</p>
+      <p style="margin:4px 0;">Poptávka v okolí: <b style="color:${pop.index>=1.1?'var(--accent)':(pop.index>=0.8?'var(--gold)':'var(--danger)')}">${pop.popis}</b>
+        <span style="color:var(--muted);font-size:0.9em;">(${pop.faktory.join(' · ')})</span></p>
+      <p style="margin:4px 0;">Zásoby: <b style="color:${barvaZ}">${zas} %</b></p>
+      <div style="background:var(--panel2);border-radius:4px;height:8px;margin:4px 0;overflow:hidden;">
+        <div style="width:${zas}%;height:100%;background:${barvaZ};"></div>
+      </div>
+      <p style="margin:4px 0;">Vydělává <b style="color:var(--gold)">${denne} Kč/den</b>${zas < 99 ? ` <span style="color:var(--muted)">(při plných zásobách ${plne} Kč)</span>` : ''}</p>
+      ${myPct > 0 ? `<p style="font-size:0.9em;margin:2px 0;">Tvůj podíl ${myPct.toFixed(0)} % → <b style="color:var(--accent)">${Math.round(denne*myPct/100)} Kč/den pro tebe</b></p>` : ''}
+      ${iDecide ? `<div class="row">
+        <button ${near?'':'disabled'} onclick="doplnitZasoby('${p.id}')">Doplnit zásoby${zas<99?` (${doplneniCena(p).toLocaleString('cs-CZ')} Kč)`:' — plné'}</button>
+      </div>` : ''}
+      <p style="font-size:0.83em;color:var(--muted);margin:4px 0 0;">Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně. Bez nich provozovna nevydělá nic — doplňují se na místě.</p>
     </div>`;
   }
 
@@ -7531,6 +7809,19 @@ function renderSelected(id){
 
   // Nad detailem domu visí tři řádky (lokalita, trh, zvýšený zájem) a nikde se nedalo
   // zjistit, co znamenají — hlavně jestli mají vliv na cenu, nebo je to jen popisek.
+  html += infoBox('Jak funguje vlastní provozovna?', `
+    <p><b>Třetí způsob, jak dům využít</b> — vedle bydlení a pronájmu. Otevřeš si v něm večerku, kavárnu, pekárnu, kadeřnictví, fitko nebo restauraci.</p>
+    <p><b>Rozhoduje místo, ne obor.</b> Výnos se počítá z poptávky v okolí:</p>
+    <p style="margin:3px 0;">• kolik lidí v okolí <b>bydlí</b> (byty a patra okolních domů)</p>
+    <p style="margin:3px 0;">• jaký je tam <b>ruch</b> — místa zájmu a firmy přitáhnou lidi zvenčí</p>
+    <p style="margin:3px 0;">• kolik je poblíž <b>konkurence</b> — třetí kavárna v ulici vydělá zlomek toho, co první</p>
+    <p style="margin:3px 0;">• jestli tam zrovna neběží <b>lokální událost</b></p>
+    <div class="ex">Stejná kavárna vydělá v centru i třikrát víc než na okraji. Než ji otevřeš, hra ti u každého oboru ukáže odhad pro tohle konkrétní místo.</div>
+    <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se <b>na místě</b>. Bez nich provozovna nevydělá nic — musíš k ní chodit.</p>
+    <p><b>Kdy se vyplatí.</b> Na dobrém místě se vrátí zhruba za 120 dní, na špatném i za 480. Pro srovnání: pronájem ~400 dní, podíl ve firmě 150. Provozovna je nejvýnosnější, ale jediná vyžaduje péči.</p>
+    <p style="color:var(--muted)">Byty v domě zůstanou zachované — na pronájem se dá kdykoliv vrátit.</p>
+  `);
+
   html += infoBox('Co ovlivňuje cenu domu?', `
     <p><b>${popInfo.stars} Lokalita</b> — kolik podílů se v tomhle okolí za celou dobu koupilo. Je to jen <b>ukazatel zájmu ostatních</b>, na cenu vliv nemá. Hvězdičky přibývají a nikdy neubývají.</p>
     <p><b>📊 Trh (${cyc.label})</b> — nálada v celém městě. Střídá se sama a hýbe cenami všech domů (teď ×${marketMultiplier().toFixed(2)}). V recesi se levněji nakupuje, v konjunktuře dráž prodává.</p>
@@ -7620,12 +7911,23 @@ function renderMine(){
     mine.map(p => {
       const iDecide = iAmDecider(p);
       return `<div class="card">
-      <h3>Dům ${p.id.replace('h_','#')} ${badgeFor(p)}</h3>
+      <h3>${domLabel(p)} ${badgeFor(p)}</h3>
       <p>Tvůj podíl: <b>${myHousePct(p).toFixed(1)} %</b>${
         iDecide ? ' 👑 <span style="color:var(--accent)">rozhoduješ</span>'
         : (houseDecider(p)
             ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" ${profileAttr(houseDecider(p))}>${escapeHtml(houseDecider(p))}</span>`
             : ' · <span style="color:var(--orange)">nikdo nemá většinu — dokup podíl nad 50 %, ať můžeš rozhodovat</span>')}</p>
+      ${p.useType==='provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ] ? (() => {
+        const typ = PROVOZ_TYPY[p.provoz.typ];
+        const zas = Math.round(p.provoz.zasoby ?? 100);
+        const barva = zas > 60 ? 'var(--accent)' : zas > 25 ? 'var(--gold)' : 'var(--danger)';
+        const pop = poptavkaProMisto(p, p.provoz.typ);
+        const denne = Math.round(provozVynos(p) * myHousePct(p) / 100);
+        return `<p>${typ.emoji} ${typ.name} · poptávka <b>${pop.popis}</b> · vyděláváš <b style="color:var(--gold)">${denne} Kč/den</b></p>
+          <p style="font-size:0.88em;color:${barva};margin:2px 0;">📦 Zásoby ${zas} %${zas < 30 ? ' — dochází, zajdi doplnit!' : (zas < 70 ? ' — brzy dojdou' : '')}</p>
+          <div style="background:var(--panel2);border-radius:4px;height:6px;margin:3px 0;overflow:hidden;">
+            <div style="width:${zas}%;height:100%;background:${barva};"></div></div>`;
+      })() : ''}
       ${p.useType==='rental' && p.units ? (() => {
         const byty = asArray(p.units);
         const obsazene = byty.filter(u => u && (u.tenant || u.npc));
@@ -7713,6 +8015,14 @@ function prekresliLokalniUdalost(){
   }).addTo(map).bindTooltip(`${ev.emoji} ${ev.name}${stred.nazev ? ' — ' + stred.nazev : ''}`);
 }
 
+function ukazZakazku(id){
+  const z = zakazkyDnes().find(x => x.id === id);
+  if(!z || !map) return;
+  closeSheet();
+  map.setView([z.lat, z.lng], 18);
+  oznacCil(z);
+}
+
 function flyToParcel(id){
   const p = world.parcels[id];
   if(!p) return;
@@ -7784,11 +8094,36 @@ function renderJobs(){
       <p style="font-size:0.92em;color:var(--muted)">Odsloužené směny na téhle pozici: ${seniorityShifts} (příplatek roste, max ${SENIORITY_BONUS_CAP} Kč) · šance na spropitné ${Math.round((j.tipChance || TIP_CHANCE)*100)} %</p>
       ${attendanceNote}
       <div class="row">
-        <button ${canWorkNow?'':'disabled'} onclick="workShift('${j.id}')">${weekend ? '🌴 Víkend' : (workedToday ? '✅ Hotovo' : `Odpracovat směnu (u ${mojeMisto.nazev})`)}</button>
+        <button ${canWorkNow || (workedToday && !weekend && me.prescasDen !== calendarDay() && ban===0) ?'':'disabled'} onclick="workShift('${j.id}')">${
+          weekend ? '🌴 Víkend'
+          : (workedToday
+              ? (me.prescasDen === calendarDay() ? '✅ Hotovo i s přesčasem' : `⏰ Vzít přesčas (+${Math.round((PRESCAS_BONUS-1)*100)} %)`)
+              : `Odpracovat směnu (u ${mojeMisto.nazev})`)}</button>
         ${j.soukrome ? `<button class="secondary" onclick="flyToBusiness('${j.bizId}')">Kde to je</button>` : ''}
         <button class="danger" onclick="quitJob('${j.id}')">Dát výpověď</button>
       </div>
     </div>`;
+  }
+
+  // ZAKÁZKY — jednorázové brigády. Nevyžadují zaměstnání, takže je uvádíme jako první.
+  const zak = zakazkyDnes();
+  const hotove = me ? zakazkySplnene(me) : [];
+  if(zak.length){
+    html += `<p style="font-size:0.92em;color:var(--muted);margin:10px 0 4px;">📋 Dnešní zakázky — jednorázová práce, nemusíš být zaměstnaný</p>`;
+    html += zak.map(z => {
+      const done = hotove.includes(z.id);
+      const blizko = canInteract(z.lat, z.lng, ZAKAZKA_RADIUS);
+      const d = playerPos ? haversine(playerPos, {lat:z.lat, lng:z.lng}) : null;
+      return `<div class="card" style="${done?'opacity:0.55;':''}">
+        <h3>${z.emoji} ${escapeHtml(z.name)} ${done ? '<span class="badge badge-res">hotovo</span>' : `<span class="badge badge-rent">${z.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
+        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">${escapeHtml(z.popis)}</p>
+        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(z, d)}${z.kde ? ' · ' + escapeHtml(z.kde) : ''}</p>` : ''}
+        ${done ? '' : `<div class="row">
+          <button ${blizko?'':'disabled'} onclick="splnitZakazku('${z.id}')">${blizko?'Splnit zakázku':'Musíš být na místě'}</button>
+          <button class="secondary" onclick="ukazZakazku('${z.id}')">Kde to je</button>
+        </div>`}
+      </div>`;
+    }).join('');
   }
 
   const uRadnice = canInteract(CITY_CENTER[0], CITY_CENTER[1], JOB_RADIUS);
@@ -7899,7 +8234,7 @@ async function buyHouseStake(id){
   if(me.balance < cost){ showAlert(`Nemáš dost peněz (potřeba ${cost} Kč).`); return; }
   const budeMit = (p.owners?.[currentUser.name] || 0) + pct;
   if(!(await showConfirm(
-    `Koupit ${pct.toFixed(1)} % domu ${p.id.replace('h_','#')}?\n\n` +
+    `Koupit ${pct.toFixed(1)} % domu ${domKratce(p)}?\n\n` +
     `Zaplatíš: ${cost.toLocaleString('cs-CZ')} Kč\n` +
     `Zůstane ti: ${Math.round(me.balance - cost).toLocaleString('cs-CZ')} Kč\n` +
     `Budeš vlastnit: ${budeMit.toFixed(1)} %` +
@@ -7936,8 +8271,8 @@ async function buyHouseStake(id){
   });
   p.popularity = (p.popularity || 0) + pct/100;
 
-  zapisDoDeniku('buy', `Koupil jsem ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
-  addNews('buy', `🏠 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${cost} Kč.`);
+  zapisDoDeniku('buy', `Koupil jsem ${pct.toFixed(0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
+  addNews('buy', `🏠 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${domKratce(p)} za ${cost} Kč.`);
   saveWorld(); refreshAll();
   playSound('buy');
   showAlert(`Koupeno ${pct.toFixed(1)} % domu za ${cost} Kč.${bump>1.001?' Zájem zvedl ceny i oblíbenost okolí.':''}`);
@@ -7972,7 +8307,7 @@ async function claimStarterHome(id){
   me.starterHomeAvailable = false;
   if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; stampHouse(p); } // hned kde bydlet
 
-  addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} zdarma.`);
+  addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${pct.toFixed(0)} % domu ${domKratce(p)} zdarma.`);
   saveWorld(); refreshAll();
   playSound('buy');
   showAlert(p.useType === 'residence'
@@ -8001,7 +8336,7 @@ async function sellHouseStake(id){
   const ztratimVetsinu = myPct > 50 && zbyde <= 50;
   const prodavamVse = zbyde <= 0.001;
   const jePronajem = p.useType === 'rental' && asArray(p.units).length;
-  let varovani = `Prodat ${pct.toFixed(1)} % domu ${p.id.replace('h_','#')} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n`;
+  let varovani = `Prodat ${pct.toFixed(1)} % domu ${domKratce(p)} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n`;
   if(zbyde > 0.001) varovani += `Zůstane ti ${zbyde.toFixed(1)} % domu.\n`;
   if(prodavamVse && jePronajem){
     varovani += `\n⚠️ Prodáváš celý svůj podíl. Pokud v domě nezůstane žádný majitel, ZRUŠÍ SE i byty — přestavbu bys musel platit znovu.\n`;
@@ -8021,9 +8356,9 @@ async function sellHouseStake(id){
   p.owners[currentUser.name] -= pct;
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
   stampOwners(p, currentUser.name);
-  if(!houseHasOwner(p)){ p.useType = null; delete p.units; stampHouse(p); }
-  zapisDoDeniku('sell', `Prodal jsem městu ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')}`, refund);
-  addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${refund} Kč.`);
+  if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; stampHouse(p); }
+  zapisDoDeniku('sell', `Prodal jsem městu ${pct.toFixed(0)} % domu ${domKratce(p)}`, refund);
+  addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${domKratce(p)} za ${refund} Kč.`);
   saveWorld(); refreshAll();
   playSound('sell');
   showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
@@ -8059,7 +8394,7 @@ async function listHouseStake(id){
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction', mod: Date.now(),
       startBid, currentBid:startBid, highestBidder:null, endsAtDay: world.day + AUCTION_DURATION_DAYS};
-    addNews('market', `🔨 ${currentUser.name} vydražuje ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} (od ${startBid} Kč).`);
+    addNews('market', `🔨 ${currentUser.name} vydražuje ${pct.toFixed(0)} % domu ${domKratce(p)} (od ${startBid} Kč).`);
     showAlert(`Aukce spuštěna — končí za ${AUCTION_DURATION_DAYS} herní dny.`);
   } else {
     const vstup = parseInt(await showPrompt(`Pevná cena za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
@@ -8069,7 +8404,7 @@ async function listHouseStake(id){
     const price = overeno.cena;
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price, mod: Date.now()};
-    addNews('market', `🏷️ ${currentUser.name} nabízí ${pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${price} Kč.`);
+    addNews('market', `🏷️ ${currentUser.name} nabízí ${pct.toFixed(0)} % domu ${domKratce(p)} za ${price} Kč.`);
     showAlert(`Podíl nabídnut na tržišti za ${price} Kč.`);
   }
   saveWorld(); refreshAll(); renderMarket();
@@ -8080,7 +8415,7 @@ async function cancelListing(listingId){
   if(!l) return;
   const jeAukce = l.type === 'auction';
   if(!(await showConfirm(
-    `Stáhnout nabídku ${l.pct.toFixed(1)} % domu ${(l.houseId||'').replace('h_','#')}?` +
+    `Stáhnout nabídku ${l.pct.toFixed(1)} % domu ${domKratce(l.houseId)}?` +
     (jeAukce && l.highestBidder
       ? `\n\n⚠️ V aukci už někdo přihodil ${l.currentBid.toLocaleString('cs-CZ')} Kč — peníze se mu vrátí a o nabídku přijdeš.`
       : `\n\nPodíl ti zůstane, jen ho přestaneš nabízet.`)))) return;
@@ -8130,7 +8465,7 @@ async function buyListing(listingId){
   const seller = world.users[l.seller];
   // ověřit, že prodejce pořád podíl má
   if((p.owners?.[l.seller]||0) < l.pct - 0.001){ showAlert('Prodejce už podíl nemá, nabídka je neplatná.'); closeListing(listingId); saveWorld(); renderMarket(); return; }
-  if(!(await showConfirm(`Koupit ${l.pct.toFixed(1)} % domu ${l.houseId.replace('h_','#')} od ${l.seller} za ${l.price} Kč?`))) return;
+  if(!(await showConfirm(`Koupit ${l.pct.toFixed(1)} % domu ${domKratce(l.houseId)} od ${l.seller} za ${l.price} Kč?`))) return;
   const fee = Math.round(l.price * MARKET_FEE);
   me.balance -= l.price;
   if(seller) seller.balance += (l.price - fee); // prodejci jde cena minus provize (provize městu = mizí)
@@ -8141,7 +8476,7 @@ async function buyListing(listingId){
   stampOwners(p, l.seller, currentUser.name);
   zapisNedokoncenyNakup(currentUser.name, p.id, predKoupi, l.pct, l.price);
   recordSale(p, l.price, l.pct, l.seller, currentUser.name); // reálný prodej posune hodnotu domu
-  addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} od hráče ${l.seller} za ${l.price} Kč.`);
+  addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${domKratce(p)} od hráče ${l.seller} za ${l.price} Kč.`);
   closeListing(listingId);
   saveWorld(); refreshAll(); renderMarket();
   playSound('buy');
@@ -8195,7 +8530,7 @@ function resolveAuctions(){
       p.owners[l.highestBidder] = (p.owners[l.highestBidder]||0) + l.pct;
       stampOwners(p, l.seller, l.highestBidder);
       recordSale(p, l.currentBid, l.pct, l.seller, l.highestBidder); // vydražená cena posune hodnotu domu
-      addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${p.id.replace('h_','#')} za ${l.currentBid} Kč.`);
+      addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${domKratce(p)} za ${l.currentBid} Kč.`);
     } else if(l.highestBidder && world.users[l.highestBidder]){
       // prodej se nekonal (prodejce už podíl nemá) — vrátit dražiteli peníze
       world.users[l.highestBidder].balance += l.currentBid;
@@ -8281,6 +8616,14 @@ function financeBreakdown(name){
   }
   if(solarIncome>0) income.push({label:'☀️ Solární panely', amount: solarIncome});
   // podniky
+  // Provozovny — vlastní podnikání v domech.
+  let provozIncome = 0;
+  Object.values(world.parcels).forEach(p => {
+    const pct = p.owners?.[name] || 0;
+    if(pct > 0 && p.useType === 'provozovna') provozIncome += provozVynos(p) * (pct/100);
+  });
+  if(provozIncome > 0.5) income.push({label:'🏪 Provozovny', amount: provozIncome});
+
   let bizIncome = 0;
   Object.values(world.businesses).forEach(b => {
     const pct = b.owners?.[name]||0;
@@ -8353,13 +8696,14 @@ function financeBreakdown(name){
     const value = houseMarketPricePerPercent(p)*pct;
     // dům nesoucí příjem (pronájem) = aktivum; nevyužitý/bydlení jen s daní = spíš pasivum
     let dayFlow = 0;
+    if(p.useType === 'provozovna') dayFlow += provozVynos(p) * (pct/100);
     if(p.useType==='rental' && p.units){
       const collected = asArray(p.units).reduce((s,un)=>{const occ=(un && un.condition>0&&(un.tenant||un.npc))?1:0; return s+(un.rentPrice||0)*occ;},0);
       dayFlow += collected*(pct/100);
     }
     dayFlow += solarBonusForHouse(p)*(pct/100);       // panely nesou i u domu, kde bydlím
     dayFlow -= value*PROPERTY_TAX_RATE/DAYS_PER_YEAR; // daň
-    const item = {label:`Dům ${p.id.replace('h_','#')}`, value, dayFlow};
+    const item = {label:domLabel(p), value, dayFlow};
     if(dayFlow >= 0) assets.push(item); else liabilities.push(item);
   });
   Object.values(world.businesses).forEach(b=>{
@@ -8446,7 +8790,7 @@ async function buyHouseStakeOnMortgage(id){
   if(me.balance < akontace){ showAlert('Na akontaci nemáš dost peněz.'); return; }
 
   if(!(await showConfirm(
-    `Koupit ${pct.toFixed(1)} % domu ${p.id.replace('h_','#')} na hypotéku?\n\n` +
+    `Koupit ${pct.toFixed(1)} % domu ${domKratce(p)} na hypotéku?\n\n` +
     `Cena celkem: ${cena.toLocaleString('cs-CZ')} Kč\n` +
     `Zaplatíš hned: ${akontace.toLocaleString('cs-CZ')} Kč\n` +
     `Půjčka od banky: ${uver.toLocaleString('cs-CZ')} Kč za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně\n` +
@@ -8477,7 +8821,7 @@ async function buyHouseStakeOnMortgage(id){
   });
 
   recordSale(p2, cena, pct, 'město', currentUser.name);
-  addNews('trade', `🏦 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${p2.id.replace('h_','#')} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`);
+  addNews('trade', `🏦 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${domKratce(p2)} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`);
   saveWorld(); refreshAll(); playSound('buy');
   showAlert(`Hotovo! Vlastníš ${pct.toFixed(1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
 }
@@ -8519,12 +8863,12 @@ function zabavZastavu(user, loan, p, duvod){
   p.owners[jmeno] = mam - bere;
   if(p.owners[jmeno] <= 0.001) delete p.owners[jmeno];
   stampOwners(p, jmeno);
-  if(!houseHasOwner(p)){ p.useType = null; delete p.units; stampHouse(p); }
+  if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; stampHouse(p); }
 
   applySeizureProceeds(user, loan, vytezek);
-  addNews('bank', `🏦 Banka zabavila ${bere.toFixed(0)} % domu ${p.id.replace('h_','#')} hráči ${jmeno} — ${duvod}.`);
+  addNews('bank', `🏦 Banka zabavila ${bere.toFixed(0)} % domu ${domKratce(p)} hráči ${jmeno} — ${duvod}.`);
   if(currentUser && currentUser.name === jmeno){
-    showAlert(`🏦 Banka si vzala zastavený podíl v domě ${p.id.replace('h_','#')} (${duvod}). Prodejem se pokryla část dluhu.`);
+    showAlert(`🏦 Banka si vzala zastavený podíl v domě ${domKratce(p)} (${duvod}). Prodejem se pokryla část dluhu.`);
   }
   // Pokud výtěžek nestačil, zbytek dluhu pokračuje — ale už bez zástavy.
   if(loan.balance > 0.5){
@@ -8551,7 +8895,7 @@ function seizeAssetForDebt(user, loan){
   if(house){
     const pct = house.owners[owner];
     const proceeds = Math.round(housePricePerPercent(house) * pct * HOUSE_SELL_RATIO);
-    seizedDesc = `${pct.toFixed(1)} % domu ${house.id.replace('h_','#')} (výplata ${proceeds} Kč)`;
+    seizedDesc = `${pct.toFixed(1)} % domu ${domKratce(house)} (výplata ${proceeds} Kč)`;
     applySeizureProceeds(user, loan, proceeds);
     delete house.owners[owner];
     stampOwners(house, owner);
@@ -8645,7 +8989,7 @@ function renderMarket(){
   html += listings.map(l => {
     const p = world.parcels[l.houseId];
     const mine = l.seller === currentUser?.name;
-    const houseLabel = `Dům ${l.houseId.replace('h_','#')}`;
+    const houseLabel = domLabel(l.houseId);
     if(l.type==='auction'){
       const leads = l.highestBidder === currentUser?.name;
       const daysLeft = Math.max(0, l.endsAtDay - world.day);
@@ -8914,7 +9258,7 @@ async function startProject(houseId, key){
   me.balance -= cost;
   p.project = { key, startDay: world.day, endDay: world.day + def.days, cost };
   stampHouse(p);
-  addNews('event', `${def.icon} ${currentUser.name} začal na domě ${p.id.replace('h_','#')}: ${def.name}.`);
+  addNews('event', `${def.icon} ${currentUser.name} začal na domě ${domKratce(p)}: ${def.name}.`);
   saveWorld(); refreshAll();
   showAlert(`${def.icon} Projekt běží. Hotovo bude za ${def.days} dní.`);
 }
@@ -8928,9 +9272,9 @@ function finishDueProjects(){
       try { def.apply(p); } catch(e){ console.warn('projekt selhal', e); }
     }
     const majitel = Object.entries(p.owners || {}).sort((a,b) => b[1]-a[1])[0];
-    addNews('event', `${def ? def.icon : '🏗️'} Na domě ${p.id.replace('h_','#')} je hotovo: ${def ? def.name : 'projekt'}.`);
+    addNews('event', `${def ? def.icon : '🏗️'} Na domě ${domKratce(p)} je hotovo: ${def ? def.name : 'projekt'}.`);
     if(majitel && currentUser && majitel[0] === currentUser.name){
-      setTimeout(() => showAlert(`${def ? def.icon : '🏗️'} Hotovo: ${def ? def.name : 'projekt'} na domě ${p.id.replace('h_','#')}.`), 800);
+      setTimeout(() => showAlert(`${def ? def.icon : '🏗️'} Hotovo: ${def ? def.name : 'projekt'} na domě ${domKratce(p)}.`), 800);
     }
     delete p.project;
     stampHouse(p);
@@ -9496,6 +9840,15 @@ function renderAdmin(){
 
   // Záznam chyb — ať víš o průšvizích i od hráčů, kteří ti je nenapíšou do chatu.
   html += `<div class="card">
+    <h3>🏷️ Adresy domů</h3>
+    <p style="font-size:0.9em;color:var(--muted);">Skutečná čísla popisná a ulice z OpenStreetMap. Stahují se jednou a ukládají jen do tohohle telefonu.</p>
+    <p style="font-size:0.92em;">Načteno: <b>${Object.keys(ADRESY).length}</b> adres${
+      adresyStav === 'stahuji' ? ' · <span style="color:var(--gold)">stahuje se…</span>'
+      : (adresyStav === 'chyba' ? ' · <span style="color:var(--danger)">stažení selhalo</span>' : '')}</p>
+    <div class="row"><button class="secondary" onclick="adminNactiAdresy()">Načíst adresy znovu</button></div>
+  </div>
+
+  <div class="card">
     <h3>🧯 Záznam chyb ${chybyLog.length ? `<span class="badge badge-res">${chybyLog.length}</span>` : ''}</h3>`;
   if(!chybyLog.length){
     html += `<p style="font-size:0.85em;color:var(--muted)">Zatím nic — od posledního vymazání appka nespadla.</p>`;
@@ -9527,7 +9880,7 @@ function renderAdmin(){
     html += `<p style="font-size:0.88em;margin:2px 0;">Navštívených míst: <b>${heat.bunky}</b> · záznamů celkem: <b>${heat.celkem.toLocaleString('cs-CZ')}</b></p>
       <p style="font-size:0.85em;color:var(--muted);margin:4px 0 2px 0;">Nejrušnější místa:</p>`;
     heat.top.forEach((t, i) => {
-      const kde = t.vzdalenost < 80 ? ('u domu ' + t.dum.id.replace('h_','#')) : (Math.round(t.odCentra) + ' m od náměstí');
+      const kde = t.vzdalenost < 80 ? ('u domu ' + domKratce(t.dum)) : (Math.round(t.odCentra) + ' m od náměstí');
       html += `<p style="margin:1px 0 1px 10px;font-size:0.83em;color:var(--muted);">${i+1}. ${kde} — <b>${t.pocet}×</b></p>`;
     });
     // jestli jsou balíky tam, kde je živo
@@ -9820,7 +10173,7 @@ function adminPlayerDetail(name){
     const obsazenych = byty.filter(x => x && (x.tenant || x.npc)).length;
     const najemCelkem = byty.reduce((s,x) => s + (x ? (x.rentPrice||0) : 0), 0);
     td += `<div style="border:1px solid var(--border);border-radius:6px;padding:5px 7px;margin-top:4px;background:var(--panel);">
-      <p style="margin:0;font-size:0.84em;"><b>${p.id.replace('h_','#')}</b> · podíl <b>${podil.toFixed(1)} %</b>${spravce?' 👑 <span style="color:var(--accent);font-size:0.9em">rozhoduje</span>':''}</p>
+      <p style="margin:0;font-size:0.84em;"><b>${domKratce(p)}</b> · podíl <b>${podil.toFixed(1)} %</b>${spravce?' 👑 <span style="color:var(--accent);font-size:0.9em">rozhoduje</span>':''}</p>
       ${r('využití', p.useType === 'rental' ? '🏘️ pronájem' : (p.useType === 'residence' ? '🏠 bydlení' : '— neurčeno (nic nevydělává)'))}
       ${r('hodnota domu', kc(effectiveHousePrice(p)) + ' Kč (jeho podíl ' + kc(effectiveHousePrice(p)*podil/100) + ' Kč)')}
       ${r('poslední změna', p.mod ? kdy(p.mod) + ' <span style="opacity:0.7">(' + dt(p.mod) + ')</span>' : 'nezaznamenána — s domem se nikdy nehýbalo', p.mod ? undefined : 'var(--orange)')}
@@ -9864,7 +10217,7 @@ function adminPlayerDetail(name){
   const prace = getCurrentJob(name);
   const najmy = [];
   Object.values(world.parcels || {}).forEach(p => asArray(p.units).forEach((un,i) => {
-    if(un && un.tenant === name) najmy.push(p.id.replace('h_','#') + ' (' + (i+1) + '. byt, ' + kc(un.rentPrice) + ' Kč/den)');
+    if(un && un.tenant === name) najmy.push(domKratce(p) + ' (' + (i+1) + '. byt, ' + kc(un.rentPrice) + ' Kč/den)');
   }));
   h += sekce('💼 Práce a nájmy', ''
     + r('zaměstnání', prace ? escapeHtml(prace.job.name) + ' · ' + kc(prace.job.salary) + ' Kč/směna · ' + (u.currentJobShifts||0) + ' směn na pozici' : 'nezaměstnaný')
@@ -10015,7 +10368,7 @@ async function adminSetMoney(name){
 function seizeAssets(name){
   Object.values(world.parcels).forEach(p => {
     if(p.owners && p.owners[name] !== undefined){ delete p.owners[name]; stampHouse(p); stampOwners(p, name); }
-    if(!houseHasOwner(p)){ p.useType = null; delete p.units; }
+    if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; }
     (p.units || []).forEach(un => { if(un.tenant === name) un.tenant = null; });
   });
   Object.values(world.businesses).forEach(b => { if(b.owners && b.owners[name] !== undefined){ delete b.owners[name]; stampBizOwners(b, name); } });
@@ -10387,12 +10740,12 @@ function renderStatDetail(which){
     let rentPart = 0, kdeBydli = null;
     if(status==='tenant'){
       Object.values(world.parcels).forEach(p => asArray(p.units).forEach((un,i) => {
-        if(un && un.tenant===u.name){ rentPart += un.rentPrice||0; kdeBydli = p.id.replace('h_','#') + ' (' + (i+1) + '. byt)'; }
+        if(un && un.tenant===u.name){ rentPart += un.rentPrice||0; kdeBydli = domKratce(p) + ' (' + (i+1) + '. byt)'; }
       }));
     }
     if(status==='owner'){
       const domov = Object.values(world.parcels).find(p => p.useType==='residence' && (p.owners?.[u.name]||0) > 0);
-      if(domov) kdeBydli = domov.id.replace('h_','#') + ` (podíl ${(domov.owners[u.name]||0).toFixed(0)} %)`;
+      if(domov) kdeBydli = domKratce(domov) + ` (podíl ${(domov.owners[u.name]||0).toFixed(0)} %)`;
     }
     const celkem = Math.round(cost + rentPart);
 
@@ -10662,6 +11015,7 @@ function renderDenik(el){
         ${radek('🏘️ Nájem', sh.najem, 'var(--accent)')}
         ${radek('🏢 Firmy', sh.firmy, 'var(--accent)')}
         ${radek('☀️ Solár', sh.solar, 'var(--accent)')}
+        ${radek('🏪 Provozovny', sh.provoz || 0, 'var(--accent)')}
         ${radek('💼 Mzda', sh.mzdy, 'var(--accent)')}
         ${radek('🎯 Balíky a úkoly', sh.akce, 'var(--accent)')}
         ${radek('🍞 Život a bydlení', sh.naklady, 'var(--danger)', true)}
@@ -10694,6 +11048,26 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'7.3', datum:'2026-09-09', body:[
+    ['novinka','Domy se teď jmenují podle SKUTEČNÉ adresy — „Dvorská 149“ místo „Dům #1929“. Čísla popisná a názvy ulic se stáhnou z OpenStreetMap a spárují s domy podle polohy.'],
+    ['info','Adresy se stahují jednou a ukládají jen do tvého telefonu. Když se nepodaří dům spárovat, zůstane u něj původní číslo.'],
+  ]},
+  { verze:'7.2', datum:'2026-09-09', body:[
+    ['novinka','Provozovny jsou teď vidět všude: v „Moje nemovitosti“ i se stavem zásob, na mapě mají vlastní ikonu podle oboru, v žebříčku se počítají a v příjmu je vidět, kolik z nich plyne.'],
+    ['novinka','Když zásoby klesnou pod čtvrtinu, přijde upozornění — ať tě nepřekvapí, že provozovna přestala vydělávat.'],
+    ['novinka','V průvodci přibyly dvě kapitoly: vlastní provozovna a práce (povýšení, přesčas, docházka).'],
+  ]},
+  { verze:'7.1', datum:'2026-09-09', body:[
+    ['oprava','Náhodné události (nález peněz, prasklá trubka) měnily zůstatek, ale v souhrnu dne ani v deníku se neobjevily. Rozpad pak neseděl na skutečný pohyb peněz.'],
+    ['oprava','Provozovna zůstávala na domě i poté, co majitel prodal celý podíl.'],
+  ]},
+  { verze:'7.0', datum:'2026-09-08', body:[
+    ['novinka','🏪 VLASTNÍ PODNIKÁNÍ. Z domu, kde máš většinu, jde udělat provozovnu — večerku, kavárnu, pekárnu, kadeřnictví, fitko nebo restauraci. Výnos se počítá z POPTÁVKY na daném místě: kolik lidí v okolí bydlí, jaký je tam ruch a kolik máš konkurence. Stejná kavárna vydělá v centru třikrát víc než na okraji.'],
+    ['info','Provozovna potřebuje zásoby — ubývají 12 % denně a doplňují se na místě. Bez nich nevydělá nic. Návratnost je 110–480 dní podle toho, jak dobře trefíš místo (pronájem ~400, podíl ve firmě 150).'],
+    ['novinka','📋 ZAKÁZKY. Každý den se na mapě objeví dvě jednorázové brigády — roznos zásilek, úklid, drobná oprava. Platí zhruba 2,5× denní mzdu a nemusíš být zaměstnaný.'],
+    ['novinka','⬆️ POVÝŠENÍ. Na vyšší městskou pozici se teď přechází rovnou, bez výpovědi, a polovinu odsloužené stáže si neseš s sebou.'],
+    ['novinka','⏰ PŘESČAS. Druhá směna v jednom dni za +60 % mzdy. Zítra ale budeš unavený a z první směny dostaneš jen 60 %.'],
+  ]},
   { verze:'6.9', datum:'2026-09-08', body:[
     ['oprava','Byt, ve kterém bydlíš ty sám, se počítal jako prázdný — vypadalo to, že v domě nikdo nebydlí. Teď se počítá jako obsazený a je označený jako tvůj.'],
     ['info','Z bytu, ve kterém bydlíš, ti nechodí nájem (sám sobě ho neplatíš), zato šetříš na životních nákladech. Hra to teď u domu napíše.'],
@@ -10981,7 +11355,7 @@ function renderFinance(){
       <p style="font-size:0.85em;color:var(--muted)">Domy blízko tebe, kde je nájem vysoký vzhledem k ceně. Čím dřív se dům zaplatí, tím lepší koupě.</p>`;
     tipy.forEach(t => {
       html += `<div style="border:1px solid var(--border);border-radius:8px;padding:7px;margin-top:6px;">
-        <p style="margin:0;font-weight:600;">🏠 Dům ${t.p.id.replace('h_','#')}</p>
+        <p style="margin:0;font-weight:600;">🏠 Dům ${domKratce(t.p)}</p>
         <p style="margin:2px 0;font-size:0.85em;color:var(--accent);">${t.duvod}</p>
         <p style="margin:2px 0;font-size:0.83em;color:var(--muted);">Většinový podíl ~${t.zaMe.toLocaleString('cs-CZ')} Kč · nájem ~${Math.round(t.denniNajem)} Kč/den</p>
         <p style="margin:2px 0;font-size:0.83em;color:var(--gold);">🧭 ${kudyText(t.p, t.d)}${t.orientace ? ` · ${escapeHtml(t.orientace)}` : ''}</p>
@@ -11054,6 +11428,28 @@ function renderGuide(){
     <p>• <b>Chůze</b> — když se opravdu projdeš po městě, appka ti za nachozené metry přidá peníze. Nemusíš ji mít pořád zapnutou — když ji zapneš po procházce, započítá se i cesta, kterou jsi zvládl pěšky (ne autem — to appka pozná podle rychlosti).</p>
     <p>• <b>Pronájem</b> — když vlastníš byt a někdo si ho pronajme, každý den ti chodí nájem.</p>
     <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
+    <p>• <b>Vlastní provozovna</b> — z vlastního domu uděláš obchod nebo kavárnu a vyděláváš na zákaznících z okolí.</p>
+    <p>• <b>Zakázky</b> — každý den se na mapě objeví dvě jednorázové brigády. Dojdeš na místo, splníš, dostaneš zaplaceno. Nemusíš být zaměstnaný.</p>
+  `);
+
+  html += guideSection('🏪','Vlastní provozovna — podnikání na míru místu', `
+    <p>Z domu, kde máš <b>víc než polovinu</b>, jde udělat provozovnu: večerku, kavárnu, pekárnu, kadeřnictví, fitko nebo restauraci.</p>
+    <p><b>Nejdůležitější je, KDE ji otevřeš — ne co.</b> Výnos se počítá z poptávky v okolí:</p>
+    <p>• kolik lidí v okolí <b>bydlí</b></p>
+    <p>• jaký je tam <b>ruch</b> (památky, firmy, průchozí místa)</p>
+    <p>• kolik je poblíž <b>konkurence</b> — třetí kavárna v ulici vydělá zlomek toho, co první</p>
+    <p>Než ji otevřeš, hra ti u každého oboru ukáže odhad výnosu <b>pro ten konkrétní dům</b>. Stejná kavárna vydělá v centru i třikrát víc než na kraji města.</p>
+    <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se přímo na místě. Bez zásob provozovna nevydělá vůbec nic — je to jediný způsob výdělku, který po tobě chce, abys tam občas zašel.</p>
+    <p style="color:var(--muted)">💡 Na dobrém místě se investice vrátí zhruba za 120 dní, na špatném i za 480. Pronájem se vrací asi za 400 dní, podíl ve firmě za 150.</p>
+    <p style="color:var(--muted)">Byty v domě zůstanou zachované — kdykoliv se dá vrátit k pronájmu.</p>
+  `);
+
+  html += guideSection('💼','Práce, povýšení a přesčas', `
+    <p><b>Kde se pracuje.</b> Městské pozice se nastupují na radnici, práce u firem přímo v tom podniku. Směna se odpracuje na místě.</p>
+    <p><b>Praxe se počítá.</b> Čím déle jsi na jedné pozici, tím vyšší příplatek (až ${SENIORITY_BONUS_CAP} Kč za směnu).</p>
+    <p><b>Povýšení.</b> Na vyšší městskou pozici přejdeš rovnou, bez výpovědi — a <b>polovinu odsloužené praxe si neseš s sebou</b>. Když dáš výpověď a nastoupíš jinam, praxe se ztratí celá.</p>
+    <p><b>Přesčas.</b> Když už máš směnu za sebou, můžeš vzít druhou za <b>+${Math.round((PRESCAS_BONUS-1)*100)} %</b> mzdy. Zítra ale budeš unavený a z první směny dostaneš jen ${Math.round(PRESCAS_UNAVA*100)} %.</p>
+    <p><b>Docházka.</b> Když ${JOB_SICK_DAYS_ALLOWED}× po sobě nepřijdeš do práce v pracovní den, dostaneš výpověď a ${JOB_BAN_DAYS} dní si nemůžeš najít novou.</p>
   `);
 
   html += guideSection('🏠','Bydlení — proč se vyplatí mít domov', `
@@ -11440,6 +11836,7 @@ function renderLeaderboard(){
     // Byt, kde bydlí sám majitel, je taky obsazený — jen z něj nechodí nájem.
     const obsazenych = domy.reduce((n, p) => n + asArray(p.units).filter(x => x && (x.tenant || x.npc || x.ownerOccupied)).length, 0);
     const firmy = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0);
+    const provozovny = domy.filter(p => p.useType === 'provozovna' && p.provoz);
     const f = safeCall(() => financeBreakdown(u.name)) || {income:[], expense:[], net:0};
     const zPolozky = re => (f.income || []).filter(i => re.test(i.label)).reduce((a,i)=>a+i.amount, 0);
     const maj = safeCall(() => majetekHodnota(u.name)) || {trzni:0};
@@ -11458,6 +11855,8 @@ function renderLeaderboard(){
       prijem: Math.round(f.net || 0),
       zNajmu: Math.round(zPolozky(/Nájem/)),
       zFirem: Math.round(zPolozky(/[Ff]irm|podnik/)),
+      zProvozu: Math.round(zPolozky(/Provozovny/)),
+      provozovny: provozovny.length,
       zPrace: Math.round(zPolozky(/Plat|Spropitné/)),
       serie: u.streak || 0,
       dni: Math.max(1, (world.day || 1) - (u.joinedGameDay || 1) + 1)
@@ -11502,6 +11901,7 @@ function renderLeaderboard(){
     const zdroje = [
       pl.zNajmu > 0 ? `🏘️ nájem ${pl.zNajmu} Kč` : null,
       pl.zFirem > 0 ? `🏢 firmy ${pl.zFirem} Kč` : null,
+      pl.zProvozu > 0 ? `🏪 provozovny ${pl.zProvozu} Kč` : null,
       pl.zPrace > 0 ? `💼 práce ${pl.zPrace} Kč` : null
     ].filter(Boolean).join(' · ');
 
@@ -11514,7 +11914,7 @@ function renderLeaderboard(){
       <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">
         💰 ${Math.round(pl.worth).toLocaleString('cs-CZ')} Kč jmění ·
         🏠 ${pl.houses} ${pl.houses===1?'dům':'domů'}${pl.bytu ? ` (${pl.obsazenych}/${pl.bytu} bytů obsazeno)` : ''} ·
-        🏢 ${pl.firmy}</p>
+        🏢 ${pl.firmy}${pl.provozovny ? ` · 🏪 ${pl.provozovny}` : ''}</p>
       <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">
         📈 ${pl.prijem >= 0 ? '+' : ''}${pl.prijem} Kč/den${zdroje ? ' — ' + zdroje : ''}</p>
       <p style="font-size:0.84em;color:var(--muted);margin:2px 0;">
@@ -11619,7 +12019,7 @@ function renderBank(){
         const hodnota = houseMarketPricePerPercent(dum) * Math.min(l.pct || 0, dum.owners?.[me.name] || 0);
         const pomer = hodnota > 0 ? l.balance / hodnota : 99;
         const barva = pomer > 1.2 ? 'var(--danger)' : (pomer > 0.9 ? 'var(--gold)' : 'var(--accent)');
-        kryti = `<p style="font-size:0.92em;">Zástava: ${l.pct.toFixed(0)} % domu ${l.houseId.replace('h_','#')} v hodnotě
+        kryti = `<p style="font-size:0.92em;">Zástava: ${l.pct.toFixed(0)} % domu ${domKratce(l.houseId)} v hodnotě
           <b>${Math.round(hodnota).toLocaleString('cs-CZ')} Kč</b> · dluh je <b style="color:${barva}">${Math.round(pomer*100)} %</b> její hodnoty
           <span style="color:var(--muted)">(nad ${Math.round(MORTGAGE_REPO_MULTIPLIER*100)} % si ji banka vezme)</span></p>`;
       }
@@ -11680,7 +12080,7 @@ async function occupyOwnUnit(id, idx){
 
   let zprava = `Nastěhovat se do ${idx+1}. bytu?\n\nTenhle byt přestane vydělávat (${u.rentPrice} Kč/den), ale ostatní byty v domě pronajímáš dál.\n\nKlesnou ti životní náklady na ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.`;
   if(jinyByt.length) zprava += `\n\nZ bytu, kde bydlíš teď, se odstěhuješ (zase začne vydělávat).`;
-  else if(jinyDum) zprava += `\n\nPozn.: pořád máš dům ${jinyDum.id.replace('h_','#')} určený k bydlení.`;
+  else if(jinyDum) zprava += `\n\nPozn.: pořád máš dům ${domKratce(jinyDum)} určený k bydlení.`;
   if(!(await showConfirm(zprava))) return;
 
   // Po potvrzení si byt vyzvedneme ZNOVU — mezitím se do něj mohl nastěhovat nájemník
@@ -11710,6 +12110,144 @@ async function leaveOwnUnit(id, idx){
   stampHouse(p);
   saveWorld(); refreshAll();
   showAlert(`Vystěhoval ses. Byt se zase pronajímá.`);
+}
+
+// ===== ZAKÁZKY =====
+// Jednorázové brigády, které se objeví na mapě. Dojdi na místo, splň, dostaneš víc než
+// za běžnou směnu. Dávají důvod chodit i tomu, kdo už žije z pasivního příjmu —
+// a nevyžadují zaměstnání, takže jsou i pro nováčky.
+const ZAKAZKA_RADIUS = 55;          // m — jak blízko musíš být
+const ZAKAZKY_ZA_DEN = 2;
+const ZAKAZKA_ODMENA = 2.4;         // násobek denní mzdy nástupní pozice
+
+const ZAKAZKA_DRUHY = [
+  { emoji:'📦', name:'Roznos zásilek',      popis:'Rozvezni balíky po okolí.' },
+  { emoji:'🧹', name:'Úklid po akci',       popis:'Po jarmarku zbyl nepořádek.' },
+  { emoji:'🪴', name:'Zalití záhonů',       popis:'Městská zeleň potřebuje vodu.' },
+  { emoji:'🔧', name:'Drobná oprava',       popis:'Rozbitá lavička, uvolněná cedule.' },
+  { emoji:'📋', name:'Soupis majetku',      popis:'Město sepisuje, co komu patří.' },
+  { emoji:'🐕', name:'Venčení psů',         popis:'Útulek shání pomoc na odpoledne.' }
+];
+
+// Zakázky se losují deterministicky ze dne, aby vyšly stejně na všech zařízeních.
+function zakazkyDnes(){
+  const den = calendarDay();
+  if(!world.zakazky || world.zakazky.den !== den){
+    const body = LANDMARK_DEFS
+      .concat(Object.values(world.businesses || {}).filter(b => b && b.lat))
+      .concat(Object.values(world.parcels || {}).filter((_, i) => i % 220 === 0));
+    if(!body.length) return [];
+    const list = [];
+    for(let i = 0; i < ZAKAZKY_ZA_DEN; i++){
+      const seed = Math.abs((den * 7919 + i * 104729) % 2147483647);
+      const misto = body[seed % body.length];
+      const druh = ZAKAZKA_DRUHY[(seed >> 5) % ZAKAZKA_DRUHY.length];
+      const zaklad = (JOB_DEFS[0]?.salary || 240) * inflationMult() * ZAKAZKA_ODMENA;
+      list.push({
+        id: 'zak_' + den + '_' + i,
+        emoji: druh.emoji, name: druh.name, popis: druh.popis,
+        lat: misto.lat, lng: misto.lng,
+        kde: misto.name || null,
+        odmena: Math.round(zaklad * (0.85 + ((seed >> 11) % 30) / 100))
+      });
+    }
+    world.zakazky = { den, list };
+  }
+  return asArray(world.zakazky.list);
+}
+
+function zakazkySplnene(u){
+  const den = calendarDay();
+  if(!u) return [];
+  if(u.zakazkyDen !== den){ u.zakazkyDen = den; u.zakazkyHotove = []; }
+  if(!Array.isArray(u.zakazkyHotove)) u.zakazkyHotove = [];
+  return u.zakazkyHotove;
+}
+
+async function splnitZakazku(id){
+  const z = zakazkyDnes().find(x => x.id === id);
+  if(!z) return;
+  const u = world.users[currentUser.name];
+  const hotove = zakazkySplnene(u);
+  if(hotove.includes(id)){ showAlert('Tuhle zakázku už máš hotovou.'); return; }
+  if(!canInteract(z.lat, z.lng, ZAKAZKA_RADIUS)){
+    const d = playerPos ? Math.round(haversine(playerPos, {lat:z.lat, lng:z.lng})) : null;
+    showAlert(`Zakázka se plní na místě.${d !== null ? ` Jsi ${d} m daleko, potřeba je ${ZAKAZKA_RADIUS} m.` : ''}`);
+    return;
+  }
+  u.balance += z.odmena;
+  pricti(u, 'akce', z.odmena);
+  hotove.push(id);
+  zapisDoDeniku('zakazka', `${z.name}${z.kde ? ' — ' + z.kde : ''}`, z.odmena);
+  addNews('job', `${z.emoji} ${currentUser.name} splnil zakázku: ${z.name}.`);
+  playSound('coin');
+  saveWorld(); refreshAll();
+  showAlert(`${z.emoji} Hotovo! Na účet ti přišlo ${z.odmena.toLocaleString('cs-CZ')} Kč.`);
+}
+
+async function otevritProvozovnu(id){
+  const p = world.parcels[id];
+  if(!p) return;
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být u domu.'); return; }
+  if(!iHaveMajority(p)){ showAlert('Provozovnu může otevřít jen vlastník s víc než 50 % podílu.'); return; }
+  const me = world.users[currentUser.name];
+  const cena = provozInvestice(p);
+
+  // Nabídneme typy i s odhadem poptávky PRO TOHLE MÍSTO — v tom je celá hra:
+  // stejná pekárna vydělá jinde třikrát víc.
+  const seznam = Object.entries(PROVOZ_TYPY).map(([k, t]) => {
+    const pop = poptavkaProMisto(p, k);
+    const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index);
+    return { k, t, pop, denne };
+  }).sort((a,b) => b.denne - a.denne);
+
+  const vyber = await showPrompt(
+    `🏪 Otevřít provozovnu v domě ${domKratce(p)}\n\n` +
+    `Zařízení stojí ${cena.toLocaleString('cs-CZ')} Kč. Výnos závisí na tom, kolik lidí je v okolí a jaká je konkurence.\n\n` +
+    seznam.map((x, i) => `${i+1}) ${x.t.emoji} ${x.t.name} — poptávka ${x.pop.popis}, ~${x.denne} Kč/den`).join('\n') +
+    `\n\nNapiš číslo (1–${seznam.length}):`, '1');
+  if(vyber === null) return;
+  const idx = parseInt(vyber, 10) - 1;
+  if(isNaN(idx) || idx < 0 || idx >= seznam.length){ showAlert('Neplatná volba.'); return; }
+  const volba = seznam[idx];
+
+  if(me.balance < cena){ showAlert(`Na zařízení potřebuješ ${cena.toLocaleString('cs-CZ')} Kč, máš ${Math.round(me.balance).toLocaleString('cs-CZ')} Kč.`); return; }
+
+  const najemnici = asArray(p.units).filter(u => u && (u.tenant || u.npc)).length;
+  if(!(await showConfirm(
+    `${volba.t.emoji} ${volba.t.name} za ${cena.toLocaleString('cs-CZ')} Kč?\n\n` +
+    `Poptávka na tomhle místě: ${volba.pop.popis}\n${volba.pop.faktory.join(' · ')}\n\n` +
+    `Odhad výnosu: ~${volba.denne} Kč/den při plných zásobách\n` +
+    `Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně — musíš je chodit doplňovat, jinak výnos klesá.\n\n` +
+    (najemnici ? `⚠️ Vystěhuje ${najemnici} ${najemnici===1?'nájemníka':'nájemníků'}.\n\n` : '') +
+    `Byty zůstanou zachované, na pronájem se dá kdykoliv vrátit.`))) return;
+
+  me.balance -= cena;
+  asArray(p.units).forEach(u => { if(u){ u.tenant = null; u.npc = null; u.ownerOccupied = false; stampUnit(u); } });
+  p.useType = 'provozovna';
+  p.provoz = { typ: volba.k, zasoby: 100, otevrenoDen: world.day };
+  stampHouse(p);
+  zapisDoDeniku('provoz', `Otevřel jsem ${volba.t.name.toLowerCase()} v domě ${domKratce(p)}`, -cena);
+  addNews('trade', `${volba.t.emoji} ${currentUser.name} otevřel ${volba.t.name.toLowerCase()} v domě ${domKratce(p)}.`);
+  saveWorld(); refreshAll();
+  showAlert(`${volba.t.emoji} ${volba.t.name} otevřena!\n\nVýnos ti poroste podle poptávky. Nezapomeň chodit doplňovat zásoby — bez nich provozovna nevydělá nic.`);
+}
+
+async function doplnitZasoby(id){
+  const p = world.parcels[id];
+  if(!p || !p.provoz) return;
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Zásoby se doplňují na místě — musíš být u provozovny.'); return; }
+  const chybi = Math.round(100 - (p.provoz.zasoby ?? 100));
+  if(chybi < 1){ showAlert('Zásoby jsou plné.'); return; }
+  const cena = doplneniCena(p);
+  const me = world.users[currentUser.name];
+  if(me.balance < cena){ showAlert(`Doplnění stojí ${cena.toLocaleString('cs-CZ')} Kč, máš ${Math.round(me.balance).toLocaleString('cs-CZ')} Kč.`); return; }
+  if(!(await showConfirm(`Doplnit zásoby (${chybi} %) za ${cena.toLocaleString('cs-CZ')} Kč?`))) return;
+  me.balance -= cena;
+  p.provoz.zasoby = 100;
+  stampHouse(p);
+  zapisDoDeniku('provoz', `Doplnil jsem zásoby v domě ${domKratce(p)}`, -cena);
+  saveWorld(); refreshAll();
 }
 
 async function setUseType(id, type){
@@ -11754,7 +12292,7 @@ async function setUseType(id, type){
       if(u.tenant){
         const najemnik = u.tenant;
         u.tenant = null;
-        if(world.users[najemnik]) addNews('rental', `📤 ${najemnik} se musel vystěhovat z domu ${p.id.replace('h_','#')} — majitel se tam nastěhoval.`);
+        if(world.users[najemnik]) addNews('rental', `📤 ${najemnik} se musel vystěhovat z domu ${domKratce(p)} — majitel se tam nastěhoval.`);
       }
       if(u.npc){ u.npc = null; }
       u.ownerOccupied = false;   // celý dům je teď bydlení, jednotlivý byt už není potřeba
@@ -11784,7 +12322,7 @@ async function startRental(id){
     p.useType = 'rental';
     p.units.forEach(u => { if(u){ u.rentPrice = novyNajem; stampUnit(u); } });
     stampHouse(p);
-    addNews('rental', `🏘️ ${currentUser.name} zase pronajímá dům ${p.id.replace('h_','#')} (nájem ${novyNajem} Kč).`);
+    addNews('rental', `🏘️ ${currentUser.name} zase pronajímá dům ${domKratce(p)} (nájem ${novyNajem} Kč).`);
     saveWorld(); refreshAll();
     showAlert(`Pronájem zase běží — zdarma, byty ti zůstaly z dřívějška.`);
     return;
@@ -11809,7 +12347,7 @@ async function startRental(id){
   p.useType = 'rental';
   p.units = Array.from({length: numUnits}, () => ({uid: newUnitId(), rentPrice: rent, condition: 100}));
   stampHouse(p);
-  addNews('rental', `🏘️ ${currentUser.name} otevřel pronájem v domě ${p.id.replace('h_','#')} (${numUnits} ${numUnits===1?'byt':'bytů'}, nájem ${rent} Kč).`);
+  addNews('rental', `🏘️ ${currentUser.name} otevřel pronájem v domě ${domKratce(p)} (${numUnits} ${numUnits===1?'byt':'bytů'}, nájem ${rent} Kč).`);
   saveWorld(); refreshAll();
   showAlert(`Zaplaceno ${setupCost} Kč za zařízení ${numUnits} ${numUnits===1?'bytu':'bytů'}. Nájem se připisuje průběžně v reálném čase, byty postupně chátrají.`);
 }
@@ -11893,8 +12431,8 @@ async function installUpgrade(id, key){
   if(!p.upgrades) p.upgrades = {};
   p.upgrades[key] = true;
   stampHouse(p);
-  zapisDoDeniku('upgrade', `${up.icon} ${up.name} — dům ${p.id.replace('h_','#')}`, -cost);
-  addNews('rental', `${up.icon} ${currentUser.name} vylepšil dům ${p.id.replace('h_','#')} — ${up.name}.`);
+  zapisDoDeniku('upgrade', `${up.icon} ${up.name} — dům ${domKratce(p)}`, -cost);
+  addNews('rental', `${up.icon} ${currentUser.name} vylepšil dům ${domKratce(p)} — ${up.name}.`);
   playSound('success');
   saveWorld(); refreshAll();
   showAlert(`${up.name} nainstalováno. Investice se ti postupně vrátí.`);
@@ -11914,7 +12452,7 @@ async function repairUnit(id, idx){
   me.balance -= cost;
   unit.condition = 100;
   stampUnit(unit);
-  zapisDoDeniku('repair', `Opravil jsem byt v domě ${p.id.replace('h_','#')} (+${Math.round(missing)} % stavu)`, -cost);
+  zapisDoDeniku('repair', `Opravil jsem byt v domě ${domKratce(p)} (+${Math.round(missing)} % stavu)`, -cost);
   stampHouse(p);
   // počítadlo oprav pro denní úkol (nuluje se s novým dnem)
   const today = calendarDay();
@@ -11941,7 +12479,7 @@ async function rentUnit(id, idx){
   const totalDaily = TENANT_LIVING_COST + unit.rentPrice;
   if(!(await showConfirm(`Najmout byt ${idx+1}. patro za ${unit.rentPrice} Kč/den? Celkem za bydlení zaplatíš ${totalDaily} Kč/den (nájem + životní složka) — pořád míň než ${LIVING_COST} Kč bez bydlení.`))) return;
   unit.tenant = currentUser.name;
-  addNews('rental', `🔑 ${currentUser.name} se nastěhoval do nájmu v domě ${p.id.replace('h_','#')}.`);
+  addNews('rental', `🔑 ${currentUser.name} se nastěhoval do nájmu v domě ${domKratce(p)}.`);
   saveWorld(); refreshAll();
   showAlert(`Nastěhoval ses do nájmu (${idx+1}. patro). Nájem se platí průběžně.`);
 }
@@ -12017,7 +12555,7 @@ function maxTierFor(u){
 }
 function jobBanRemaining(u){ return Math.max(0, (u.jobBanUntil || 0) - world.day); }
 
-function takeJob(jobId){
+async function takeJob(jobId){
   const pj = String(jobId).startsWith('pj_') ? privateJobById(jobId) : null;
   const misto = jobPlace(pj || world.jobs[jobId]);
   if(!canInteract(misto.lat, misto.lng, JOB_RADIUS)){
@@ -12027,9 +12565,19 @@ function takeJob(jobId){
   const me = world.users[currentUser.name];
   const ban = jobBanRemaining(me);
   if(ban > 0){ showAlert(`Máš zákaz práce ještě ${ban} ${ban===1?'den':'dní'} kvůli vynechané směně.`); return; }
-  if(getCurrentJob(currentUser.name)){ showAlert('Už máš práci — nejdřív dej výpověď.'); return; }
   const job = pj || world.jobs[jobId];
   if(!job){ showAlert('Tahle pozice už neexistuje.'); return; }
+
+  // POVÝŠENÍ: na vyšší městskou pozici se přechází rovnou, bez výpovědi — a půlka odsloužené
+  // stáže jde s tebou. Dřív musel hráč nejdřív dát výpověď, čímž o stáž přišel celou,
+  // takže se mu vyplatilo zůstat na horší pozici jen kvůli příplatku.
+  const stavajici = getCurrentJob(currentUser.name);
+  const stara = stavajici ? stavajici.job : null;
+  const jePovyseni = !!(stara && !pj && !stara.soukrome && (job.tier || 0) > (stara.tier || 0));
+  if(stavajici && !jePovyseni){
+    showAlert('Už máš práci — nejdřív dej výpověď.\n\n(Na vyšší městskou pozici se přechází rovnou jako povýšení, tam výpověď netřeba.)');
+    return;
+  }
 
   // Kolik lidí na pozici je: u městské z holders, u soukromé se počítá z účtů hráčů,
   // protože soukromá místa se v datech světa nedrží.
@@ -12040,13 +12588,31 @@ function takeJob(jobId){
 
   if((me.totalShifts||0) < (job.reqShifts||0)){ showAlert(`Na tuhle pozici potřebuješ ${job.reqShifts} odpracovaných směn (máš ${me.totalShifts||0}). Začni od nižší pozice.`); return; }
   if(!pj && job.tier > maxTierFor(me)){ showAlert('Nemůžeš přeskočit víc úrovní najednou — postupuj postupně od nižších pozic.'); return; }
+  const povyseni = jePovyseni;
+  const prenesenaStaz = povyseni ? Math.floor((me.currentJobShifts || 0) / 2) : 0;
+  if(povyseni){
+    const potvrd = await showConfirm(
+      `⬆️ Povýšení z pozice ${stara.name} na ${job.name}?\n\n` +
+      `Plat ${Math.round(stara.salary * inflationMult())} → ${Math.round(job.salary * inflationMult())} Kč za směnu\n` +
+      `Z odsloužené stáže si přeneseš ${prenesenaStaz} z ${me.currentJobShifts || 0} směn.`);
+    if(!potvrd) return;
+    if(world.jobs[stara.id] && Array.isArray(world.jobs[stara.id].holders)){
+      world.jobs[stara.id].holders = world.jobs[stara.id].holders.filter(n => n !== currentUser.name);
+    }
+  }
   if(!pj) job.holders.push(currentUser.name);
   me.jobStartDay = world.day; // grace: dnešek se nekontroluje na docházku
   me.currentJobId = jobId;
-  me.currentJobShifts = 0;
+  me.currentJobShifts = prenesenaStaz;
   me.missedInRow = 0;
   me.jobChangedTs = Date.now();   // razítko změny práce, ať se při sloučení nepřepíše starší verzí
-  addNews('job', `${pj ? pj.emoji : '💼'} ${currentUser.name} nastoupil do práce jako ${job.name}.`);
+  addNews('job', povyseni
+    ? `⬆️ ${currentUser.name} byl povýšen na pozici ${job.name}.`
+    : `${pj ? pj.emoji : '💼'} ${currentUser.name} nastoupil do práce jako ${job.name}.`);
+  if(povyseni && prenesenaStaz > 0){
+    showToast(`⬆️ Povýšení! Z předchozí pozice si neseš ${prenesenaStaz} ${prenesenaStaz===1?'odslouženou směnu':'odsloužených směn'}.`);
+  }
+  zapisDoDeniku('work', povyseni ? `Povýšení na ${job.name}` : `Nastoupil jsem jako ${job.name}`, null);
   saveWorld(); renderJobs();
 }
 
@@ -12075,7 +12641,7 @@ async function quitJob(jobId){
   saveWorld(); renderJobs();
 }
 
-function workShift(jobId){
+async function workShift(jobId){
   const pjob = String(jobId).startsWith('pj_') ? privateJobById(jobId) : null;
   const misto = jobPlace(pjob || world.jobs[jobId]);
   if(!canInteract(misto.lat, misto.lng, JOB_RADIUS)){
@@ -12086,7 +12652,19 @@ function workShift(jobId){
   const job = pjob || world.jobs[jobId];
   const me = world.users[currentUser.name];
   const today = calendarDay();
-  if(me.lastWorkedCalDay === today){ showAlert('Dnes už jsi odpracoval směnu. Přijď zase zítra.'); return; }
+  // PŘESČAS: druhá směna v jednom dni. Vyšší sazba, ale druhý den jsi unavený
+  // a vyděláš míň — takže se nedá jet přesčas každý den donekonečna.
+  let jePrescas = false;
+  if(me.lastWorkedCalDay === today){
+    if(me.prescasDen === today){ showAlert('Přesčas už máš za sebou. Dneska stačilo — přijď zítra.'); return; }
+    const zaklad = Math.round(job.salary * inflationMult() * eventMult('wageMult'));
+    const odmena = Math.round(zaklad * PRESCAS_BONUS);
+    if(!(await showConfirm(
+      `⏰ Vzít přesčas?\n\nDruhá směna dneška za ${odmena.toLocaleString('cs-CZ')} Kč ` +
+      `(${Math.round((PRESCAS_BONUS-1)*100)} % navíc oproti běžné směně).\n\n` +
+      `⚠️ Zítra budeš unavený — z první směny dostaneš jen ${Math.round(PRESCAS_UNAVA*100)} % mzdy.`))) return;
+    jePrescas = true;
+  }
 
   // příplatek za odsloužené směny NA TÉTO pozici (stáž) — resetuje se při změně práce
   if(me.currentJobId !== jobId){ me.currentJobId = jobId; me.currentJobShifts = 0; }
@@ -12100,7 +12678,11 @@ function workShift(jobId){
     tip = Math.round(job.salary * ratio);
   }
 
-  const total = Math.round((job.salary + Math.round(seniorityBonus) + tip) * inflationMult() * eventMult('wageMult'));
+  // Přesčas přidá, únava po přesčase ubere.
+  const unavenyDnes = (me.unavaDen === today) ? PRESCAS_UNAVA : 1;
+  const prescasMult = jePrescas ? PRESCAS_BONUS : 1;
+  const total = Math.round((job.salary + Math.round(seniorityBonus) + tip)
+    * inflationMult() * eventMult('wageMult') * prescasMult * unavenyDnes);
   me.balance += total;
   me.lastWorkedCalDay = today;
   // (dřív se tu vedlo i `lastWorkedDay` — nikde se nečetlo, docházka nikdy nevznikla)
@@ -12122,7 +12704,8 @@ function workShift(jobId){
   // a nemůže vyjít záporný.
   const zaklad = total - stazKc - spropKc;
 
-  let msg = `Odpracováno: +${zaklad} Kč`;
+  let msg = `${jePrescas ? '⏰ Přesčas' : 'Odpracováno'}: +${zaklad} Kč`;
+  if(unavenyDnes < 1) msg = `😴 Po přesčase jsi unavený — mzda jen ${Math.round(PRESCAS_UNAVA*100)} %\n\n` + msg;
   if(stazKc >= 1) msg += ` · příplatek za stáž +${stazKc} Kč`;
   if(gotTip && spropKc >= 1) msg += ` · 🎉 spropitné +${spropKc} Kč`;
   msg += ` = ${total} Kč celkem.`;
@@ -12133,8 +12716,12 @@ function workShift(jobId){
     const zmena = Math.round((nasobekUdalosti - 1) * 100);
     msg += `\n\n${ev ? ev.emoji + ' ' + ev.name : 'Dnešní událost'}: mzdy ${zmena > 0 ? '+' : ''}${zmena} % (základ ${Math.round(job.salary*inflationMult())} Kč → ${zaklad} Kč).`;
   }
+  if(jePrescas){
+    me.prescasDen = today;
+    me.unavaDen = today + 1;   // zítra nižší mzda
+  }
   pricti(me, 'mzdy', total);
-  zapisDoDeniku('work', `Odpracoval jsem směnu — ${job.name}`, total);
+  zapisDoDeniku('work', jePrescas ? `Vzal jsem přesčas — ${job.name}` : `Odpracoval jsem směnu — ${job.name}`, total);
   playSound(gotTip ? 'coin' : 'work');
   showAlert(msg);
 }
@@ -12618,6 +13205,9 @@ window.onload = async () => {
   nastavZachytChyb();
   nastavOchranuProtiObnoveni();
   safeCall(() => oznacNoveZmeny());
+  safeCall(() => nactiAdresy());
+  // Adresy stahujeme jen jednou za město. Až po startu, ať to nezdržuje načtení hry.
+  if(adresyStav !== 'hotovo') setTimeout(() => safeCall(() => stahniAdresy()), 4000);
   loadNotifyFlag();
   initFirebaseSync();   // pak se na pozadí připojí ke sdílenému světu (multiplayer)
   if(tryAutoLogin()) obnovPosledniPanel();
