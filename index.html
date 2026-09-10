@@ -156,6 +156,46 @@
     justify-content:center;font-size:14px;border:2px solid #0008;
     opacity:0.55;transition:opacity 0.2s;
   }
+
+  /* ===== KRESLENÝ VZHLED =====
+     Podklad zůstává z OpenStreetMap, jen se přebarví filtrem — teplejší, sytější a měkčí,
+     aby působil jako ilustrovaná mapa z deskové hry. Značky domů dostanou vzhled nálepek:
+     bílý okraj, měkký stín a mírné natočení. Nemění se zdroj dlaždic, takže se podklad
+     nemůže rozbít a vzhled jde kdykoliv vypnout. */
+  /* Kontrast držíme na 1.0 a sepii nízko — jinak se ztratí názvy ulic a čísla popisná,
+     což je zrovna to, co na mapě potřebuješ číst. */
+  body.kresleno .leaflet-tile-pane{
+    filter:saturate(1.35) contrast(1.02) brightness(1.03) sepia(0.12) hue-rotate(-4deg);
+  }
+  /* Podklad pod dlaždicemi zůstává tmavý: kdyby se dlaždice nenačetly (bez signálu),
+     je to hned poznat. Béžová plocha vypadala jako záměr, i když šlo o výpadek. */
+  body.kresleno .leaflet-container{ background:var(--bg); }
+
+  body.kresleno .parcelMarker{
+    border-radius:10px;
+    border:2px solid rgba(255,255,255,0.92);
+    box-shadow:0 2px 5px rgba(0,0,0,0.35);
+    opacity:0.82;
+    font-size:15px;
+  }
+  /* Drobné natočení — nálepky nalepené od ruky, ne zarovnané pravítkem. */
+  body.kresleno .leaflet-marker-icon:nth-of-type(3n) .parcelMarker{ transform:rotate(-4deg); }
+  body.kresleno .leaflet-marker-icon:nth-of-type(3n+1) .parcelMarker{ transform:rotate(3deg); }
+  body.kresleno .p-inreach{ opacity:1; box-shadow:0 3px 8px rgba(0,0,0,0.45); }
+  body.kresleno .p-mine{ box-shadow:0 0 0 3px var(--gold), 0 3px 7px rgba(0,0,0,0.4); }
+  body.kresleno .p-empty{ background:#9ca3af; }
+
+  /* Pilulky a lišta ať ladí s teplejším podkladem */
+  body.kresleno .statPill{
+    background:rgba(30,25,20,0.88);
+    border:1px solid rgba(255,255,255,0.12);
+    box-shadow:0 2px 6px rgba(0,0,0,0.3);
+  }
+  body.kresleno .railBtn{
+    border-radius:18px;
+    box-shadow:0 3px 8px rgba(0,0,0,0.35);
+    border:1px solid rgba(255,255,255,0.14);
+  }
   .otherPlayerMarker{
     width:28px;height:28px;border-radius:50%;display:flex;align-items:center;
     justify-content:center;font-size:16px;background:rgba(192,132,252,0.9);
@@ -402,6 +442,7 @@
   <div id="leftRail">
     <button class="railBtn" data-tab="denik" id="denikRailBtn" title="Můj deník">📔</button>
     <button class="railBtn" data-tab="zmeny" id="zmenyRailBtn" title="Co je nového">🆕</button>
+    <button class="railBtn" id="vzhledRailBtn" onclick="prepniVzhled()" title="Přepnout vzhled mapy">🎨</button>
   </div>
 
   <div id="bottomSheet">
@@ -603,7 +644,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '7.3';
+const APP_VERSION = '7.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6688,7 +6729,7 @@ async function encounterBrigada(enc, u){
   const prace = ['přestěhovat skříň', 'posekat zahradu', 'vynosit dříví', 'pomoct se stavbou plotu', 'uklidit sklep'];
   const co = prace[Math.abs(enc.id.length * 7 + enc.odmena) % prace.length];
   const ok = await showConfirm(
-    `💪 Soused s prosbou\n\n„Nepomohl bys mi ${co}? Zabere to chvíli.\n` +
+    `💪 Soused s prosbou\n\n„Nemohl bys mi ${co}? Zabere to chvíli.\n` +
     `Dám ti za to ${enc.odmena} Kč."\n\nPomoct?`);
   if(!ok){ showToast('Odmítl jsi pomoc.'); return; }
   u.balance += enc.odmena;
@@ -7158,6 +7199,45 @@ const PODKLADY = [
 let podkladIndex = 0;
 let podkladVrstva = null;
 
+// ===== VZHLED MAPY =====
+// Kreslený režim jen přebarví dlaždice filtrem a udělá ze značek nálepky. Nemění zdroj
+// dlaždic, takže se nemůže rozbít podklad — a dá se kdykoliv vypnout.
+function nactiVzhled(){
+  let v = 'kresleno';
+  try { v = localStorage.getItem('bucpoly_vzhled') || 'kresleno'; } catch(e){}
+  nastavVzhled(v, true);
+}
+function nastavVzhled(v, tiche){
+  try { localStorage.setItem('bucpoly_vzhled', v); } catch(e){}
+  if(document.body) document.body.classList.toggle('kresleno', v === 'kresleno');
+  safeCall(() => oznacVzhledIkonu());
+  if(!tiche){
+    showToast(v === 'kresleno' ? '🎨 Kreslený vzhled zapnutý' : '🗺️ Klasický vzhled — mapa jako obvykle');
+    safeCall(() => renderGuide());
+  }
+}
+// Přepnutí jedním klepnutím — ikona 🎨 pod novinkami. Vzhled se mění často (podle světla,
+// nálady), takže by bylo otravné kvůli tomu pokaždé otevírat průvodce.
+function prepniVzhled(){
+  const novy = vzhledJe() === 'kresleno' ? 'klasicky' : 'kresleno';
+  nastavVzhled(novy);
+  oznacVzhledIkonu();
+}
+
+// Ikona ukazuje, co se stane po klepnutí — ne aktuální stav.
+function oznacVzhledIkonu(){
+  const b = document.getElementById('vzhledRailBtn');
+  if(!b) return;
+  const kresleno = vzhledJe() === 'kresleno';
+  b.textContent = kresleno ? '🗺️' : '🎨';
+  b.title = kresleno ? 'Přepnout na klasickou mapu' : 'Přepnout na kreslenou mapu';
+}
+
+function vzhledJe(){
+  try { return localStorage.getItem('bucpoly_vzhled') || 'kresleno'; } catch(e){ return 'kresleno'; }
+}
+
+let mapaVypadekHlasena = false;
 function nastavPodklad(index){
   if(!map || index >= PODKLADY.length) return;
   podkladIndex = index;
@@ -7181,9 +7261,17 @@ function nastavPodklad(index){
   let chyb = 0;
   podkladVrstva.on('tileerror', () => {
     chyb++;
-    if(chyb >= 8 && podkladIndex === index && index + 1 < PODKLADY.length){
-      zapisChybu(`Podklad mapy ${index} selhal (${chyb} dlaždic), přepínám na ${index + 1}`, 'mapa');
-      nastavPodklad(index + 1);
+    if(chyb >= 8 && podkladIndex === index){
+      if(index + 1 < PODKLADY.length){
+        zapisChybu(`Podklad mapy ${index} selhal (${chyb} dlaždic), přepínám na ${index + 1}`, 'mapa');
+        nastavPodklad(index + 1);
+      } else if(!mapaVypadekHlasena){
+        // Došly všechny zdroje dlaždic. Bez upozornění vypadá prázdná mapa jako chyba
+        // ve hře, přitom jde skoro vždycky o síť.
+        mapaVypadekHlasena = true;
+        zapisChybu('Žádný podklad mapy se nenačetl — pravděpodobně výpadek sítě', 'mapa');
+        showToast('🗺️ Mapa se nenačítá — zkontroluj připojení. Hra funguje dál, jen bez podkladu.');
+      }
     }
   });
   podkladVrstva.addTo(map);
@@ -7201,6 +7289,7 @@ function initMap(){
   // nebo appka spadne). Vznikají líně jen pro domy blízko hráče / středu mapy — viz syncHouseMarkers().
   syncHouseMarkers();
   safeCall(() => prekresliLokalniUdalost());
+  safeCall(() => prekresliEvu());
   // Posun prstem vystřelí `moveend` klidně několikrát za sebou. Bez zdržení se přepočet
   // pouštěl pokaždé a mapa při tažení trhala.
   let prekresliTimer = null;
@@ -7992,6 +8081,28 @@ function kudyText(cil, d){
 // Kruh lokální události na mapě. Bez něj by hráč nepoznal, proč se mu zrovna tady
 // hůř pronajímá — a hlavně by neměl důvod někam jít.
 let lokalniKruh = null, lokalniZnacka = null, lokalniKlic = null;
+// Značka Evy na mapě. Přesune se každý den jinam, takže ji stačí překreslovat spolu
+// s ostatními denními věcmi.
+let evaZnacka = null, evaKlic = null;
+function prekresliEvu(){
+  if(!map) return;
+  const e = evaDnes();
+  const u = currentUser ? world.users[currentUser.name] : null;
+  const hotovo = evaPotkanaDnes(u);
+  const klic = e ? `${calendarDay()}|${e.lat.toFixed(5)}|${hotovo}` : '';
+  if(klic === evaKlic) return;
+  evaKlic = klic;
+  if(evaZnacka){ map.removeLayer(evaZnacka); evaZnacka = null; }
+  if(!e) return;
+  evaZnacka = L.marker([e.lat, e.lng], {
+    icon: L.divIcon({
+      html: `<div class="parcelMarker" style="background:${hotovo ? '#6b7280' : '#c084fc'};color:#fff;opacity:${hotovo?0.6:1};">🔍</div>`,
+      className: '', iconSize:[26,26]
+    })
+  }).addTo(map).bindTooltip(hotovo ? 'Eva — dneska už jste mluvili' : 'Eva, městská revizorka');
+  evaZnacka.on('click', () => safeCall(() => potkatEvu()));
+}
+
 function prekresliLokalniUdalost(){
   if(!map) return;
   const c = lokalniDnes();
@@ -8755,6 +8866,24 @@ async function takeLoan(){
 
 function mortgageForHouse(u, houseId){
   return asArray(u && u.loans).find(l => l && l.type === 'mortgage' && l.houseId === houseId) || null;
+}
+
+// Kolik procent domu je vázáno hypotékou a nesmí se prodat. Bez téhle kontroly šlo
+// zástavu prodat a peníze si nechat — banka by pak vymáhala dluh proti podílu,
+// který už hráč nevlastní.
+function zastavenoPct(name, houseId){
+  const m = mortgageForHouse(world.users[name], houseId);
+  return m ? (m.pct || 0) : 0;
+}
+
+// Společná kontrola pro všechny způsoby prodeje podílu.
+function muzuProdat(name, houseId, pct){
+  const m = mortgageForHouse(world.users[name], houseId);
+  if(!m) return { ok: true };
+  const mam = world.parcels[houseId]?.owners?.[name] || 0;
+  const volne = Math.max(0, mam - (m.pct || 0));
+  if(pct <= volne + 0.001) return { ok: true };
+  return { ok: false, volne, vazano: m.pct || 0, dluh: Math.round(m.balance) };
 }
 
 async function buyHouseStakeOnMortgage(id){
@@ -9652,6 +9781,26 @@ function renderDaily(){
     <p style="font-size:0.9em;margin:2px 0;">${ev.desc}</p>
     ${lokStred ? `<p style="font-size:0.88em;margin:4px 0 0;color:var(--gold)">📍 Týká se okolí ${escapeHtml(lokStred.nazev || 'jednoho místa')}${lokD !== null ? ` — ${kudyText(lokStred, lokD)}` : ''}. Na mapě je to vyznačené kruhem.</p>` : ''}
   </div>`;
+
+  // EVA — poděkování hráčce, která hru testuje. Chodí po městě, jednou denně dá odměnu.
+  {
+    const e = evaDnes();
+    const hotovo = evaPotkanaDnes(u);
+    if(e){
+      const d = playerPos ? haversine(playerPos, {lat:e.lat, lng:e.lng}) : null;
+      const blizko = canInteract(e.lat, e.lng, EVA_RADIUS);
+      html += `<div class="card" style="border-left:3px solid var(--purple);${hotovo?'opacity:0.6;':''}">
+        <h3>🔍 Eva, městská revizorka ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : `<span class="badge badge-rent">${e.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
+        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">Prochází město a hledá chyby v účetnictví. Když nějakou najde, přeplatek vrací tomu, komu patří.</p>
+        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(e, d)}${e.kde ? ' · ' + escapeHtml(e.kde) : ''}</p>` : ''}
+        ${hotovo ? '<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Zítra bude zase někde jinde.</p>' : `<div class="row">
+          <button ${blizko?'':'disabled'} onclick="potkatEvu()">${blizko?'Promluvit si':'Musíš být blíž'}</button>
+          <button class="secondary" onclick="ukazEvu()">Kde je</button>
+        </div>`}
+      </div>`;
+    }
+  }
+
 
   // --- poslední náhodné setkání ---
   // `lastEvent` se dosud jen zapisoval a nikdo ho nikdy neviděl. Ukážeme ho v den, kdy nastal —
@@ -10565,6 +10714,7 @@ function renderStatDetail(which){
     if((u.pickupDay===dnes ? asArray(u.pickupGot).length : 0) < PICKUP_COUNT) zbyva.push(`💰 sebrat balíky (${PICKUP_COUNT - (u.pickupDay===dnes ? asArray(u.pickupGot).length : 0)} zbývá)`);
     if((u.lmDay===dnes ? asArray(u.lmGot).length : 0) < allLandmarks().length) zbyva.push(`📍 navštívit místa (${allLandmarks().length - (u.lmDay===dnes ? asArray(u.lmGot).length : 0)} zbývá)`);
     if(u.lastWorkedCalDay !== dnes && !isWeekend()) zbyva.push('💼 jít do práce');
+    if(!evaPotkanaDnes(u)) zbyva.push('🔍 najít Evu');
     const ukoly = (u.questDay===dnes) ? asArray(u.quests).length - asArray(u.questDone).length : 3;
     if(ukoly > 0) zbyva.push(`🎯 splnit úkoly (${ukoly} zbývá)`);
 
@@ -11048,6 +11198,24 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'7.8', datum:'2026-09-09', body:[
+    ['novinka','Po městě chodí 🔍 Eva, městská revizorka. Když u tebe najde chybu v účetnictví, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš. Kde dnes je, uvidíš v Denních výzvách nebo podle fialové značky na mapě.'],
+    ['info','Eva je skutečná hráčka, která Bučpoly od začátku testuje. Většina oprav v tomhle přehledu vznikla z jejích hlášení — postava je poděkování.'],
+  ]},
+  { verze:'7.7', datum:'2026-09-09', body:[
+    ['novinka','Vzhled mapy se přepíná jedním klepnutím — ikona pod novinkami vlevo. Ukazuje, co se stane: 🗺️ přepne na klasickou, 🎨 zpátky na kreslenou.'],
+  ]},
+  { verze:'7.6', datum:'2026-09-09', body:[
+    ['oprava','Nabídnout podíl k prodeji nešlo — po zadání procent se nic nestalo. Chyběla vnitřní funkce, která kontroluje zástavu hypotéky, a celá akce tiše spadla. Stejná chyba shazovala i prodej městu a nabídku od kupce z okolí.'],
+    ['oprava','Překlep v prosbě souseda: „Nepomohl bys mi“ → „Nemohl bys mi“.'],
+  ]},
+  { verze:'7.5', datum:'2026-09-09', body:[
+    ['oprava','Kreslený vzhled zeslabil kontrast tak, že se hůř četly názvy ulic a čísla popisná. Filtr je teď jemnější — barvy zůstaly teplé, popisky jsou ostré.'],
+    ['oprava','Když se nepodaří načíst mapové podklady (slabý signál), hra to napíše. Dřív zůstala jen prázdná plocha a vypadalo to jako chyba ve hře.'],
+  ]},
+  { verze:'7.4', datum:'2026-09-09', body:[
+    ['novinka','Mapa má nový kreslený vzhled — teplejší barvy a značky domů jako nalepené nálepky. Přepnout zpátky na klasický jde v Průvodci nahoře („Vzhled mapy“).'],
+  ]},
   { verze:'7.3', datum:'2026-09-09', body:[
     ['novinka','Domy se teď jmenují podle SKUTEČNÉ adresy — „Dvorská 149“ místo „Dům #1929“. Čísla popisná a názvy ulic se stáhnou z OpenStreetMap a spárují s domy podle polohy.'],
     ['info','Adresy se stahují jednou a ukládají jen do tvého telefonu. Když se nepodaří dům spárovat, zůstane u něj původní číslo.'],
@@ -11410,7 +11578,16 @@ function renderFinance(){
 
 function renderGuide(){
   const el = document.getElementById('guideContent');
-  let html = `<div class="card"><h3>🔤 Velikost písma</h3>
+  const vz = vzhledJe();
+  let html = `<div class="card"><h3>🎨 Vzhled mapy</h3>
+    <p>Kreslený vzhled obarví mapu do teplejších barev a ze značek domů udělá nálepky.</p>
+    <div class="row">
+      <button class="${vz==='kresleno'?'':'secondary'}" style="flex:1;" onclick="nastavVzhled('kresleno')">🎨 Kreslený</button>
+      <button class="${vz==='kresleno'?'secondary':''}" style="flex:1;" onclick="nastavVzhled('klasicky')">🗺️ Klasický</button>
+    </div>
+  </div>
+
+  <div class="card"><h3>🔤 Velikost písma</h3>
     <p>Zvětši si text, aby se ti dobře četl.</p>
     <div class="row">
       <button class="secondary" onclick="setFontScale(1)">A <span style="font-size:0.8em">malé</span></button>
@@ -11430,6 +11607,12 @@ function renderGuide(){
     <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
     <p>• <b>Vlastní provozovna</b> — z vlastního domu uděláš obchod nebo kavárnu a vyděláváš na zákaznících z okolí.</p>
     <p>• <b>Zakázky</b> — každý den se na mapě objeví dvě jednorázové brigády. Dojdeš na místo, splníš, dostaneš zaplaceno. Nemusíš být zaměstnaný.</p>
+  `);
+
+  html += guideSection('🔍','Eva, městská revizorka', `
+    <p>Po Bučovicích chodí <b>Eva</b> a kontroluje účetnictví. Když u tebe najde chybu v poplatcích, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš.</p>
+    <p>Kde dnes je, poznáš v <b>Denních výzvách</b> nebo podle fialové značky 🔍 na mapě.</p>
+    <div class="ex">Eva je skutečná hráčka, která Bučpoly od začátku testuje a hlásí chyby. Většina oprav v přehledu novinek vznikla z jejích hlášení — tahle postava je poděkování.</div>
   `);
 
   html += guideSection('🏪','Vlastní provozovna — podnikání na míru místu', `
@@ -12116,6 +12299,68 @@ async function leaveOwnUnit(id, idx){
 // Jednorázové brigády, které se objeví na mapě. Dojdi na místo, splň, dostaneš víc než
 // za běžnou směnu. Dávají důvod chodit i tomu, kdo už žije z pasivního příjmu —
 // a nevyžadují zaměstnání, takže jsou i pro nováčky.
+// ===== EVA, MĚSTSKÁ REVIZORKA =====
+// Poděkování hráčce, která hru testuje a hlásí chyby. Chodí po městě a když ji potkáš,
+// „najde chybu v účetnictví" a vrátí ti přeplatek. Jednou denně, ať to nejde farmit.
+const EVA_RADIUS = 60;
+const EVA_ODMENA = 1.6;   // násobek denní mzdy nástupní pozice
+
+const EVA_HLASKY = [
+  'Koukám do papírů a máš tady chybu v poplatcích. Vracím ti přeplatek.',
+  'Zase jsem našla nesrovnalost v účetnictví. Tumáš, patří to tobě.',
+  'Kontrolovala jsem výpisy a něco tam nesedělo — už je to opravené.',
+  'Nesedí mi tvoje daně. Naštěstí ve tvůj prospěch, tak si to vem.',
+  'Prošla jsem si nájemní smlouvy v okolí a jedna chyba byla i u tebe. Opraveno.'
+];
+
+// Kde dnes Eva je. Jako u zakázek — deterministicky ze dne, aby vyšla všem stejně.
+function evaDnes(){
+  const den = calendarDay();
+  const body = LANDMARK_DEFS
+    .concat(Object.values(world.businesses || {}).filter(b => b && b.lat))
+    .concat(Object.values(world.parcels || {}).filter((_, i) => i % 310 === 0));
+  if(!body.length) return null;
+  const seed = Math.abs((den * 15485863) % 2147483647);
+  const misto = body[seed % body.length];
+  return {
+    lat: misto.lat, lng: misto.lng,
+    kde: misto.name || null,
+    hlaska: EVA_HLASKY[seed % EVA_HLASKY.length],
+    odmena: Math.round((JOB_DEFS[0]?.salary || 240) * inflationMult() * EVA_ODMENA * (0.8 + ((seed >> 9) % 40) / 100))
+  };
+}
+
+function evaPotkanaDnes(u){
+  return !!(u && u.evaDen === calendarDay());
+}
+
+async function potkatEvu(){
+  const u = world.users[currentUser.name];
+  const e = evaDnes();
+  if(!u || !e) return;
+  if(evaPotkanaDnes(u)){ showAlert('S Evou už jsi dneska mluvil. Zítra bude zase někde po městě.'); return; }
+  if(!canInteract(e.lat, e.lng, EVA_RADIUS)){
+    const d = playerPos ? Math.round(haversine(playerPos, {lat:e.lat, lng:e.lng})) : null;
+    showAlert(`Eva je jinde.${d !== null ? ` Jsi ${d} m daleko, potřeba je ${EVA_RADIUS} m.` : ''}`);
+    return;
+  }
+  u.evaDen = calendarDay();
+  u.balance += e.odmena;
+  pricti(u, 'akce', e.odmena);
+  zapisDoDeniku('other', `Potkal jsem Evu — našla chybu v účetnictví`, e.odmena);
+  playSound('coin');
+  saveWorld(); refreshAll();
+  await showAlert(`🔍 Eva, městská revizorka\n\n„${e.hlaska}"\n\n+${e.odmena.toLocaleString('cs-CZ')} Kč`);
+}
+
+function ukazEvu(){
+  const e = evaDnes();
+  if(!e || !map) return;
+  closeSheet();
+  map.setView([e.lat, e.lng], 18);
+  oznacCil(e);
+}
+
 const ZAKAZKA_RADIUS = 55;          // m — jak blízko musíš být
 const ZAKAZKY_ZA_DEN = 2;
 const ZAKAZKA_ODMENA = 2.4;         // násobek denní mzdy nástupní pozice
@@ -13193,6 +13438,7 @@ window.onload = async () => {
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
   setInterval(() => safeCall(() => prekresliLokalniUdalost()), 15000);
+  setInterval(() => safeCall(() => prekresliEvu()), 15000);
   // Kontrola nákupů běží i bez příchozí synchronizace — kdyby hráč zůstal chvíli sám
   // (slabý signál, appka na pozadí), peníze se mu vrátí i tak.
   setInterval(() => {
@@ -13205,6 +13451,8 @@ window.onload = async () => {
   nastavZachytChyb();
   nastavOchranuProtiObnoveni();
   safeCall(() => oznacNoveZmeny());
+  safeCall(() => nactiVzhled());
+  safeCall(() => oznacVzhledIkonu());
   safeCall(() => nactiAdresy());
   // Adresy stahujeme jen jednou za město. Až po startu, ať to nezdržuje načtení hry.
   if(adresyStav !== 'hotovo') setTimeout(() => safeCall(() => stahniAdresy()), 4000);
