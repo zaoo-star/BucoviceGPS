@@ -167,6 +167,8 @@
     background:#c084fc;color:#fff;opacity:1 !important;
     border:2px solid #fff;
     animation:evaPulz 2s infinite;
+    /* Postava se na malé značce hůř pozná než symbol, tak je o kousek větší. */
+    width:30px;height:30px;font-size:17px;border-radius:50%;
   }
   .evaZnacka.hotovo{ background:#6b7280;opacity:0.6 !important;animation:none; }
 
@@ -657,7 +659,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '8.0';
+const APP_VERSION = '8.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8111,8 +8113,8 @@ function prekresliEvu(){
   if(!evaZnacka){
     evaZnacka = L.marker([e.lat, e.lng], {
       icon: L.divIcon({
-        html: `<div class="parcelMarker evaZnacka">🔍</div>`,
-        className: '', iconSize:[26,26]
+        html: `<div class="parcelMarker evaZnacka">👩‍💼</div>`,
+        className: '', iconSize:[30,30]
       })
     }).addTo(map);
     evaZnacka.on('click', () => safeCall(() => potkatEvu()));
@@ -8123,8 +8125,8 @@ function prekresliEvu(){
   if(klic !== evaKlic){
     evaKlic = klic;
     evaZnacka.setIcon(L.divIcon({
-      html: `<div class="parcelMarker evaZnacka${hotovo ? ' hotovo' : ''}">🔍</div>`,
-      className: '', iconSize:[26,26]
+      html: `<div class="parcelMarker evaZnacka${hotovo ? ' hotovo' : ''}">👩‍💼</div>`,
+      className: '', iconSize:[30,30]
     }));
     evaZnacka.bindTooltip(hotovo ? 'Eva — dneska už jste mluvili' : 'Eva, městská revizorka');
   }
@@ -9817,7 +9819,7 @@ function renderDaily(){
       const d = playerPos ? haversine(playerPos, {lat:e.lat, lng:e.lng}) : null;
       const blizko = canInteract(e.lat, e.lng, EVA_RADIUS);
       html += `<div class="card" style="border-left:3px solid var(--purple);${hotovo?'opacity:0.6;':''}">
-        <h3>🔍 Eva, městská revizorka ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : `<span class="badge badge-rent">${e.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
+        <h3>👩‍💼 Eva, městská revizorka ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : `<span class="badge badge-rent">${e.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
         <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">Prochází město a hledá chyby v účetnictví. Vrátí ti přeplatek a řekne, co máš ve svém majetku špatně.</p>
         ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(e, d)}${
           e.kde ? ' · stojí u ' + escapeHtml(e.kde) : (e.miriK ? ' · míří k ' + escapeHtml(e.miriK) : '')}</p>` : ''}
@@ -10744,7 +10746,7 @@ function renderStatDetail(which){
     if((u.pickupDay===dnes ? asArray(u.pickupGot).length : 0) < PICKUP_COUNT) zbyva.push(`💰 sebrat balíky (${PICKUP_COUNT - (u.pickupDay===dnes ? asArray(u.pickupGot).length : 0)} zbývá)`);
     if((u.lmDay===dnes ? asArray(u.lmGot).length : 0) < allLandmarks().length) zbyva.push(`📍 navštívit místa (${allLandmarks().length - (u.lmDay===dnes ? asArray(u.lmGot).length : 0)} zbývá)`);
     if(u.lastWorkedCalDay !== dnes && !isWeekend()) zbyva.push('💼 jít do práce');
-    if(!evaPotkanaDnes(u)) zbyva.push('🔍 najít Evu');
+    if(!evaPotkanaDnes(u)) zbyva.push('👩‍💼 najít Evu');
     const ukoly = (u.questDay===dnes) ? asArray(u.quests).length - asArray(u.questDone).length : 3;
     if(ukoly > 0) zbyva.push(`🎯 splnit úkoly (${ukoly} zbývá)`);
 
@@ -11228,6 +11230,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'8.1', datum:'2026-09-10', body:[
+    ['novinka','Eva má na mapě vlastní ikonu postavy místo lupy a značka je o něco větší, ať je mezi domy lépe vidět.'],
+  ]},
   { verze:'8.0', datum:'2026-09-10', body:[
     ['novinka','Eva teď po městě opravdu chodí. Má denní trasu o šesti zastávkách a mezi nimi se plynule přesouvá — na mapě je vidět pořád, značka pulzuje a posouvá se. V Denních výzvách uvidíš, u které zastávky je a kam míří.'],
   ]},
@@ -11235,7 +11240,7 @@ const ZMENY = [
     ['novinka','Eva teď kromě peněz i radí. Projde tvůj majetek a upozorní na to nejpalčivější — došlé zásoby, zchátralý byt, přemrštěný nájem, dům bez využití nebo příliš vysoké splátky. Rada zůstane vidět v Denních výzvách, dokud ji nevyřešíš.'],
   ]},
   { verze:'7.8', datum:'2026-09-09', body:[
-    ['novinka','Po městě chodí 🔍 Eva, městská revizorka. Když u tebe najde chybu v účetnictví, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš. Kde dnes je, uvidíš v Denních výzvách nebo podle fialové značky na mapě.'],
+    ['novinka','Po městě chodí 👩‍💼 Eva, městská revizorka. Když u tebe najde chybu v účetnictví, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš. Kde dnes je, uvidíš v Denních výzvách nebo podle fialové značky na mapě.'],
     ['info','Eva je skutečná hráčka, která Bučpoly od začátku testuje. Většina oprav v tomhle přehledu vznikla z jejích hlášení — postava je poděkování.'],
   ]},
   { verze:'7.7', datum:'2026-09-09', body:[
@@ -11645,10 +11650,10 @@ function renderGuide(){
     <p>• <b>Zakázky</b> — každý den se na mapě objeví dvě jednorázové brigády. Dojdeš na místo, splníš, dostaneš zaplaceno. Nemusíš být zaměstnaný.</p>
   `);
 
-  html += guideSection('🔍','Eva, městská revizorka', `
+  html += guideSection('👩‍💼','Eva, městská revizorka', `
     <p>Po Bučovicích chodí <b>Eva</b> a kontroluje účetnictví. Když u tebe najde chybu v poplatcích, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš.</p>
     <p><b>Navíc ti poradí.</b> Projde tvůj majetek a řekne, co je zrovna špatně — došlé zásoby v provozovně, zchátralý byt, prázdný byt s přemrštěným nájmem, dům, který leží ladem, nebo splátky, které ti žerou většinu příjmu. Když je všechno v pořádku, pochválí.</p>
-    <p><b>Chodí po městě.</b> Každý den má jinou trasu o šesti zastávkách a mezi nimi se plynule přesouvá — na mapě ji poznáš podle pulzující fialové značky 🔍, která se posouvá. V Denních výzvách je vidět, u které zastávky zrovna je a kam míří.</p>
+    <p><b>Chodí po městě.</b> Každý den má jinou trasu o šesti zastávkách a mezi nimi se plynule přesouvá — na mapě ji poznáš podle pulzující fialové značky 👩‍💼, která se posouvá. V Denních výzvách je vidět, u které zastávky zrovna je a kam míří.</p>
     <div class="ex">Eva je skutečná hráčka, která Bučpoly od začátku testuje a hlásí chyby. Většina oprav v přehledu novinek vznikla z jejích hlášení — tahle postava je poděkování.</div>
   `);
 
@@ -12461,7 +12466,7 @@ async function potkatEvu(){
   playSound('coin');
   saveWorld(); refreshAll();
   await showAlert(
-    `🔍 Eva, městská revizorka\n\n„${e.hlaska}"\n\n+${e.odmena.toLocaleString('cs-CZ')} Kč` +
+    `👩‍💼 Eva, městská revizorka\n\n„${e.hlaska}"\n\n+${e.odmena.toLocaleString('cs-CZ')} Kč` +
     (rada ? `\n\n${rada.vPoradku ? '👍' : '💡'} „${rada.text}"` : ''));
 }
 
