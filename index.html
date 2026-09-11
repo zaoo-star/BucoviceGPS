@@ -157,6 +157,19 @@
     opacity:0.55;transition:opacity 0.2s;
   }
 
+  /* Eva na mapě — fialová, pulzuje, ať ji jde najít mezi desítkami domů. */
+  @keyframes evaPulz{
+    0%{ box-shadow:0 0 0 0 rgba(192,132,252,0.7); }
+    70%{ box-shadow:0 0 0 12px rgba(192,132,252,0); }
+    100%{ box-shadow:0 0 0 0 rgba(192,132,252,0); }
+  }
+  .evaZnacka{
+    background:#c084fc;color:#fff;opacity:1 !important;
+    border:2px solid #fff;
+    animation:evaPulz 2s infinite;
+  }
+  .evaZnacka.hotovo{ background:#6b7280;opacity:0.6 !important;animation:none; }
+
   /* ===== KRESLENÝ VZHLED =====
      Podklad zůstává z OpenStreetMap, jen se přebarví filtrem — teplejší, sytější a měkčí,
      aby působil jako ilustrovaná mapa z deskové hry. Značky domů dostanou vzhled nálepek:
@@ -644,7 +657,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '7.9';
+const APP_VERSION = '8.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8089,18 +8102,32 @@ function prekresliEvu(){
   const e = evaDnes();
   const u = currentUser ? world.users[currentUser.name] : null;
   const hotovo = evaPotkanaDnes(u);
-  const klic = e ? `${calendarDay()}|${e.lat.toFixed(5)}|${hotovo}` : '';
-  if(klic === evaKlic) return;
-  evaKlic = klic;
-  if(evaZnacka){ map.removeLayer(evaZnacka); evaZnacka = null; }
-  if(!e) return;
-  evaZnacka = L.marker([e.lat, e.lng], {
-    icon: L.divIcon({
-      html: `<div class="parcelMarker" style="background:${hotovo ? '#6b7280' : '#c084fc'};color:#fff;opacity:${hotovo?0.6:1};">🔍</div>`,
+  if(!e){
+    if(evaZnacka){ map.removeLayer(evaZnacka); evaZnacka = null; }
+    return;
+  }
+  // Značku nevytváříme znovu — jen jí posouváme polohu, aby přechod nebyl trhaný
+  // a aby se mapa při každém posunu nepřekreslovala zbytečně.
+  if(!evaZnacka){
+    evaZnacka = L.marker([e.lat, e.lng], {
+      icon: L.divIcon({
+        html: `<div class="parcelMarker evaZnacka">🔍</div>`,
+        className: '', iconSize:[26,26]
+      })
+    }).addTo(map);
+    evaZnacka.on('click', () => safeCall(() => potkatEvu()));
+  } else {
+    evaZnacka.setLatLng([e.lat, e.lng]);
+  }
+  const klic = `${hotovo}`;
+  if(klic !== evaKlic){
+    evaKlic = klic;
+    evaZnacka.setIcon(L.divIcon({
+      html: `<div class="parcelMarker evaZnacka${hotovo ? ' hotovo' : ''}">🔍</div>`,
       className: '', iconSize:[26,26]
-    })
-  }).addTo(map).bindTooltip(hotovo ? 'Eva — dneska už jste mluvili' : 'Eva, městská revizorka');
-  evaZnacka.on('click', () => safeCall(() => potkatEvu()));
+    }));
+    evaZnacka.bindTooltip(hotovo ? 'Eva — dneska už jste mluvili' : 'Eva, městská revizorka');
+  }
 }
 
 function prekresliLokalniUdalost(){
@@ -9792,7 +9819,9 @@ function renderDaily(){
       html += `<div class="card" style="border-left:3px solid var(--purple);${hotovo?'opacity:0.6;':''}">
         <h3>🔍 Eva, městská revizorka ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : `<span class="badge badge-rent">${e.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
         <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">Prochází město a hledá chyby v účetnictví. Vrátí ti přeplatek a řekne, co máš ve svém majetku špatně.</p>
-        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(e, d)}${e.kde ? ' · ' + escapeHtml(e.kde) : ''}</p>` : ''}
+        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(e, d)}${
+          e.kde ? ' · stojí u ' + escapeHtml(e.kde) : (e.miriK ? ' · míří k ' + escapeHtml(e.miriK) : '')}</p>` : ''}
+        ${!hotovo ? `<p style="font-size:0.83em;color:var(--muted);margin:2px 0;">Chodí po městě — dnes má ${e.zastavek} zastávek, teď je u ${e.zastavka}. Značka se na mapě posouvá.</p>` : ''}
         ${hotovo && u.evaRada ? `<p style="font-size:0.9em;color:var(--accent2);margin:4px 0;">💡 „${escapeHtml(u.evaRada)}"</p>` : ''}
         ${hotovo ? '<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Zítra bude zase někde jinde.</p>' : `<div class="row">
           <button ${blizko?'':'disabled'} onclick="potkatEvu()">${blizko?'Promluvit si':'Musíš být blíž'}</button>
@@ -11199,6 +11228,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'8.0', datum:'2026-09-10', body:[
+    ['novinka','Eva teď po městě opravdu chodí. Má denní trasu o šesti zastávkách a mezi nimi se plynule přesouvá — na mapě je vidět pořád, značka pulzuje a posouvá se. V Denních výzvách uvidíš, u které zastávky je a kam míří.'],
+  ]},
   { verze:'7.9', datum:'2026-09-09', body:[
     ['novinka','Eva teď kromě peněz i radí. Projde tvůj majetek a upozorní na to nejpalčivější — došlé zásoby, zchátralý byt, přemrštěný nájem, dům bez využití nebo příliš vysoké splátky. Rada zůstane vidět v Denních výzvách, dokud ji nevyřešíš.'],
   ]},
@@ -11616,7 +11648,7 @@ function renderGuide(){
   html += guideSection('🔍','Eva, městská revizorka', `
     <p>Po Bučovicích chodí <b>Eva</b> a kontroluje účetnictví. Když u tebe najde chybu v poplatcích, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš.</p>
     <p><b>Navíc ti poradí.</b> Projde tvůj majetek a řekne, co je zrovna špatně — došlé zásoby v provozovně, zchátralý byt, prázdný byt s přemrštěným nájmem, dům, který leží ladem, nebo splátky, které ti žerou většinu příjmu. Když je všechno v pořádku, pochválí.</p>
-    <p>Kde dnes je, poznáš v <b>Denních výzvách</b> nebo podle fialové značky 🔍 na mapě.</p>
+    <p><b>Chodí po městě.</b> Každý den má jinou trasu o šesti zastávkách a mezi nimi se plynule přesouvá — na mapě ji poznáš podle pulzující fialové značky 🔍, která se posouvá. V Denních výzvách je vidět, u které zastávky zrovna je a kam míří.</p>
     <div class="ex">Eva je skutečná hráčka, která Bučpoly od začátku testuje a hlásí chyby. Většina oprav v přehledu novinek vznikla z jejích hlášení — tahle postava je poděkování.</div>
   `);
 
@@ -12359,18 +12391,48 @@ function evaRada(u){
   return { text:'Prošla jsem si tvoje papíry a všechno sedí. Dobrá práce.', vPoradku:true };
 }
 
-// Kde dnes Eva je. Jako u zakázek — deterministicky ze dne, aby vyšla všem stejně.
-function evaDnes(){
+// Trasa, kterou Eva za den obejde. Deterministicky ze dne, aby vyšla stejně na všech
+// zařízeních — jinak by ji každý hráč viděl jinde a nešlo by si ji domluvit v chatu.
+const EVA_ZASTAVEK = 6;
+function evaTrasa(){
   const den = calendarDay();
   const body = LANDMARK_DEFS
     .concat(Object.values(world.businesses || {}).filter(b => b && b.lat))
-    .concat(Object.values(world.parcels || {}).filter((_, i) => i % 310 === 0));
-  if(!body.length) return null;
+    .concat(Object.values(world.parcels || {}).filter((_, i) => i % 160 === 0));
+  if(!body.length) return [];
+  const trasa = [];
+  for(let i = 0; i < EVA_ZASTAVEK; i++){
+    const seed = Math.abs((den * 15485863 + i * 2654435761) % 2147483647);
+    const m = body[seed % body.length];
+    trasa.push({ lat: m.lat, lng: m.lng, kde: m.name || null });
+  }
+  return trasa;
+}
+
+// Kde je Eva PRÁVĚ TEĎ. Mezi zastávkami se plynule přesouvá podle denní doby,
+// takže se po mapě opravdu pohybuje a dá se dohnat.
+function evaDnes(){
+  const trasa = evaTrasa();
+  if(!trasa.length) return null;
+  const den = calendarDay();
   const seed = Math.abs((den * 15485863) % 2147483647);
-  const misto = body[seed % body.length];
+
+  const hod = new Date();
+  const postup = (hod.getHours() * 60 + hod.getMinutes()) / (24 * 60);   // 0 o půlnoci, 1 před ní
+  const useku = trasa.length - 1;
+  const kde = Math.min(useku - 0.0001, postup * useku);
+  const i = Math.floor(kde);
+  const t = kde - i;
+  const a = trasa[i], b = trasa[Math.min(i + 1, trasa.length - 1)];
+
   return {
-    lat: misto.lat, lng: misto.lng,
-    kde: misto.name || null,
+    lat: a.lat + (b.lat - a.lat) * t,
+    lng: a.lng + (b.lng - a.lng) * t,
+    kde: (t < 0.25 ? a.kde : (t > 0.75 ? b.kde : null)),   // název jen když u zastávky stojí
+    miriK: b.kde,
+    zastavka: i + 1,
+    zastavek: trasa.length,
+    trasa,
     hlaska: EVA_HLASKY[seed % EVA_HLASKY.length],
     odmena: Math.round((JOB_DEFS[0]?.salary || 240) * inflationMult() * EVA_ODMENA * (0.8 + ((seed >> 9) % 40) / 100))
   };
@@ -13488,7 +13550,7 @@ window.onload = async () => {
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
   setInterval(() => safeCall(() => prekresliLokalniUdalost()), 15000);
-  setInterval(() => safeCall(() => prekresliEvu()), 15000);
+  setInterval(() => safeCall(() => prekresliEvu()), 4000);   // ať je pohyb plynulý
   // Kontrola nákupů běží i bez příchozí synchronizace — kdyby hráč zůstal chvíli sám
   // (slabý signál, appka na pozadí), peníze se mu vrátí i tak.
   setInterval(() => {
