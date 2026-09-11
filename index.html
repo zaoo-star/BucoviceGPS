@@ -152,9 +152,14 @@
   }
   label{font-size:0.92em;color:var(--muted);display:block;margin-top:8px;}
   .parcelMarker{
-    width:26px;height:26px;border-radius:6px;display:flex;align-items:center;
-    justify-content:center;font-size:14px;border:2px solid #0008;
-    opacity:0.55;transition:opacity 0.2s;
+    width:26px;height:26px;display:flex;align-items:center;
+    justify-content:center;transition:opacity 0.2s;
+    /* Vzhled nálepky: zaoblený roh, bílý okraj a měkký stín. */
+    border-radius:10px;
+    border:2px solid rgba(255,255,255,0.92);
+    box-shadow:0 2px 5px rgba(0,0,0,0.35);
+    opacity:0.82;
+    font-size:15px;
   }
 
   /* Eva na mapě — fialová, pulzuje, ať ji jde najít mezi desítkami domů. */
@@ -172,41 +177,24 @@
   }
   .evaZnacka.hotovo{ background:#6b7280;opacity:0.6 !important;animation:none; }
 
-  /* ===== KRESLENÝ VZHLED =====
-     Podklad zůstává z OpenStreetMap, jen se přebarví filtrem — teplejší, sytější a měkčí,
-     aby působil jako ilustrovaná mapa z deskové hry. Značky domů dostanou vzhled nálepek:
-     bílý okraj, měkký stín a mírné natočení. Nemění se zdroj dlaždic, takže se podklad
-     nemůže rozbít a vzhled jde kdykoliv vypnout. */
-  /* Kontrast držíme na 1.0 a sepii nízko — jinak se ztratí názvy ulic a čísla popisná,
-     což je zrovna to, co na mapě potřebuješ číst. */
-  body.kresleno .leaflet-tile-pane{
-    filter:saturate(1.35) contrast(1.02) brightness(1.03) sepia(0.12) hue-rotate(-4deg);
-  }
-  /* Podklad pod dlaždicemi zůstává tmavý: kdyby se dlaždice nenačetly (bez signálu),
-     je to hned poznat. Béžová plocha vypadala jako záměr, i když šlo o výpadek. */
-  body.kresleno .leaflet-container{ background:var(--bg); }
-
-  body.kresleno .parcelMarker{
-    border-radius:10px;
-    border:2px solid rgba(255,255,255,0.92);
-    box-shadow:0 2px 5px rgba(0,0,0,0.35);
-    opacity:0.82;
-    font-size:15px;
-  }
+  /* ===== KRESLENÉ ZNAČKY DOMŮ =====
+     Podklad mapy necháváme tak, jak přijde z OpenStreetMap — barevné filtry přes celou mapu
+     zhoršovaly čitelnost ulic a čísel popisných. Kreslený vzhled se proto týká jen značek:
+     bílý okraj, měkký stín a mírné natočení, aby vypadaly jako nalepené nálepky. */
   /* Drobné natočení — nálepky nalepené od ruky, ne zarovnané pravítkem. */
-  body.kresleno .leaflet-marker-icon:nth-of-type(3n) .parcelMarker{ transform:rotate(-4deg); }
-  body.kresleno .leaflet-marker-icon:nth-of-type(3n+1) .parcelMarker{ transform:rotate(3deg); }
-  body.kresleno .p-inreach{ opacity:1; box-shadow:0 3px 8px rgba(0,0,0,0.45); }
-  body.kresleno .p-mine{ box-shadow:0 0 0 3px var(--gold), 0 3px 7px rgba(0,0,0,0.4); }
-  body.kresleno .p-empty{ background:#9ca3af; }
+  .leaflet-marker-icon:nth-of-type(3n) .parcelMarker{ transform:rotate(-4deg); }
+  .leaflet-marker-icon:nth-of-type(3n+1) .parcelMarker{ transform:rotate(3deg); }
+  .p-inreach{ opacity:1; box-shadow:0 3px 8px rgba(0,0,0,0.45); }
+  .p-mine{ box-shadow:0 0 0 3px var(--gold), 0 3px 7px rgba(0,0,0,0.4); }
+  .p-empty{ background:#9ca3af; }
 
   /* Pilulky a lišta ať ladí s teplejším podkladem */
-  body.kresleno .statPill{
+  .statPill{
     background:rgba(30,25,20,0.88);
     border:1px solid rgba(255,255,255,0.12);
     box-shadow:0 2px 6px rgba(0,0,0,0.3);
   }
-  body.kresleno .railBtn{
+  .railBtn{
     border-radius:18px;
     box-shadow:0 3px 8px rgba(0,0,0,0.35);
     border:1px solid rgba(255,255,255,0.14);
@@ -430,6 +418,7 @@
       <div class="statPill" id="dayPill" onclick="showStatDetail('day')" style="cursor:pointer;">📅 Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
       <div class="statPill" id="balance" onclick="showStatDetail('money')" style="cursor:pointer;">💰 <span id="balanceVal">0</span> Kč<span id="rateVal" class="rate"></span></div>
       <div class="statPill" id="walkPill" onclick="showStatDetail('walk')" style="cursor:pointer;">🚶 <span id="walkVal">0</span> m dnes</div>
+      <div class="statPill" id="pocasiPill" onclick="openSheet('daily')" style="cursor:pointer;display:none;"><span id="pocasiVal"></span></div>
       <div class="statPill" id="housingPill" onclick="showStatDetail('housing')" style="cursor:pointer;">🏠 <span id="housingVal">bez bydlení</span></div>
       <div class="statPill" id="marketCyclePill" onclick="showStatDetail('market')" style="cursor:pointer;">📊 <span id="marketCycleVal">Stabilní trh</span></div>
       <button id="installBtn" class="statPill" onclick="installApp()" style="display:none;cursor:pointer;color:var(--accent);border-color:var(--accent);">📲 Nainstalovat appku</button>
@@ -457,7 +446,6 @@
   <div id="leftRail">
     <button class="railBtn" data-tab="denik" id="denikRailBtn" title="Můj deník">📔</button>
     <button class="railBtn" data-tab="zmeny" id="zmenyRailBtn" title="Co je nového">🆕</button>
-    <button class="railBtn" id="vzhledRailBtn" onclick="prepniVzhled()" title="Přepnout vzhled mapy">🎨</button>
   </div>
 
   <div id="bottomSheet">
@@ -659,7 +647,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '8.1';
+const APP_VERSION = '8.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6912,6 +6900,72 @@ function ensureWalkDay(u){
   return u;
 }
 
+// ===== POČASÍ =====
+// Skutečné počasí v Bučovicích z Open-Meteo. Nepotřebuje klíč ani registraci a data jsou
+// pro všechny hráče stejná, takže se nemusí sdílet přes cloud — každé zařízení si je
+// natáhne samo a uloží na čtvrt hodiny.
+// Vliv na hru: za chůzi v nepohodě dostaneš víc. Je to odměna za to, že vyjdeš ven,
+// i když se ti nechce — což je přesně to, o čem tahle hra je.
+let POCASI = null;
+const POCASI_PLATNOST = 15 * 60 * 1000;
+
+const POCASI_STAVY = [
+  { kod:[95,96,99], emoji:'⛈️', nazev:'Bouřka',        mult:1.60 },
+  { kod:[71,73,75,77,85,86], emoji:'🌨️', nazev:'Sněžení', mult:1.50 },
+  { kod:[65,67,82], emoji:'🌧️', nazev:'Silný déšť',    mult:1.45 },
+  { kod:[61,63,66,80,81], emoji:'🌧️', nazev:'Déšť',     mult:1.35 },
+  { kod:[51,53,55,56,57], emoji:'🌦️', nazev:'Mrholení', mult:1.20 },
+  { kod:[45,48], emoji:'🌫️', nazev:'Mlha',             mult:1.15 },
+  { kod:[3], emoji:'☁️', nazev:'Zataženo',              mult:1.05 },
+  { kod:[1,2], emoji:'⛅', nazev:'Polojasno',            mult:1.00 },
+  { kod:[0], emoji:'☀️', nazev:'Jasno',                  mult:1.00 }
+];
+
+function pocasiStav(kod){
+  return POCASI_STAVY.find(s => s.kod.includes(kod)) || { emoji:'🌤️', nazev:'Počasí', mult:1 };
+}
+
+// Násobek odměny za chůzi podle počasí. Kromě srážek přihlíží i k mrazu, vedru a větru.
+function pocasiMult(){
+  if(!POCASI) return { mult:1, popis:'', emoji:'' };
+  const st = pocasiStav(POCASI.kod);
+  let mult = st.mult;
+  const duvody = [`${st.emoji} ${st.nazev}`];
+  if(POCASI.teplota <= -5){ mult += 0.25; duvody.push('mrzne'); }
+  else if(POCASI.teplota <= 2){ mult += 0.12; duvody.push('zima'); }
+  else if(POCASI.teplota >= 30){ mult += 0.20; duvody.push('vedro'); }
+  if(POCASI.vitr >= 35){ mult += 0.12; duvody.push('silný vítr'); }
+  return { mult: Math.round(mult * 100) / 100, popis: duvody.join(' · '), emoji: st.emoji, nazev: st.nazev };
+}
+
+async function nactiPocasi(){
+  // Načtená data platí čtvrt hodiny — častěji to nemá smysl a šetří to i jejich server.
+  try {
+    const ulozene = JSON.parse(localStorage.getItem('bucpoly_pocasi') || 'null');
+    if(ulozene && Date.now() - ulozene.kdy < POCASI_PLATNOST){ POCASI = ulozene; return POCASI; }
+  } catch(e){}
+
+  const [lat, lng] = CITY_CENTER;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}` +
+              `&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
+  try {
+    const res = await fetch(url);
+    if(!res.ok) return POCASI;
+    const d = await res.json();
+    const c = d && d.current;
+    if(!c) return POCASI;
+    POCASI = {
+      teplota: Math.round(c.temperature_2m),
+      kod: c.weather_code,
+      vitr: Math.round(c.wind_speed_10m || 0),
+      kdy: Date.now()
+    };
+    try { localStorage.setItem('bucpoly_pocasi', JSON.stringify(POCASI)); } catch(e){}
+    safeCall(() => updateHeaderStats());
+    return POCASI;
+  } catch(e){ return POCASI; }   // bez sítě se prostě hraje bez počasí
+}
+
 function creditWalking(dist){
   if(!currentUser) return;
   if(!isInPlayArea()) return; // mimo herní oblast (za městem) se chůze nepočítá
@@ -6925,7 +6979,7 @@ function creditWalking(dist){
   // Poslední krok se ještě proplatí jen do výše zbytku, ať se strop netrefuje nastejno.
   const strop = WALK_DAILY_CAP * inflationMult();
   const zbyva = Math.max(0, strop - u.walkEarnedToday);
-  let reward = dist * WALK_REWARD_PER_METER * inflationMult() * eventMult('walkMult');
+  let reward = dist * WALK_REWARD_PER_METER * inflationMult() * eventMult('walkMult') * pocasiMult().mult;
   const dosahlStropu = reward >= zbyva;
   reward = Math.min(reward, zbyva);
 
@@ -7214,45 +7268,6 @@ const PODKLADY = [
 let podkladIndex = 0;
 let podkladVrstva = null;
 
-// ===== VZHLED MAPY =====
-// Kreslený režim jen přebarví dlaždice filtrem a udělá ze značek nálepky. Nemění zdroj
-// dlaždic, takže se nemůže rozbít podklad — a dá se kdykoliv vypnout.
-function nactiVzhled(){
-  let v = 'kresleno';
-  try { v = localStorage.getItem('bucpoly_vzhled') || 'kresleno'; } catch(e){}
-  nastavVzhled(v, true);
-}
-function nastavVzhled(v, tiche){
-  try { localStorage.setItem('bucpoly_vzhled', v); } catch(e){}
-  if(document.body) document.body.classList.toggle('kresleno', v === 'kresleno');
-  safeCall(() => oznacVzhledIkonu());
-  if(!tiche){
-    showToast(v === 'kresleno' ? '🎨 Kreslený vzhled zapnutý' : '🗺️ Klasický vzhled — mapa jako obvykle');
-    safeCall(() => renderGuide());
-  }
-}
-// Přepnutí jedním klepnutím — ikona 🎨 pod novinkami. Vzhled se mění často (podle světla,
-// nálady), takže by bylo otravné kvůli tomu pokaždé otevírat průvodce.
-function prepniVzhled(){
-  const novy = vzhledJe() === 'kresleno' ? 'klasicky' : 'kresleno';
-  nastavVzhled(novy);
-  oznacVzhledIkonu();
-}
-
-// Ikona ukazuje, co se stane po klepnutí — ne aktuální stav.
-function oznacVzhledIkonu(){
-  const b = document.getElementById('vzhledRailBtn');
-  if(!b) return;
-  const kresleno = vzhledJe() === 'kresleno';
-  b.textContent = kresleno ? '🗺️' : '🎨';
-  b.title = kresleno ? 'Přepnout na klasickou mapu' : 'Přepnout na kreslenou mapu';
-}
-
-function vzhledJe(){
-  try { return localStorage.getItem('bucpoly_vzhled') || 'kresleno'; } catch(e){ return 'kresleno'; }
-}
-
-let mapaVypadekHlasena = false;
 function nastavPodklad(index){
   if(!map || index >= PODKLADY.length) return;
   podkladIndex = index;
@@ -7398,6 +7413,21 @@ function updateHeaderStats(){
     // prochází všechny domy a firmy, takže by se to každou sekundu zbytečně vleklo.
     // Ukazuje, kolik se DNES zatím nasčítalo k výplatě. Peníze chodí jednou denně, takže
     // tohle je jediné místo, kde hráč průběžně vidí, že se něco děje.
+    // Počasí — ukazuje se jen když se ho podařilo načíst a když něco mění.
+    const elPocasi = document.getElementById('pocasiPill');
+    if(elPocasi){
+      if(POCASI){
+        const pm = pocasiMult();
+        elPocasi.style.display = '';
+        document.getElementById('pocasiVal').innerHTML =
+          `${pm.emoji} ${POCASI.teplota} °C` +
+          (pm.mult > 1 ? ` <b style="color:var(--accent)">+${Math.round((pm.mult-1)*100)} % za chůzi</b>` : '');
+        elPocasi.title = `${pm.popis} — ${pm.mult > 1 ? 'chůze vynáší o ' + Math.round((pm.mult-1)*100) + ' % víc' : 'chůze vynáší jako obvykle'}`;
+      } else {
+        elPocasi.style.display = 'none';
+      }
+    }
+
     const elRate = document.getElementById('rateVal');
     if(elRate){
       const s2 = u.denSoucty;
@@ -8096,40 +8126,37 @@ function kudyText(cil, d){
 // Kruh lokální události na mapě. Bez něj by hráč nepoznal, proč se mu zrovna tady
 // hůř pronajímá — a hlavně by neměl důvod někam jít.
 let lokalniKruh = null, lokalniZnacka = null, lokalniKlic = null;
-// Značka Evy na mapě. Přesune se každý den jinam, takže ji stačí překreslovat spolu
-// s ostatními denními věcmi.
-let evaZnacka = null, evaKlic = null;
+// Značky postav na mapě. Každá má vlastní trasu, proto je držíme zvlášť podle id.
+let npcZnacky = {}, npcKlice = {};
 function prekresliEvu(){
   if(!map) return;
-  const e = evaDnes();
   const u = currentUser ? world.users[currentUser.name] : null;
-  const hotovo = evaPotkanaDnes(u);
-  if(!e){
-    if(evaZnacka){ map.removeLayer(evaZnacka); evaZnacka = null; }
-    return;
-  }
-  // Značku nevytváříme znovu — jen jí posouváme polohu, aby přechod nebyl trhaný
-  // a aby se mapa při každém posunu nepřekreslovala zbytečně.
-  if(!evaZnacka){
-    evaZnacka = L.marker([e.lat, e.lng], {
-      icon: L.divIcon({
-        html: `<div class="parcelMarker evaZnacka">👩‍💼</div>`,
-        className: '', iconSize:[30,30]
-      })
-    }).addTo(map);
-    evaZnacka.on('click', () => safeCall(() => potkatEvu()));
-  } else {
-    evaZnacka.setLatLng([e.lat, e.lng]);
-  }
-  const klic = `${hotovo}`;
-  if(klic !== evaKlic){
-    evaKlic = klic;
-    evaZnacka.setIcon(L.divIcon({
-      html: `<div class="parcelMarker evaZnacka${hotovo ? ' hotovo' : ''}">👩‍💼</div>`,
-      className: '', iconSize:[30,30]
-    }));
-    evaZnacka.bindTooltip(hotovo ? 'Eva — dneska už jste mluvili' : 'Eva, městská revizorka');
-  }
+  NPC_DEFS.forEach(def => {
+    const p = npcKde(def.id);
+    if(!p){
+      if(npcZnacky[def.id]){ map.removeLayer(npcZnacky[def.id]); delete npcZnacky[def.id]; }
+      return;
+    }
+    const hotovo = npcPotkan(u, def.id);
+    // Značku nevytváříme znovu — jen ji posouváme, aby mapa neblikala.
+    if(!npcZnacky[def.id]){
+      npcZnacky[def.id] = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({ html:`<div class="parcelMarker evaZnacka" style="background:${def.barva};">${def.emoji}</div>`,
+                          className:'', iconSize:[30,30] })
+      }).addTo(map);
+      npcZnacky[def.id].on('click', () => safeCall(() => potkatNpc(def.id)));
+    } else {
+      npcZnacky[def.id].setLatLng([p.lat, p.lng]);
+    }
+    const klic = String(hotovo);
+    if(npcKlice[def.id] !== klic){
+      npcKlice[def.id] = klic;
+      npcZnacky[def.id].setIcon(L.divIcon({
+        html:`<div class="parcelMarker evaZnacka${hotovo ? ' hotovo' : ''}"${hotovo ? '' : ` style="background:${def.barva};"`}>${def.emoji}</div>`,
+        className:'', iconSize:[30,30] }));
+      npcZnacky[def.id].bindTooltip(hotovo ? `${def.jmeno} — dneska už jste mluvili` : `${def.jmeno}, ${def.role}`);
+    }
+  });
 }
 
 function prekresliLokalniUdalost(){
@@ -9811,28 +9838,43 @@ function renderDaily(){
     ${lokStred ? `<p style="font-size:0.88em;margin:4px 0 0;color:var(--gold)">📍 Týká se okolí ${escapeHtml(lokStred.nazev || 'jednoho místa')}${lokD !== null ? ` — ${kudyText(lokStred, lokD)}` : ''}. Na mapě je to vyznačené kruhem.</p>` : ''}
   </div>`;
 
-  // EVA — poděkování hráčce, která hru testuje. Chodí po městě, jednou denně dá odměnu.
-  {
-    const e = evaDnes();
-    const hotovo = evaPotkanaDnes(u);
-    if(e){
-      const d = playerPos ? haversine(playerPos, {lat:e.lat, lng:e.lng}) : null;
-      const blizko = canInteract(e.lat, e.lng, EVA_RADIUS);
-      html += `<div class="card" style="border-left:3px solid var(--purple);${hotovo?'opacity:0.6;':''}">
-        <h3>👩‍💼 Eva, městská revizorka ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : `<span class="badge badge-rent">${e.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
-        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">Prochází město a hledá chyby v účetnictví. Vrátí ti přeplatek a řekne, co máš ve svém majetku špatně.</p>
-        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(e, d)}${
-          e.kde ? ' · stojí u ' + escapeHtml(e.kde) : (e.miriK ? ' · míří k ' + escapeHtml(e.miriK) : '')}</p>` : ''}
-        ${!hotovo ? `<p style="font-size:0.83em;color:var(--muted);margin:2px 0;">Chodí po městě — dnes má ${e.zastavek} zastávek, teď je u ${e.zastavka}. Značka se na mapě posouvá.</p>` : ''}
-        ${hotovo && u.evaRada ? `<p style="font-size:0.9em;color:var(--accent2);margin:4px 0;">💡 „${escapeHtml(u.evaRada)}"</p>` : ''}
-        ${hotovo ? '<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Zítra bude zase někde jinde.</p>' : `<div class="row">
-          <button ${blizko?'':'disabled'} onclick="potkatEvu()">${blizko?'Promluvit si':'Musíš být blíž'}</button>
-          <button class="secondary" onclick="ukazEvu()">Kde je</button>
-        </div>`}
-      </div>`;
-    }
+  // POČASÍ — skutečné, z Bučovic. Ovlivňuje výdělek z chůze.
+  if(POCASI){
+    const pm = pocasiMult();
+    const lepsi = pm.mult > 1;
+    html += `<div class="card" style="border-left:3px solid ${lepsi ? 'var(--accent)' : 'var(--border)'};">
+      <h3>${pm.emoji} Počasí v Bučovicích — ${POCASI.teplota} °C</h3>
+      <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">${pm.popis}${POCASI.vitr ? ` · vítr ${POCASI.vitr} km/h` : ''}</p>
+      ${lepsi
+        ? `<p style="margin:4px 0;">Za chůzi dostáváš <b style="color:var(--accent)">o ${Math.round((pm.mult-1)*100)} % víc</b> — venku je nepohoda, tak ať to stojí za to.</p>`
+        : `<p style="margin:4px 0;color:var(--muted);">Hezky. Za chůzi dostáváš běžnou sazbu — bonus je jen za nepohodu.</p>`}
+      <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0;">Aktualizuje se každých 15 minut.</p>
+    </div>`;
   }
 
+  // MĚSTSKÉ POSTAVY — každá umí něco jiného a chodí po vlastní trase.
+  {
+    const karty = NPC_DEFS.map(def => {
+      const p = npcKde(def.id);
+      if(!p) return '';
+      const hotovo = npcPotkan(u, def.id);
+      const d = playerPos ? haversine(playerPos, { lat:p.lat, lng:p.lng }) : null;
+      const blizko = canInteract(p.lat, p.lng, EVA_RADIUS);
+      return `<div class="card" style="border-left:3px solid ${def.barva};${hotovo?'opacity:0.6;':''}">
+        <h3>${def.emoji} ${def.jmeno} <span style="font-weight:400;color:var(--muted);font-size:0.85em;">— ${def.role}</span>
+          ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : ''}</h3>
+        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">${def.popis}</p>
+        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(p, d)}${
+          p.kde ? ' · stojí u ' + escapeHtml(p.kde) : (p.miriK ? ' · míří k ' + escapeHtml(p.miriK) : '')}</p>` : ''}
+        ${hotovo && def.id === 'eva' && u.evaRada ? `<p style="font-size:0.9em;color:var(--accent2);margin:4px 0;">💡 „${escapeHtml(u.evaRada)}"</p>` : ''}
+        ${hotovo ? '<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">Zítra bude zase někde jinde.</p>' : `<div class="row">
+          <button ${blizko?'':'disabled'} onclick="potkatNpc('${def.id}')">${blizko?'Promluvit si':'Musíš být blíž'}</button>
+          <button class="secondary" onclick="ukazNpc('${def.id}')">Kde je</button>
+        </div>`}
+      </div>`;
+    }).filter(Boolean).join('');
+    if(karty) html += karty;
+  }
 
   // --- poslední náhodné setkání ---
   // `lastEvent` se dosud jen zapisoval a nikdo ho nikdy neviděl. Ukážeme ho v den, kdy nastal —
@@ -10746,7 +10788,7 @@ function renderStatDetail(which){
     if((u.pickupDay===dnes ? asArray(u.pickupGot).length : 0) < PICKUP_COUNT) zbyva.push(`💰 sebrat balíky (${PICKUP_COUNT - (u.pickupDay===dnes ? asArray(u.pickupGot).length : 0)} zbývá)`);
     if((u.lmDay===dnes ? asArray(u.lmGot).length : 0) < allLandmarks().length) zbyva.push(`📍 navštívit místa (${allLandmarks().length - (u.lmDay===dnes ? asArray(u.lmGot).length : 0)} zbývá)`);
     if(u.lastWorkedCalDay !== dnes && !isWeekend()) zbyva.push('💼 jít do práce');
-    if(!evaPotkanaDnes(u)) zbyva.push('👩‍💼 najít Evu');
+    NPC_DEFS.forEach(def => { if(!npcPotkan(u, def.id)) zbyva.push(`${def.emoji} najít ${def.jmeno}`); });
     const ukoly = (u.questDay===dnes) ? asArray(u.quests).length - asArray(u.questDone).length : 3;
     if(ukoly > 0) zbyva.push(`🎯 splnit úkoly (${ukoly} zbývá)`);
 
@@ -11230,6 +11272,17 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'8.6', datum:'2026-09-10', body:[
+    ['novinka','🌦️ POČASÍ. Hra bere skutečné počasí v Bučovicích a podle něj mění výdělek z chůze. Za déšť dostaneš o 35–45 % víc, za sněžení o 50 %, za bouřku o 60 %. Přičítá se i mráz, vedro a silný vítr — sněžení při −2 °C dělá +62 %.'],
+    ['info','Počasí vidíš v hlavičce a v Denních výzvách, aktualizuje se každých 15 minut. Denní strop z chůze platí dál, jen ho v nepohodě dosáhneš rychleji.'],
+  ]},
+  { verze:'8.5', datum:'2026-09-10', body:[
+    ['zmena','Mapa je zase v původní podobě, bez barevných filtrů — přes celou mapu zhoršovaly čitelnost ulic a čísel popisných. Kreslený vzhled zůstal jen u značek domů: bílý okraj, měkký stín a lehké natočení, ať vypadají jako nalepené nálepky.'],
+    ['info','Přepínač vzhledu tím pádem zmizel, není co přepínat.'],
+  ]},
+  { verze:'8.3', datum:'2026-09-10', body:[
+    ['zmena','Ve městě zůstala jen Eva. Chvíli tu byli i řemeslník, bankéř a makléřka, ale hru to dělalo moc jednoduchou — každý den se ti někdo postaral o opravy, dluhy i výběr domu.'],
+  ]},
   { verze:'8.1', datum:'2026-09-10', body:[
     ['novinka','Eva má na mapě vlastní ikonu postavy místo lupy a značka je o něco větší, ať je mezi domy lépe vidět.'],
   ]},
@@ -11619,16 +11672,7 @@ function renderFinance(){
 
 function renderGuide(){
   const el = document.getElementById('guideContent');
-  const vz = vzhledJe();
-  let html = `<div class="card"><h3>🎨 Vzhled mapy</h3>
-    <p>Kreslený vzhled obarví mapu do teplejších barev a ze značek domů udělá nálepky.</p>
-    <div class="row">
-      <button class="${vz==='kresleno'?'':'secondary'}" style="flex:1;" onclick="nastavVzhled('kresleno')">🎨 Kreslený</button>
-      <button class="${vz==='kresleno'?'secondary':''}" style="flex:1;" onclick="nastavVzhled('klasicky')">🗺️ Klasický</button>
-    </div>
-  </div>
-
-  <div class="card"><h3>🔤 Velikost písma</h3>
+  let html = `<div class="card"><h3>🔤 Velikost písma</h3>
     <p>Zvětši si text, aby se ti dobře četl.</p>
     <div class="row">
       <button class="secondary" onclick="setFontScale(1)">A <span style="font-size:0.8em">malé</span></button>
@@ -11648,6 +11692,14 @@ function renderGuide(){
     <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
     <p>• <b>Vlastní provozovna</b> — z vlastního domu uděláš obchod nebo kavárnu a vyděláváš na zákaznících z okolí.</p>
     <p>• <b>Zakázky</b> — každý den se na mapě objeví dvě jednorázové brigády. Dojdeš na místo, splníš, dostaneš zaplaceno. Nemusíš být zaměstnaný.</p>
+  `);
+
+  html += guideSection('🌦️','Počasí — za nepohodu dostaneš víc', `
+    <p>Hra bere <b>skutečné počasí v Bučovicích</b> a podle něj mění výdělek z chůze. Čím horší počasí, tím víc za každý krok — je to odměna za to, že vyjdeš ven, i když se ti nechce.</p>
+    <p>⛈️ Bouřka <b>+60 %</b> · 🌨️ Sněžení <b>+50 %</b> · 🌧️ Déšť <b>+35 až 45 %</b> · 🌦️ Mrholení <b>+20 %</b> · 🌫️ Mlha <b>+15 %</b> · ☁️ Zataženo <b>+5 %</b></p>
+    <p>K tomu se přičítá teplota a vítr: mrzne (pod −5 °C) <b>+25 %</b>, zima (pod 2 °C) <b>+12 %</b>, vedro (nad 30 °C) <b>+20 %</b>, silný vítr (nad 35 km/h) <b>+12 %</b>.</p>
+    <div class="ex">Sněžení při −2 °C znamená <b>+62 %</b> za každý krok. Kilometr chůze pak místo 50 Kč vynese 81 Kč.</div>
+    <p style="color:var(--muted)">Denní strop z chůze (${WALK_DAILY_CAP} Kč) platí i s bonusem — jen ho dosáhneš dřív. Počasí se aktualizuje každých 15 minut a vidíš ho v hlavičce i v Denních výzvách.</p>
   `);
 
   html += guideSection('👩‍💼','Eva, městská revizorka', `
@@ -12399,6 +12451,75 @@ function evaRada(u){
 // Trasa, kterou Eva za den obejde. Deterministicky ze dne, aby vyšla stejně na všech
 // zařízeních — jinak by ji každý hráč viděl jinde a nešlo by si ji domluvit v chatu.
 const EVA_ZASTAVEK = 6;
+// ===== MĚSTSKÉ POSTAVY =====
+// Každá chodí po vlastní denní trase a umí něco jiného. Trasa i odměna se losují
+// z čísla dne, takže všichni hráči vidí postavy na stejném místě — dá se domluvit v chatu.
+const NPC_DEFS = [
+  { id:'eva', jmeno:'Eva', role:'městská revizorka', emoji:'👩‍💼', barva:'#c084fc', seed:15485863,
+    popis:'Prochází město a hledá chyby v účetnictví. Vrátí ti přeplatek a řekne, co máš ve svém majetku špatně.' },
+];
+// Postav bylo chvíli víc (řemeslník, bankéř, makléřka), ale hru to dělalo moc jednoduchou —
+// každý den se ti někdo staral o opravy, dluhy i výběr domu. Zůstala jen Eva, u které jde
+// hlavně o radu, ne o vyřešení problému za tebe. Systém je obecný, takže přidat další
+// postavu je otázka jednoho záznamu v seznamu výše.
+function npcDef(id){ return NPC_DEFS.find(n => n.id === id) || null; }
+
+// Trasa dané postavy pro dnešek.
+function npcTrasa(id){
+  const def = npcDef(id);
+  if(!def) return [];
+  const den = calendarDay();
+  const body = LANDMARK_DEFS
+    .concat(Object.values(world.businesses || {}).filter(b => b && b.lat))
+    .concat(Object.values(world.parcels || {}).filter((_, i) => i % 160 === 0));
+  if(!body.length) return [];
+  const trasa = [];
+  for(let i = 0; i < EVA_ZASTAVEK; i++){
+    const seed = Math.abs((den * def.seed + i * 2654435761) % 2147483647);
+    const m = body[seed % body.length];
+    trasa.push({ lat:m.lat, lng:m.lng, kde:m.name || null });
+  }
+  return trasa;
+}
+
+// Kde postava právě teď je — mezi zastávkami se přesouvá podle denní doby.
+function npcKde(id){
+  const def = npcDef(id);
+  const trasa = npcTrasa(id);
+  if(!def || !trasa.length) return null;
+  const den = calendarDay();
+  const seed = Math.abs((den * def.seed) % 2147483647);
+  const hod = new Date();
+  const postup = (hod.getHours() * 60 + hod.getMinutes()) / (24 * 60);
+  const useku = trasa.length - 1;
+  const kde = Math.min(useku - 0.0001, postup * useku);
+  const i = Math.floor(kde), t = kde - i;
+  const a = trasa[i], b = trasa[Math.min(i + 1, trasa.length - 1)];
+  return {
+    def, lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t,
+    kde: (t < 0.25 ? a.kde : (t > 0.75 ? b.kde : null)),
+    miriK: b.kde, zastavka: i + 1, zastavek: trasa.length, seed
+  };
+}
+
+function npcPotkan(u, id){
+  if(!u) return false;
+  if(!u.npcDen || typeof u.npcDen !== 'object') u.npcDen = {};
+  return u.npcDen[id] === calendarDay();
+}
+function npcOznacPotkani(u, id){
+  if(!u.npcDen || typeof u.npcDen !== 'object') u.npcDen = {};
+  u.npcDen[id] = calendarDay();
+}
+
+function ukazNpc(id){
+  const p = npcKde(id);
+  if(!p || !map) return;
+  closeSheet();
+  map.setView([p.lat, p.lng], 18);
+  oznacCil(p);
+}
+
 function evaTrasa(){
   const den = calendarDay();
   const body = LANDMARK_DEFS
@@ -12443,11 +12564,47 @@ function evaDnes(){
   };
 }
 
-function evaPotkanaDnes(u){
-  return !!(u && u.evaDen === calendarDay());
+function evaPotkanaDnes(u){ return npcPotkan(u, 'eva'); }
+
+// Co která postava udělá. Vrací text do dialogu; peníze si řeší sama.
+async function npcAkce(id, u, p){
+  const zaklad = (JOB_DEFS[0]?.salary || 240) * inflationMult();
+
+  if(id === 'eva'){
+    const odmena = Math.round(zaklad * EVA_ODMENA * (0.8 + (p.seed % 40) / 100));
+    const rada = evaRada(u);
+    u.balance += odmena;
+    pricti(u, 'akce', odmena);
+    u.evaRada = rada ? rada.text : null;
+    zapisDoDeniku('other', 'Potkal jsem Evu — našla chybu v účetnictví', odmena);
+    return `„${EVA_HLASKY[p.seed % EVA_HLASKY.length]}"\n\n+${odmena.toLocaleString('cs-CZ')} Kč` +
+           (rada ? `\n\n${rada.vPoradku ? '👍' : '💡'} „${rada.text}"` : '');
+  }
+
+  return '';
 }
 
-async function potkatEvu(){
+async function potkatNpc(id){
+  const def = npcDef(id);
+  const u = world.users[currentUser.name];
+  const p = npcKde(id);
+  if(!def || !u || !p) return;
+  if(npcPotkan(u, id)){ showAlert(`S ${def.jmeno} už jsi dneska mluvil. Zítra bude zase někde po městě.`); return; }
+  if(!canInteract(p.lat, p.lng, EVA_RADIUS)){
+    const d = playerPos ? Math.round(haversine(playerPos, { lat:p.lat, lng:p.lng })) : null;
+    showAlert(`${def.jmeno} je jinde.${d !== null ? ` Jsi ${d} m daleko, potřeba je ${EVA_RADIUS} m.` : ''}`);
+    return;
+  }
+  npcOznacPotkani(u, id);
+  const text = await npcAkce(id, u, p);
+  playSound('coin');
+  saveWorld(); refreshAll();
+  await showAlert(`${def.emoji} ${def.jmeno} — ${def.role}\n\n${text}`);
+}
+
+// Ponecháno kvůli starším odkazům — přesměrováno na obecný systém postav.
+async function potkatEvu(){ return potkatNpc('eva'); }
+async function potkatEvuStary(){
   const u = world.users[currentUser.name];
   const e = evaDnes();
   if(!u || !e) return;
@@ -12470,7 +12627,8 @@ async function potkatEvu(){
     (rada ? `\n\n${rada.vPoradku ? '👍' : '💡'} „${rada.text}"` : ''));
 }
 
-function ukazEvu(){
+function ukazEvu(){ return ukazNpc('eva'); }
+function ukazEvuStary(){
   const e = evaDnes();
   if(!e || !map) return;
   closeSheet();
@@ -13568,9 +13726,9 @@ window.onload = async () => {
   nastavZachytChyb();
   nastavOchranuProtiObnoveni();
   safeCall(() => oznacNoveZmeny());
-  safeCall(() => nactiVzhled());
-  safeCall(() => oznacVzhledIkonu());
   safeCall(() => nactiAdresy());
+  safeCall(() => nactiPocasi());
+  setInterval(() => safeCall(() => nactiPocasi()), POCASI_PLATNOST);
   // Adresy stahujeme jen jednou za město. Až po startu, ať to nezdržuje načtení hry.
   if(adresyStav !== 'hotovo') setTimeout(() => safeCall(() => stahniAdresy()), 4000);
   loadNotifyFlag();
