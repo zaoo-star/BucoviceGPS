@@ -644,7 +644,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '7.8';
+const APP_VERSION = '7.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -9791,8 +9791,9 @@ function renderDaily(){
       const blizko = canInteract(e.lat, e.lng, EVA_RADIUS);
       html += `<div class="card" style="border-left:3px solid var(--purple);${hotovo?'opacity:0.6;':''}">
         <h3>🔍 Eva, městská revizorka ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : `<span class="badge badge-rent">${e.odmena.toLocaleString('cs-CZ')} Kč</span>`}</h3>
-        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">Prochází město a hledá chyby v účetnictví. Když nějakou najde, přeplatek vrací tomu, komu patří.</p>
+        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">Prochází město a hledá chyby v účetnictví. Vrátí ti přeplatek a řekne, co máš ve svém majetku špatně.</p>
         ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(e, d)}${e.kde ? ' · ' + escapeHtml(e.kde) : ''}</p>` : ''}
+        ${hotovo && u.evaRada ? `<p style="font-size:0.9em;color:var(--accent2);margin:4px 0;">💡 „${escapeHtml(u.evaRada)}"</p>` : ''}
         ${hotovo ? '<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Zítra bude zase někde jinde.</p>' : `<div class="row">
           <button ${blizko?'':'disabled'} onclick="potkatEvu()">${blizko?'Promluvit si':'Musíš být blíž'}</button>
           <button class="secondary" onclick="ukazEvu()">Kde je</button>
@@ -11198,6 +11199,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'7.9', datum:'2026-09-09', body:[
+    ['novinka','Eva teď kromě peněz i radí. Projde tvůj majetek a upozorní na to nejpalčivější — došlé zásoby, zchátralý byt, přemrštěný nájem, dům bez využití nebo příliš vysoké splátky. Rada zůstane vidět v Denních výzvách, dokud ji nevyřešíš.'],
+  ]},
   { verze:'7.8', datum:'2026-09-09', body:[
     ['novinka','Po městě chodí 🔍 Eva, městská revizorka. Když u tebe najde chybu v účetnictví, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš. Kde dnes je, uvidíš v Denních výzvách nebo podle fialové značky na mapě.'],
     ['info','Eva je skutečná hráčka, která Bučpoly od začátku testuje. Většina oprav v tomhle přehledu vznikla z jejích hlášení — postava je poděkování.'],
@@ -11611,6 +11615,7 @@ function renderGuide(){
 
   html += guideSection('🔍','Eva, městská revizorka', `
     <p>Po Bučovicích chodí <b>Eva</b> a kontroluje účetnictví. Když u tebe najde chybu v poplatcích, vrátí ti přeplatek — jednou denně, kdekoliv ji zrovna potkáš.</p>
+    <p><b>Navíc ti poradí.</b> Projde tvůj majetek a řekne, co je zrovna špatně — došlé zásoby v provozovně, zchátralý byt, prázdný byt s přemrštěným nájmem, dům, který leží ladem, nebo splátky, které ti žerou většinu příjmu. Když je všechno v pořádku, pochválí.</p>
     <p>Kde dnes je, poznáš v <b>Denních výzvách</b> nebo podle fialové značky 🔍 na mapě.</p>
     <div class="ex">Eva je skutečná hráčka, která Bučpoly od začátku testuje a hlásí chyby. Většina oprav v přehledu novinek vznikla z jejích hlášení — tahle postava je poděkování.</div>
   `);
@@ -12313,6 +12318,47 @@ const EVA_HLASKY = [
   'Prošla jsem si nájemní smlouvy v okolí a jedna chyba byla i u tebe. Opraveno.'
 ];
 
+// Co je zrovna u hráče špatně. Eva je revizorka, takže má smysl, aby na to upozornila —
+// a hráči to reálně pomůže víc než peníze. Řadíme podle naléhavosti, vrací se první nález.
+function evaRada(u){
+  if(!u) return null;
+  const moje = Object.values(world.parcels).filter(p => (p.owners?.[u.name] || 0) > 0);
+  const f = safeCall(() => financeBreakdown(u.name)) || { net:0, totalIncome:0, expense:[] };
+
+  // 1) Provozovna bez zásob — nevydělává vůbec nic.
+  const bezZasob = moje.find(p => p.useType === 'provozovna' && p.provoz && (p.provoz.zasoby ?? 100) < 20);
+  if(bezZasob) return { text:`V provozovně ${domKratce(bezZasob)} ti došly zásoby. Bez nich nevydělá ani korunu — zajdi je doplnit.`, id:bezZasob.id };
+
+  // 2) Zchátralé byty — nájemníci se z nich stěhují.
+  const zchatraly = moje.find(p => asArray(p.units).some(x => x && (x.condition ?? 100) < 35));
+  if(zchatraly) return { text:`Byt v domě ${domKratce(zchatraly)} je ve špatném stavu. Oprav ho, než se ti odtud nájemník odstěhuje.`, id:zchatraly.id };
+
+  // 3) Prázdný byt s nájmem nad trhem — sám se nenajme.
+  const predrazeny = moje.find(p => p.useType === 'rental' && asArray(p.units).some(x =>
+    x && !x.tenant && !x.npc && !x.ownerOccupied && (x.rentPrice || 0) > fairRentForHouse(p) * 1.3));
+  if(predrazeny) return { text:`V domě ${domKratce(predrazeny)} máš prázdný byt a nájem nad tržní cenou (férově ${Math.round(fairRentForHouse(predrazeny))} Kč). Za tuhle cenu se ti tam nikdo nenastěhuje.`, id:predrazeny.id };
+
+  // 4) Koupený dům bez využití — leží ladem.
+  const bezVyuziti = moje.find(p => (p.owners?.[u.name] || 0) > 50 && !p.useType);
+  if(bezVyuziti) return { text:`Dům ${domKratce(bezVyuziti)} máš, ale nic s ním neděláš. Urči mu využití — bydlení, pronájem nebo provozovna.`, id:bezVyuziti.id };
+
+  // 5) Splátky žerou většinu příjmu.
+  const splatky = (f.expense || []).find(e => /Splátky/.test(e.label));
+  if(splatky && f.totalIncome > 0 && splatky.amount > f.totalIncome * 0.55)
+    return { text:`Splátky ti berou ${Math.round(splatky.amount / f.totalIncome * 100)} % příjmu. Zvaž doplacení půjčky, nebo si zvyš příjem — takhle se z toho nedostaneš.` };
+
+  // 6) Nikde nebydlí — platí nejvyšší sazbu.
+  if(dailyHousingCost(u.name) >= LIVING_COST)
+    return { text:`Nemáš kde bydlet, tak platíš plných ${LIVING_COST} Kč denně. Vlastní bydlení je o polovinu levnější.` };
+
+  // 7) Hodně hotovosti leží ladem.
+  if((u.balance || 0) > 25000 && (f.totalIncome || 0) < 200)
+    return { text:`Na účtu ti leží ${Math.round(u.balance).toLocaleString('cs-CZ')} Kč a skoro nic ti nenesou. Kup podíl v domě nebo ve firmě, ať pracují za tebe.` };
+
+  // 8) Nic špatného — pochvala.
+  return { text:'Prošla jsem si tvoje papíry a všechno sedí. Dobrá práce.', vPoradku:true };
+}
+
 // Kde dnes Eva je. Jako u zakázek — deterministicky ze dne, aby vyšla všem stejně.
 function evaDnes(){
   const den = calendarDay();
@@ -12344,13 +12390,17 @@ async function potkatEvu(){
     showAlert(`Eva je jinde.${d !== null ? ` Jsi ${d} m daleko, potřeba je ${EVA_RADIUS} m.` : ''}`);
     return;
   }
+  const rada = evaRada(u);
   u.evaDen = calendarDay();
+  u.evaRada = rada ? rada.text : null;      // ať se dá připomenout i po zavření dialogu
   u.balance += e.odmena;
   pricti(u, 'akce', e.odmena);
-  zapisDoDeniku('other', `Potkal jsem Evu — našla chybu v účetnictví`, e.odmena);
+  zapisDoDeniku('other', 'Potkal jsem Evu — našla chybu v účetnictví', e.odmena);
   playSound('coin');
   saveWorld(); refreshAll();
-  await showAlert(`🔍 Eva, městská revizorka\n\n„${e.hlaska}"\n\n+${e.odmena.toLocaleString('cs-CZ')} Kč`);
+  await showAlert(
+    `🔍 Eva, městská revizorka\n\n„${e.hlaska}"\n\n+${e.odmena.toLocaleString('cs-CZ')} Kč` +
+    (rada ? `\n\n${rada.vPoradku ? '👍' : '💡'} „${rada.text}"` : ''));
 }
 
 function ukazEvu(){
