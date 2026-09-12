@@ -647,7 +647,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '8.6';
+const APP_VERSION = '8.7';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -7422,7 +7422,9 @@ function updateHeaderStats(){
         document.getElementById('pocasiVal').innerHTML =
           `${pm.emoji} ${POCASI.teplota} °C` +
           (pm.mult > 1 ? ` <b style="color:var(--accent)">+${Math.round((pm.mult-1)*100)} % za chůzi</b>` : '');
-        elPocasi.title = `${pm.popis} — ${pm.mult > 1 ? 'chůze vynáší o ' + Math.round((pm.mult-1)*100) + ' % víc' : 'chůze vynáší jako obvykle'}`;
+        const stari = Math.round((Date.now() - (POCASI.kdy || 0)) / 60000);
+        elPocasi.title = `${pm.popis} — ${pm.mult > 1 ? 'chůze vynáší o ' + Math.round((pm.mult-1)*100) + ' % víc' : 'chůze vynáší jako obvykle'}` +
+          ` (načteno ${stari < 1 ? 'právě teď' : 'před ' + stari + ' min'})`;
       } else {
         elPocasi.style.display = 'none';
       }
@@ -9848,7 +9850,10 @@ function renderDaily(){
       ${lepsi
         ? `<p style="margin:4px 0;">Za chůzi dostáváš <b style="color:var(--accent)">o ${Math.round((pm.mult-1)*100)} % víc</b> — venku je nepohoda, tak ať to stojí za to.</p>`
         : `<p style="margin:4px 0;color:var(--muted);">Hezky. Za chůzi dostáváš běžnou sazbu — bonus je jen za nepohodu.</p>`}
-      <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0;">Aktualizuje se každých 15 minut.</p>
+      <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0;">Načteno ${(() => {
+        const m = Math.round((Date.now() - (POCASI.kdy || 0)) / 60000);
+        return m < 1 ? 'právě teď' : `před ${m} min`;
+      })()} · obnovuje se každých 15 minut.</p>
     </div>`;
   }
 
@@ -11272,6 +11277,10 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'8.7', datum:'2026-09-10', body:[
+    ['oprava','Počasí se neaktualizovalo — zůstalo zamrzlé na tom, jaké bylo, když jsi appku poprvé otevřel. Odpověď se ukládala do offline mezipaměti a pak se vracela pořád ta samá.'],
+    ['info','Po podržení pilulky s počasím (a v Denních výzvách) je teď vidět, jak stará data jsou.'],
+  ]},
   { verze:'8.6', datum:'2026-09-10', body:[
     ['novinka','🌦️ POČASÍ. Hra bere skutečné počasí v Bučovicích a podle něj mění výdělek z chůze. Za déšť dostaneš o 35–45 % víc, za sněžení o 50 %, za bouřku o 60 %. Přičítá se i mráz, vedro a silný vítr — sněžení při −2 °C dělá +62 %.'],
     ['info','Počasí vidíš v hlavičce a v Denních výzvách, aktualizuje se každých 15 minut. Denní strop z chůze platí dál, jen ho v nepohodě dosáhneš rychleji.'],
@@ -13728,7 +13737,10 @@ window.onload = async () => {
   safeCall(() => oznacNoveZmeny());
   safeCall(() => nactiAdresy());
   safeCall(() => nactiPocasi());
-  setInterval(() => safeCall(() => nactiPocasi()), POCASI_PLATNOST);
+  // Kontrolujeme častěji, než je platnost uložených dat. Když se obojí rovnalo, interval
+  // se trefil těsně pod hranici platnosti, data se vyhodnotila jako čerstvá a stahovalo
+  // se ve skutečnosti jen jednou za dvojnásobek času.
+  setInterval(() => safeCall(() => nactiPocasi()), 5 * 60 * 1000);
   // Adresy stahujeme jen jednou za město. Až po startu, ať to nezdržuje načtení hry.
   if(adresyStav !== 'hotovo') setTimeout(() => safeCall(() => stahniAdresy()), 4000);
   loadNotifyFlag();
