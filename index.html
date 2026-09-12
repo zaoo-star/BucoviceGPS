@@ -647,7 +647,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '8.7';
+const APP_VERSION = '8.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6938,6 +6938,18 @@ function pocasiMult(){
   return { mult: Math.round(mult * 100) / 100, popis: duvody.join(' · '), emoji: st.emoji, nazev: st.nazev };
 }
 
+// Ruční obnovení — kdyby se data zasekla, nemusí hráč čekat na další kolo.
+async function obnovPocasi(){
+  try { localStorage.removeItem('bucpoly_pocasi'); } catch(e){}
+  const stare = POCASI ? POCASI.teplota : null;
+  POCASI = null;
+  await nactiPocasi();
+  safeCall(() => renderDaily());
+  showToast(POCASI
+    ? `${pocasiMult().emoji} ${POCASI.teplota} °C${stare !== null && stare !== POCASI.teplota ? ` (bylo ${stare} °C)` : ''}`
+    : 'Počasí se nepodařilo načíst — zkontroluj připojení.');
+}
+
 async function nactiPocasi(){
   // Načtená data platí čtvrt hodiny — častěji to nemá smysl a šetří to i jejich server.
   try {
@@ -6946,10 +6958,13 @@ async function nactiPocasi(){
   } catch(e){}
 
   const [lat, lng] = CITY_CENTER;
+  // Na konec adresy přidáváme čas. Díky tomu je každý požadavek jiný, takže ho nemůže
+  // obsloužit ani service worker, ani mezipaměť prohlížeče — počasí se zasekávalo přesně
+  // na tomhle: stahovalo se pravidelně, ale pořád se vracela ta samá uložená odpověď.
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}` +
-              `&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
+              `&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto&_t=${Date.now()}`;
   try {
-    const res = await fetch(url);
+    const res = await fetch(url, { cache: 'no-store' });
     if(!res.ok) return POCASI;
     const d = await res.json();
     const c = d && d.current;
@@ -9844,13 +9859,13 @@ function renderDaily(){
   if(POCASI){
     const pm = pocasiMult();
     const lepsi = pm.mult > 1;
-    html += `<div class="card" style="border-left:3px solid ${lepsi ? 'var(--accent)' : 'var(--border)'};">
+    html += `<div class="card" style="border-left:3px solid ${lepsi ? 'var(--accent)' : 'var(--border)'};cursor:pointer;" onclick="obnovPocasi()">
       <h3>${pm.emoji} Počasí v Bučovicích — ${POCASI.teplota} °C</h3>
       <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">${pm.popis}${POCASI.vitr ? ` · vítr ${POCASI.vitr} km/h` : ''}</p>
       ${lepsi
         ? `<p style="margin:4px 0;">Za chůzi dostáváš <b style="color:var(--accent)">o ${Math.round((pm.mult-1)*100)} % víc</b> — venku je nepohoda, tak ať to stojí za to.</p>`
         : `<p style="margin:4px 0;color:var(--muted);">Hezky. Za chůzi dostáváš běžnou sazbu — bonus je jen za nepohodu.</p>`}
-      <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0;">Načteno ${(() => {
+      <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0;">Klepnutím načteš znovu · Načteno ${(() => {
         const m = Math.round((Date.now() - (POCASI.kdy || 0)) / 60000);
         return m < 1 ? 'právě teď' : `před ${m} min`;
       })()} · obnovuje se každých 15 minut.</p>
@@ -11277,6 +11292,10 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'8.8', datum:'2026-09-10', body:[
+    ['oprava','Počasí se pořád zasekávalo na jedné hodnotě, i když se pravidelně stahovalo — odpověď obsluhovala uložená kopie. Adresa má teď pokaždé jinou podobu, takže ji žádná mezipaměť nemůže obsloužit.'],
+    ['novinka','Klepnutím na kartu s počasím ho načteš znovu ručně.'],
+  ]},
   { verze:'8.7', datum:'2026-09-10', body:[
     ['oprava','Počasí se neaktualizovalo — zůstalo zamrzlé na tom, jaké bylo, když jsi appku poprvé otevřel. Odpověď se ukládala do offline mezipaměti a pak se vracela pořád ta samá.'],
     ['info','Po podržení pilulky s počasím (a v Denních výzvách) je teď vidět, jak stará data jsou.'],
