@@ -647,7 +647,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '8.8';
+const APP_VERSION = '9.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4672,6 +4672,10 @@ async function maybeSwitchCity(lat, lng){
 
 // Hlavní vstupní bod: podle polohy hráče vybere město a připraví data.
 // Když se poloha nepodaří zjistit, zůstane u posledního (nebo Bučovic).
+// @zaparkovano — hotové automatické přepnutí města podle polohy (kdo je dál než 6 km
+// od Bučovic, dostane vlastní město). Nikdy se nezapojilo, protože hra zatím běží jen
+// v Bučovicích. Nechávám to tu připravené; až bude potřeba, stačí to zavolat po získání
+// polohy a po změně města znovu načíst svět.
 async function initCityFromPosition(lat, lng){
   // jsme blízko Bučovic? → zůstat u vestavěných dat
   const doBucovic = haversine({lat, lng}, {lat: DEFAULT_CITY.center[0], lng: DEFAULT_CITY.center[1]});
@@ -7768,6 +7772,17 @@ function renderSelected(id){
       // Název musí být na první pohled odlišitelný od tlačítka u jednotlivého bytu —
       // hráči si to pletli a báli se cokoli zmáčknout, aby nepřišli o nájemníky.
       html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet v CELÉM domě (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)${obsazenych?` ⚠️ vystěhuje ${obsazenych}`:''}</button>`;
+
+      // Vlastní podnikání — třetí způsob využití domu vedle bydlení a pronájmu.
+      if(p.useType !== 'provozovna'){
+        const nejlepsi = Object.entries(PROVOZ_TYPY)
+          .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index }))
+          .sort((a, b) => b.denne - a.denne)[0];
+        html += `<button class="secondary" ${near?'':'disabled'} onclick="otevritProvozovnu('${p.id}')">🏪 Otevřít provozovnu (od ${provozInvestice(p).toLocaleString('cs-CZ')} Kč)</button>`;
+        if(nejlepsi) html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0;">
+          Nejlépe by tu šla ${nejlepsi.t.emoji} <b>${nejlepsi.t.name.toLowerCase()}</b> — poptávka ${poptavkaProMisto(p, nejlepsi.k).popis}, odhad <b>${Math.round(nejlepsi.denne)} Kč/den</b>.
+          Výnos závisí na tom, kolik lidí v okolí bydlí a jaká je konkurence.</p>`;
+      }
     }
     if(p.useType !== 'rental'){
       const uzZarizeno = asArray(p.units).length;   // dům byl přestavěný dřív → znovu otevřít je zdarma
@@ -8941,13 +8956,6 @@ function mortgageForHouse(u, houseId){
   return asArray(u && u.loans).find(l => l && l.type === 'mortgage' && l.houseId === houseId) || null;
 }
 
-// Kolik procent domu je vázáno hypotékou a nesmí se prodat. Bez téhle kontroly šlo
-// zástavu prodat a peníze si nechat — banka by pak vymáhala dluh proti podílu,
-// který už hráč nevlastní.
-function zastavenoPct(name, houseId){
-  const m = mortgageForHouse(world.users[name], houseId);
-  return m ? (m.pct || 0) : 0;
-}
 
 // Společná kontrola pro všechny způsoby prodeje podílu.
 function muzuProdat(name, houseId, pct){
@@ -11196,15 +11204,6 @@ function sendChat(){
 
 // Deník sdílí panel s novinami — má ale vlastní ikonu (📔 vlevo), takže se otevírá přímo.
 let denikRezim = 'mesto';   // 'mesto' = noviny, 'ja' = osobní deník
-function prepniDenik(rezim){
-  denikRezim = rezim;
-  // Titulek i zvýrazněná ikona musí odpovídat tomu, co je zrovna vidět.
-  const t = document.getElementById('sheetTitle');
-  if(t) t.textContent = (rezim === 'ja') ? 'Můj deník' : (SHEET_TITLES['news'] || 'Městské noviny');
-  document.querySelectorAll('.railBtn').forEach(b => b.classList.toggle('active',
-    b.dataset.tab === (rezim === 'ja' ? 'denik' : 'news')));
-  renderNews();
-}
 
 const DENIK_IKONY = { buy:'🏠', sell:'💸', repair:'🔧', upgrade:'🛠️', work:'💼',
                       pickup:'💰', quest:'🎯', landmark:'📍', other:'•' };
@@ -11292,6 +11291,14 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'9.0', datum:'2026-09-11', body:[
+    ['oprava','Tlačítko „Otevřít provozovnu“ z detailu domu zmizelo — vlastní podnikání tak nešlo vůbec spustit. Je zpátky.'],
+  ]},
+  { verze:'8.9', datum:'2026-09-10', body:[
+    ['zmena','📊 Firmy už nenesou každý den stejně. Výnos kolísá zhruba ±40 % kolem průměru, sousední dny na sebe navazují. Dlouhodobě to vyjde nastejno — jen to přestalo být nudně předvídatelné.'],
+    ['novinka','Do výsledku firmy mluví i počasí a dění ve městě. V dešti se daří kavárnám a restauracím, za hezka památkám a sportovištím, jarmark pomůže obchodům.'],
+    ['info','V panelu Investice je u každé firmy vidět, jak se jí dnes daří, i průměrný výnos. Návratnost se počítá z průměru, aby se podle ní dalo rozhodovat.'],
+  ]},
   { verze:'8.8', datum:'2026-09-10', body:[
     ['oprava','Počasí se pořád zasekávalo na jedné hodnotě, i když se pravidelně stahovalo — odpověď obsluhovala uložená kopie. Adresa má teď pokaždé jinou podobu, takže ji žádná mezipaměť nemůže obsloužit.'],
     ['novinka','Klepnutím na kartu s počasím ho načteš znovu ručně.'],
@@ -11720,6 +11727,16 @@ function renderGuide(){
     <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
     <p>• <b>Vlastní provozovna</b> — z vlastního domu uděláš obchod nebo kavárnu a vyděláváš na zákaznících z okolí.</p>
     <p>• <b>Zakázky</b> — každý den se na mapě objeví dvě jednorázové brigády. Dojdeš na místo, splníš, dostaneš zaplaceno. Nemusíš být zaměstnaný.</p>
+  `);
+
+  html += guideSection('📊','Firmy mají dobré a špatné dny', `
+    <p>Podíl ve firmě nenese každý den stejně — jako u skutečné investice se výsledek mění. Výnos kolísá zhruba <b>±40 %</b> kolem průměru a sousední dny na sebe navazují, takže to neskáče přes noc.</p>
+    <p><b>Roli hraje i počasí a dění ve městě:</b></p>
+    <p>🌧️ V dešti chodí lidé dovnitř — kavárnám, restauracím a hotelům se daří o <b>15 %</b> líp, památkám, sportovištím a benzinkám o <b>15 %</b> hůř.</p>
+    <p>☀️ Za hezka je to obráceně: památky a sportoviště <b>+18 %</b>, kavárny <b>+8 %</b> (plné zahrádky).</p>
+    <p>🎪 Jarmark pomůže restauracím, kavárnám a obchodům (<b>+25 %</b>), nával turistů památkám, hotelům a restauracím (<b>+30 %</b>).</p>
+    <div class="ex">V panelu Investice je u každé firmy vidět, jak se jí dnes daří, a vedle toho <b>průměrný výnos</b>. Návratnost se počítá z průměru, aby se podle ní dalo rozhodovat.</div>
+    <p style="color:var(--muted)">Dlouhodobě to vyjde nastejno — kolísání nemění, kolik firma vynese za rok. Jen se vyplatí dívat se, kdy který obor zrovna jede.</p>
   `);
 
   html += guideSection('🌦️','Počasí — za nepohodu dostaneš víc', `
@@ -12548,51 +12565,8 @@ function ukazNpc(id){
   oznacCil(p);
 }
 
-function evaTrasa(){
-  const den = calendarDay();
-  const body = LANDMARK_DEFS
-    .concat(Object.values(world.businesses || {}).filter(b => b && b.lat))
-    .concat(Object.values(world.parcels || {}).filter((_, i) => i % 160 === 0));
-  if(!body.length) return [];
-  const trasa = [];
-  for(let i = 0; i < EVA_ZASTAVEK; i++){
-    const seed = Math.abs((den * 15485863 + i * 2654435761) % 2147483647);
-    const m = body[seed % body.length];
-    trasa.push({ lat: m.lat, lng: m.lng, kde: m.name || null });
-  }
-  return trasa;
-}
 
-// Kde je Eva PRÁVĚ TEĎ. Mezi zastávkami se plynule přesouvá podle denní doby,
-// takže se po mapě opravdu pohybuje a dá se dohnat.
-function evaDnes(){
-  const trasa = evaTrasa();
-  if(!trasa.length) return null;
-  const den = calendarDay();
-  const seed = Math.abs((den * 15485863) % 2147483647);
 
-  const hod = new Date();
-  const postup = (hod.getHours() * 60 + hod.getMinutes()) / (24 * 60);   // 0 o půlnoci, 1 před ní
-  const useku = trasa.length - 1;
-  const kde = Math.min(useku - 0.0001, postup * useku);
-  const i = Math.floor(kde);
-  const t = kde - i;
-  const a = trasa[i], b = trasa[Math.min(i + 1, trasa.length - 1)];
-
-  return {
-    lat: a.lat + (b.lat - a.lat) * t,
-    lng: a.lng + (b.lng - a.lng) * t,
-    kde: (t < 0.25 ? a.kde : (t > 0.75 ? b.kde : null)),   // název jen když u zastávky stojí
-    miriK: b.kde,
-    zastavka: i + 1,
-    zastavek: trasa.length,
-    trasa,
-    hlaska: EVA_HLASKY[seed % EVA_HLASKY.length],
-    odmena: Math.round((JOB_DEFS[0]?.salary || 240) * inflationMult() * EVA_ODMENA * (0.8 + ((seed >> 9) % 40) / 100))
-  };
-}
-
-function evaPotkanaDnes(u){ return npcPotkan(u, 'eva'); }
 
 // Co která postava udělá. Vrací text do dialogu; peníze si řeší sama.
 async function npcAkce(id, u, p){
@@ -12630,39 +12604,7 @@ async function potkatNpc(id){
   await showAlert(`${def.emoji} ${def.jmeno} — ${def.role}\n\n${text}`);
 }
 
-// Ponecháno kvůli starším odkazům — přesměrováno na obecný systém postav.
-async function potkatEvu(){ return potkatNpc('eva'); }
-async function potkatEvuStary(){
-  const u = world.users[currentUser.name];
-  const e = evaDnes();
-  if(!u || !e) return;
-  if(evaPotkanaDnes(u)){ showAlert('S Evou už jsi dneska mluvil. Zítra bude zase někde po městě.'); return; }
-  if(!canInteract(e.lat, e.lng, EVA_RADIUS)){
-    const d = playerPos ? Math.round(haversine(playerPos, {lat:e.lat, lng:e.lng})) : null;
-    showAlert(`Eva je jinde.${d !== null ? ` Jsi ${d} m daleko, potřeba je ${EVA_RADIUS} m.` : ''}`);
-    return;
-  }
-  const rada = evaRada(u);
-  u.evaDen = calendarDay();
-  u.evaRada = rada ? rada.text : null;      // ať se dá připomenout i po zavření dialogu
-  u.balance += e.odmena;
-  pricti(u, 'akce', e.odmena);
-  zapisDoDeniku('other', 'Potkal jsem Evu — našla chybu v účetnictví', e.odmena);
-  playSound('coin');
-  saveWorld(); refreshAll();
-  await showAlert(
-    `👩‍💼 Eva, městská revizorka\n\n„${e.hlaska}"\n\n+${e.odmena.toLocaleString('cs-CZ')} Kč` +
-    (rada ? `\n\n${rada.vPoradku ? '👍' : '💡'} „${rada.text}"` : ''));
-}
 
-function ukazEvu(){ return ukazNpc('eva'); }
-function ukazEvuStary(){
-  const e = evaDnes();
-  if(!e || !map) return;
-  closeSheet();
-  map.setView([e.lat, e.lng], 18);
-  oznacCil(e);
-}
 
 const ZAKAZKA_RADIUS = 55;          // m — jak blízko musíš být
 const ZAKAZKY_ZA_DEN = 2;
@@ -13304,9 +13246,69 @@ const BUSINESS_YIELD_MULT = 1.0;       // výnos zůstává původní — brzdou
 // přišlo obráceně, než čekali: malé řeznictví vydělávalo líp než zámek. Ta obava byla navíc
 // zbytečná — velké firmy stojí tolik, že si v nich stejně málokdo koupí velký podíl,
 // zatímco menší se dají vlastnit celé.
+// ===== VÝKONNOST FIREM =====
+// Podíl ve firmě nesl každý den přesně stejně, což u investice nedává smysl. Každá firma
+// má teď svůj denní výsledek — jednou se daří, jindy míň. Losuje se z čísla dne a z id
+// firmy, takže vyjde stejně na všech zařízeních, a sousední dny se průměrují, aby výnos
+// neskákal ze dne na den o desítky procent.
+const BIZ_VYKON_ROZPTYL = 0.42;   // ±42 % kolem běžného výnosu
+
+function bizSum(id, den){
+  let h = 2166136261;
+  const t = String(id) + '|' + den;
+  for(let i = 0; i < t.length; i++){ h ^= t.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 10000) / 10000;          // 0–1
+}
+
+// Jak se firmě daří KATEGORII v dnešním počasí a při dnešní události.
+function bizVlivy(biz){
+  const vlivy = [];
+  let m = 1;
+  const kod = POCASI ? POCASI.kod : null;
+  const prsi = kod !== null && ((kod >= 51 && kod <= 67) || (kod >= 80 && kod <= 99));
+  const hezky = kod !== null && kod <= 2 && POCASI.teplota >= 15;
+
+  if(prsi){
+    if(['Kavárna','Restaurace','Hotel'].includes(biz.category)){ m *= 1.15; vlivy.push('🌧️ v dešti chodí lidé dovnitř'); }
+    if(['Památka','Sport','Benzinka'].includes(biz.category)){ m *= 0.85; vlivy.push('🌧️ déšť odradil návštěvníky'); }
+  } else if(hezky){
+    if(['Památka','Sport'].includes(biz.category)){ m *= 1.18; vlivy.push('☀️ hezky, lidé jsou venku'); }
+    if(biz.category === 'Kavárna'){ m *= 1.08; vlivy.push('☀️ plná zahrádka'); }
+  }
+  const ev = todaysCityEvent(world.day);
+  if(ev && ev.id === 'jarmark' && ['Restaurace','Kavárna','Obchod'].includes(biz.category)){
+    m *= 1.25; vlivy.push(`${ev.emoji} ${ev.name}`);
+  }
+  if(ev && ev.id === 'turiste' && ['Památka','Hotel','Restaurace'].includes(biz.category)){
+    m *= 1.3; vlivy.push(`${ev.emoji} ${ev.name}`);
+  }
+  return { m, vlivy };
+}
+
+// Dnešní výkonnost firmy — základ z losu, k tomu počasí a městská událost.
+function bizVykon(biz){
+  if(!biz) return { mult:1, popis:'běžný den', vlivy:[] };
+  const den = world.day || 1;
+  // Průměr dvou sousedních losů = plynulejší průběh, žádné skoky přes noc.
+  const sum = (bizSum(biz.id, den) * 0.65) + (bizSum(biz.id, den - 1) * 0.35);
+  let mult = 1 + (sum - 0.5) * 2 * BIZ_VYKON_ROZPTYL;
+  const v = bizVlivy(biz);
+  mult *= v.m;
+  mult = Math.max(0.35, Math.min(1.9, mult));
+  const popis = mult >= 1.25 ? 'výborný den' : mult >= 1.08 ? 'nadprůměr'
+              : mult >= 0.92 ? 'běžný den' : mult >= 0.75 ? 'slabší den' : 'špatný den';
+  return { mult: Math.round(mult * 100) / 100, popis, vlivy: v.vlivy };
+}
+
 function bizYieldPerHour(biz){
   if(!biz) return 0;
-  return (biz.hourlyYield || 0) * BUSINESS_YIELD_MULT;
+  return (biz.hourlyYield || 0) * BUSINESS_YIELD_MULT * bizVykon(biz).mult;
+}
+
+// Dlouhodobý průměr — pro návratnost a porovnávání firem, aby čísla neskákala podle dne.
+function bizYieldPrumer(biz){
+  if(!biz) return 0;
+  return (biz.hourlyYield || 0) * BUSINESS_YIELD_MULT * 24;
 }
 function bizYieldPerDay(biz){ return bizYieldPerHour(biz) * 24; }
 
@@ -13337,21 +13339,31 @@ function renderBusinesses(){
     });
   }
   let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>
-    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům — vrátí se zhruba za <b>150 dní</b> proti <b>400</b> u domu — a nic u něj neřešíš: nechátrá, nepotřebuje opravy a nikdo se neodstěhuje. Zato je drahý a bydlet v něm nejde. Všechny firmy nesou na vloženou korunu <b>stejně</b> — liší se jen tím, kolik stojí vstup.</p>`;
+    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům — vrátí se zhruba za <b>150 dní</b> proti <b>400</b> u domu — a nic u něj neřešíš: nechátrá, nepotřebuje opravy a nikdo se neodstěhuje. Zato je drahý a bydlet v něm nejde. Všechny firmy nesou na vloženou korunu <b>v průměru stejně</b> — liší se jen tím, kolik stojí vstup.</p>
+    <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">📊 Každá firma má ale <b>svůj den</b>. Výnos kolísá zhruba ±40 % kolem průměru a ovlivňuje ho i počasí a dění ve městě — v dešti chodí lidé do kaváren, za hezka na památky.</p>`;
   html += list.map(biz => {
     const sold = soldPct(biz);
     const myPct = currentUser ? (biz.owners[currentUser.name] || 0) : 0;
     const near = canInteract(biz.lat, biz.lng, INTERACTION_RADIUS);
     const per1Cost = Math.round(pricePerPercent(biz));
-    const per1Day = bizYieldPerDay(biz) * inflationMult() / 100; // co nese 1 % za den
-    const paybackDays = per1Day > 0 ? Math.round(per1Cost / per1Day) : 0; // za kolik dní se vrátí
+    const per1Day = bizYieldPerDay(biz) * inflationMult() / 100;          // dnešní výnos za 1 %
+    const per1Prumer = bizYieldPrumer(biz) * inflationMult() / 100;       // dlouhodobý průměr
+    // Návratnost počítáme z PRŮMĚRU, ne z dnešního výsledku — jinak by číslo skákalo
+    // ze dne na den a nedalo by se podle něj nic rozhodnout.
+    const paybackDays = per1Prumer > 0 ? Math.round(per1Cost / per1Prumer) : 0;
+    const vyk = bizVykon(biz);
+    const barvaV = vyk.mult >= 1.08 ? 'var(--accent)' : vyk.mult >= 0.92 ? 'var(--muted)' : 'var(--danger)';
+    const sipka = vyk.mult >= 1.08 ? '▲' : vyk.mult >= 0.92 ? '▪' : '▼';
     return `<div class="card">
       <h3>${biz.emoji} ${escapeHtml(biz.name)} ${myPct>0 ? '<span class="badge badge-res">tvůj podíl</span>':''}</h3>
       <p>${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount} recenzí)</p>
-      <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
-      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> · prodáno ${sold.toFixed(0)} %${
-        ''}</p>
-      ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → vydělává ti <b style="color:var(--accent)">${(bizYieldPerDay(biz)*inflationMult()*myPct/100).toFixed(1)} Kč/den</b></p>` : ''}
+      <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · dnes nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
+      <p style="font-size:0.88em;margin:2px 0;">
+        <span style="color:${barvaV}">${sipka} ${vyk.popis} — ${Math.round(vyk.mult*100)} % běžného výnosu</span>
+        <span style="color:var(--muted)"> (průměrně ${per1Prumer.toFixed(1)} Kč/den)</span></p>
+      ${vyk.vlivy.length ? `<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">${vyk.vlivy.join(' · ')}</p>` : ''}
+      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> (počítáno z průměru) · prodáno ${sold.toFixed(0)} %</p>
+      ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → dnes ti vydělává <b style="color:var(--accent)">${(bizYieldPerDay(biz)*inflationMult()*myPct/100).toFixed(1)} Kč/den</b> <span style="color:var(--muted)">(průměrně ${(bizYieldPrumer(biz)*inflationMult()*myPct/100).toFixed(1)} Kč)</span></p>` : ''}
       ${distanceNoteHtml(biz.lat, biz.lng, INTERACTION_RADIUS)}
       <div class="row">
         <button ${near?'':'disabled'} onclick="buyStake('${biz.id}')">Koupit podíl</button>
