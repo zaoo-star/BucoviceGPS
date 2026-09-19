@@ -154,6 +154,11 @@
   .parcelMarker{
     width:26px;height:26px;display:flex;align-items:center;
     justify-content:center;transition:opacity 0.2s;
+    /* Naklonění a zvětšení musí být v JEDNÉ vlastnosti transform, jinak se přebíjejí.
+       Dřív pravidlo pro naklonění (které platí na každou druhou a třetí značku) přepsalo
+       zvětšení u domů v dosahu — proto byly některé domečky větší a jiné menší náhodně. */
+    --naklon:0deg; --zvetseni:1;
+    transform:rotate(var(--naklon)) scale(var(--zvetseni));
     /* Vzhled nálepky: zaoblený roh, bílý okraj a měkký stín. */
     border-radius:10px;
     border:2px solid rgba(255,255,255,0.92);
@@ -182,8 +187,8 @@
      zhoršovaly čitelnost ulic a čísel popisných. Kreslený vzhled se proto týká jen značek:
      bílý okraj, měkký stín a mírné natočení, aby vypadaly jako nalepené nálepky. */
   /* Drobné natočení — nálepky nalepené od ruky, ne zarovnané pravítkem. */
-  .leaflet-marker-icon:nth-of-type(3n) .parcelMarker{ transform:rotate(-4deg); }
-  .leaflet-marker-icon:nth-of-type(3n+1) .parcelMarker{ transform:rotate(3deg); }
+  .leaflet-marker-icon:nth-of-type(3n) .parcelMarker{ --naklon:-4deg; }
+  .leaflet-marker-icon:nth-of-type(3n+1) .parcelMarker{ --naklon:3deg; }
   .p-inreach{ opacity:1; box-shadow:0 3px 8px rgba(0,0,0,0.45); }
   .p-mine{ box-shadow:0 0 0 3px var(--gold), 0 3px 7px rgba(0,0,0,0.4); }
   .p-empty{ background:#9ca3af; }
@@ -260,7 +265,7 @@
      výplň = k čemu slouží · zlatý rámeček = je můj · zvětšení = jsi u něj · bílý obrys = doporučeno */
   .p-mine{box-shadow:0 0 0 3px var(--gold);}                    /* zlatý rámeček = můj podíl */
   .p-cityhall{background:#fbbf24;opacity:0.85;}
-  .p-inreach{opacity:1 !important;transform:scale(1.2);z-index:5;animation:pulse 1.6s infinite;}  /* zvětšení = v dosahu */
+  .p-inreach{opacity:1 !important;--zvetseni:1.2;z-index:5;animation:pulse 1.6s infinite;}  /* zvětšení = v dosahu */
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.75;}}
   .p-business{background:#f472b6;opacity:0.8;}
   .condBar{background:var(--bg);border-radius:6px;height:8px;overflow:hidden;margin-top:4px;}
@@ -647,7 +652,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '9.0';
+const APP_VERSION = '9.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6056,10 +6061,30 @@ function maybeRandomEvent(){
   events.push({txt:'📱 Rozbil se ti telefon', amount: -Math.round(50 + Math.random()*80), good:false});
   if(Object.values(world.parcels).some(p=>p.useType==='rental'&&(p.owners?.[u.name]||0)>0))
     events.push({txt:'🚰 Prasklá trubka v tvém pronájmu', amount: -Math.round(60 + Math.random()*90), good:false});
+  events.push({txt:'🚗 Pokuta za špatné parkování', amount: -Math.round(50 + Math.random()*70), good:false});
+  events.push({txt:'🧾 Doplatek za elektřinu', amount: -Math.round(45 + Math.random()*75), good:false});
+  // Události vázané na to, co hráč doopravdy má — jinak přijdou nesmyslné.
+  const mojeDomy = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
+  if(mojeDomy.some(p => p.useType === 'rental'))
+    events.push({txt:'🐀 Deratizace v pronájmu', amount: -Math.round(70 + Math.random()*90), good:false});
+  if(mojeDomy.some(p => p.useType === 'provozovna'))
+    events.push({txt:'🧯 Revize hasicích přístrojů v provozovně', amount: -Math.round(60 + Math.random()*80), good:false});
+  if(asArray(u.loans).length)
+    events.push({txt:'🏦 Banka si naúčtovala poplatek za vedení úvěru', amount: -Math.round(25 + Math.random()*35), good:false});
+
   // POZITIVNÍ
   events.push({txt:'🎁 Našel jsi peníze na ulici', amount: Math.round(20 + Math.random()*40), good:true});
   events.push({txt:'💌 Malé dědictví od tety', amount: Math.round(80 + Math.random()*120), good:true});
   events.push({txt:'🏆 Vyhrál jsi drobnou soutěž', amount: Math.round(40 + Math.random()*60), good:true});
+  events.push({txt:'♻️ Odevzdal jsi starý kov do sběrny', amount: Math.round(30 + Math.random()*50), good:true});
+  events.push({txt:'🧥 V kapse zimní bundy byla bankovka', amount: Math.round(25 + Math.random()*45), good:true});
+  events.push({txt:'📦 Vrácený přeplatek z e-shopu', amount: Math.round(35 + Math.random()*65), good:true});
+  if(mojeDomy.some(p => p.useType === 'rental'))
+    events.push({txt:'🎉 Nájemník doporučil dům známému a dal ti spropitné', amount: Math.round(60 + Math.random()*100), good:true});
+  if(mojeDomy.length)
+    events.push({txt:'🪙 Na půdě se našla stará sbírka mincí', amount: Math.round(90 + Math.random()*140), good:true});
+  if(Object.values(world.businesses).some(b => (b.owners?.[u.name]||0) > 0))
+    events.push({txt:'📈 Firma vyplatila mimořádný podíl na zisku', amount: Math.round(80 + Math.random()*130), good:true});
 
   const ev = events[Math.floor(Math.random()*events.length)];
   u.balance += ev.amount;
@@ -6157,11 +6182,110 @@ function cancelDormantListingsFor(name){
   return zruseno;
 }
 
+// ===== NOČNÍ UDÁLOSTI =====
+// Přes noc se u majetku může něco semlít. Dává to smysl vlastnictví: dům není jen
+// položka v tabulce, ale věc, o kterou se musíš starat. Rizikovější jsou domy v rušných
+// místech — u podniků a památek se scházejí lidi.
+// Rekonstrukce škodu půlí (kvalitní materiály vydrží víc) a v provozovně sleduje zloděj zásoby.
+const NOCNI_SANCE = 0.22;          // pravděpodobnost, že se v noci něco stane
+
+const NOCNI_UDALOSTI = [
+  { id:'sprejeri', emoji:'🎨', nazev:'Sprejeři',
+    text:'Někdo přes noc posprejoval fasádu.', stav:14, poplatek:0 },
+  { id:'opilci', emoji:'🍺', nazev:'Opilci pod okny',
+    text:'Parta se do rána bavila u vchodu. Nepořádek a rozbité sklo.', stav:9, poplatek:0.0012 },
+  { id:'okno', emoji:'🪟', nazev:'Rozbité okno',
+    text:'Ráno bylo v přízemí vytlučené okno.', stav:20, poplatek:0 },
+  { id:'zvonky', emoji:'🔔', nazev:'Vandalové',
+    text:'Někdo vylámal zvonky a schránky.', stav:12, poplatek:0.0008 },
+  { id:'zatek', emoji:'💧', nazev:'Zatékalo do sklepa',
+    text:'V noci pršelo a ve sklepě stála voda.', stav:16, poplatek:0 }
+];
+
+const NOCNI_DOBRE = [
+  { emoji:'🤝', nazev:'Všímavý soused', text:'Soused přes noc odehnal partu, co se motala kolem. Nic se nestalo.' },
+  { emoji:'🧹', nazev:'Nájemník zasáhl', text:'Nájemník ráno sám uklidil nepořádek u vchodu a nic nechtěl.' }
+];
+
+// Jak je dům rizikový — v rušném okolí se toho děje víc.
+function rizikoDomu(p){
+  let ruch = 0;
+  Object.values(world.businesses || {}).forEach(b => {
+    if(b && b.lat && haversine({lat:p.lat, lng:p.lng}, {lat:b.lat, lng:b.lng}) < 220) ruch++;
+  });
+  LANDMARK_DEFS.forEach(l => {
+    if(haversine({lat:p.lat, lng:p.lng}, {lat:l.lat, lng:l.lng}) < 260) ruch += 2;
+  });
+  return 1 + Math.min(1.2, ruch * 0.28);     // 1× až 2,2×
+}
+
+function nocniIncident(u){
+  if(!u) return;
+  const moje = Object.values(world.parcels).filter(p => (p.owners?.[u.name] || 0) > 50);
+  if(!moje.length) return;
+
+  // Dům se vybere s ohledem na riziko — u rušných míst se to stává častěji.
+  const vazene = [];
+  moje.forEach(p => { const r = rizikoDomu(p); for(let i = 0; i < Math.round(r * 10); i++) vazene.push(p); });
+  const p = vazene[Math.floor(Math.random() * vazene.length)];
+  if(!p) return;
+
+  if(Math.random() > NOCNI_SANCE * rizikoDomu(p) / 1.6) return;
+
+  // Provozovna: vykradené zásoby místo poškození bytu.
+  if(p.useType === 'provozovna' && p.provoz){
+    const ubylo = Math.round(20 + Math.random() * 30);
+    p.provoz.zasoby = Math.max(0, (p.provoz.zasoby ?? 100) - ubylo);
+    stampHouse(p);
+    zapisDoDeniku('other', `🦹 Vykradená provozovna ${domKratce(p)} — zmizely zásoby (−${ubylo} %)`, null);
+    addNews('rental', `🦹 ${u.name}: někdo v noci vykradl provozovnu ${domKratce(p)}.`);
+    if(u.name === (currentUser && currentUser.name)) notifyPlayer('Vykradená provozovna', `${domLabel(p)} přišla o ${ubylo} % zásob.`);
+    return;
+  }
+
+  // Někdy to dopadne dobře — ať to není jen sázka proti hráči.
+  if(Math.random() < 0.28){
+    const d = NOCNI_DOBRE[Math.floor(Math.random() * NOCNI_DOBRE.length)];
+    zapisDoDeniku('other', `${d.emoji} ${d.nazev} — ${domKratce(p)}`, null);
+    return;
+  }
+
+  const ev = NOCNI_UDALOSTI[Math.floor(Math.random() * NOCNI_UDALOSTI.length)];
+  const byty = asArray(p.units).filter(x => x && (x.condition ?? 100) > 5);
+  const tlumeni = hasUpgrade(p, 'renovation') ? 0.5 : 1;   // kvalitní materiály vydrží víc
+  let skoda = Math.round(ev.stav * tlumeni);
+  const poplatek = Math.round(effectiveHousePrice(p) * (ev.poplatek || 0) * tlumeni);
+
+  if(byty.length){
+    const byt = byty[Math.floor(Math.random() * byty.length)];
+    byt.condition = Math.max(0, (byt.condition ?? 100) - skoda);
+    stampUnit(byt);
+  } else {
+    skoda = 0;   // dům bez bytů se nemá na čem poškodit
+  }
+  if(poplatek > 0){ u.balance -= poplatek; pricti(u, 'naklady', poplatek); }
+  stampHouse(p);
+
+  const popis = `${ev.emoji} ${ev.nazev} — ${domKratce(p)}`;
+  zapisDoDeniku('other', popis + (skoda ? ` (stav −${skoda} %)` : ''), poplatek ? -poplatek : null);
+  addNews('rental', `${ev.emoji} ${u.name}: ${ev.text.toLowerCase()} Dům ${domKratce(p)}.`);
+  if(u.name === (currentUser && currentUser.name)){
+    notifyPlayer(ev.nazev, `${domLabel(p)}: ${ev.text}` +
+      (skoda ? ` Stav bytu klesl o ${skoda} %.` : '') +
+      (poplatek ? ` Úklid stál ${poplatek} Kč.` : ''));
+  }
+}
+
 function onNewDay(catchUp){
   // Souhrn uzavíráme JEŠTĚ PŘED tím, než se den posune dál — jinak by se zapsal
   // pod nesprávným číslem dne.
   if(currentUser && world.users[currentUser.name]){
     safeCall(() => uzavriDen(world.users[currentUser.name], (world.day || 1) - 1));
+  }
+  // Noční událost řešíme jen pro hráče, který hru zrovna má otevřenou, a nedopočítáváme
+  // ji zpětně — kdo byl týden pryč, nemá se po návratu dozvědět o pěti vykradených domech.
+  if(!catchUp && currentUser && world.users[currentUser.name]){
+    safeCall(() => nocniIncident(world.users[currentUser.name]));
   }
   if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
   tryFillVacantUnits();          // volné byty si najdou nájemníky podle ceny
@@ -6973,8 +7097,22 @@ async function nactiPocasi(){
     const d = await res.json();
     const c = d && d.current;
     if(!c) return POCASI;
+    // Pojistka proti vadným hodnotám. Hráčka hlásila ráno −9 °C v září, o hodinu později
+    // bylo zase 11 °C. Podle samotného čísla se to poznat nedá (−9 je v lednu běžných),
+    // ale podle SKOKU ano: přes 18 stupňů proti měření staršímu jen pár hodin je chyba,
+    // ne počasí. Takovou hodnotu zahodíme a necháme platit poslední rozumnou.
+    const t = Math.round(c.temperature_2m);
+    if(!isFinite(t) || t < -35 || t > 45){
+      zapisChybu(`Počasí vrátilo nesmyslnou teplotu (${c.temperature_2m} °C), ignoruji`, 'pocasi');
+      return POCASI;
+    }
+    if(POCASI && typeof POCASI.teplota === 'number' && (Date.now() - (POCASI.kdy || 0)) < 4 * 3600 * 1000
+       && Math.abs(t - POCASI.teplota) > 18){
+      zapisChybu(`Počasí skočilo z ${POCASI.teplota} °C na ${t} °C během chvíle — ignoruji`, 'pocasi');
+      return POCASI;
+    }
     POCASI = {
-      teplota: Math.round(c.temperature_2m),
+      teplota: t,
       kod: c.weather_code,
       vitr: Math.round(c.wind_speed_10m || 0),
       kdy: Date.now()
@@ -7605,7 +7743,9 @@ function renderSelected(id){
     hist.forEach((s, i) => {
       // Šipka porovnává cenu za procento s předchozím (starším) prodejem — hráč tak rovnou
       // vidí, jestli dům v čase zdražuje, nebo padá.
-      const starsi = hist[i + 1];
+      // Mimotržní převod (výkup městem se slevou) se do porovnání ceny nepočítá,
+      // jinak by šipka hlásila propad, ke kterému na trhu nedošlo.
+      const starsi = hist.slice(i + 1).find(z => !z.mimoTrh);
       let trend = '';
       if(starsi && starsi.pricePerPct){
         const zmena = Math.round((s.pricePerPct / starsi.pricePerPct - 1) * 100);
@@ -7620,8 +7760,18 @@ function renderSelected(id){
         : '';
       html += `<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">
         den ${s.day}: ${ucastnici ? ucastnici + ' · ' : ''}${s.pct} % za <b>${Math.round(s.celkem || s.pricePerPct*s.pct).toLocaleString('cs-CZ')} Kč</b>
-        <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span>${trend}</p>`;
+        <span style="opacity:0.7">(${s.pricePerPct} Kč/1 %)</span>${s.mimoTrh ? ' <span style="opacity:0.7">· výkup městem</span>' : ''}${trend}</p>`;
     });
+    // Kronika se vede až od verze 4.5 a drží posledních 12 převodů. Kdo dům koupil dřív
+    // nebo se na něj nevešel, v seznamu není — bez vysvětlení to vypadá jako chyba.
+    const vKronice = new Set(hist.map(z => z.komu).filter(Boolean));
+    const chybejici = Object.keys(p.owners || {}).filter(n => !vKronice.has(n));
+    if(chybejici.length){
+      html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">
+        ${chybejici.map(escapeHtml).join(', ')} ${chybejici.length === 1 ? 'tu není' : 'tu nejsou'} — dům
+        ${chybejici.length === 1 ? 'získal' : 'získali'} dřív, než hra začala kroniku vést, nebo se starší
+        záznam už nevešel (drží se posledních 12).</p>`;
+    }
     html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Skutečné prodeje ovlivňují cenu domu — tak vzniká tržní hodnota.</p></div>`;
   }
 
@@ -8089,7 +8239,9 @@ function renderMine(){
         const barva = zas > 60 ? 'var(--accent)' : zas > 25 ? 'var(--gold)' : 'var(--danger)';
         const pop = poptavkaProMisto(p, p.provoz.typ);
         const denne = Math.round(provozVynos(p) * myHousePct(p) / 100);
-        return `<p>${typ.emoji} ${typ.name} · poptávka <b>${pop.popis}</b> · vyděláváš <b style="color:var(--gold)">${denne} Kč/den</b></p>
+        const celkemProvoz = Math.round(provozVynos(p));
+        return `<p>${typ.emoji} ${typ.name} · poptávka <b>${pop.popis}</b> · vyděláváš <b style="color:var(--gold)">${denne} Kč/den</b>${
+          myHousePct(p) < 99.9 ? ` <span style="color:var(--muted)">(z ${celkemProvoz} Kč celkem)</span>` : ''}</p>
           <p style="font-size:0.88em;color:${barva};margin:2px 0;">📦 Zásoby ${zas} %${zas < 30 ? ' — dochází, zajdi doplnit!' : (zas < 70 ? ' — brzy dojdou' : '')}</p>
           <div style="background:var(--panel2);border-radius:4px;height:6px;margin:3px 0;overflow:hidden;">
             <div style="width:${zas}%;height:100%;background:${barva};"></div></div>`;
@@ -8098,7 +8250,11 @@ function renderMine(){
         const byty = asArray(p.units);
         const obsazene = byty.filter(u => u && (u.tenant || u.npc));
         const mojeByty = byty.filter(u => u && u.ownerOccupied);
-        const vydelava = obsazene.reduce((s,u) => s + (u.rentPrice||0), 0);
+        const najemCelkem = obsazene.reduce((s,u) => s + (u.rentPrice||0), 0);
+        // Ukazovali jsme nájem za CELÝ dům i tomu, kdo vlastní jen část — hráč pak čekal
+        // víc peněz, než mu reálně chodilo. Teď je vidět tvůj podíl a vedle něj celek.
+        const mujDil = myHousePct(p) / 100;
+        const vydelava = Math.round(najemCelkem * mujDil);
         const prazdne = byty.filter(u => u && !u.tenant && !u.npc && !u.ownerOccupied && (u.condition||0) > 0).length;
         const rozbite = byty.filter(u => u && (u.condition||0) <= 40).length;
         // Byt, ve kterém bydlí sám majitel, se dřív počítal jako PRÁZDNÝ — hráči to četli
@@ -8107,7 +8263,8 @@ function renderMine(){
         const obsazenoCelkem = obsazene.length + mojeByty.length;
         let radky = `<p>${byty.length} ${byty.length===1?'byt':'bytů'} · obsazeno ${obsazenoCelkem}${
           mojeByty.length ? ` <span style="color:var(--accent)">(z toho ${mojeByty.length===1?'1 tvůj':mojeByty.length+' tvoje'})</span>` : ''
-        } · vyděláváš <b style="color:var(--gold)">${vydelava} Kč/den</b></p>`;
+        } · vyděláváš <b style="color:var(--gold)">${vydelava} Kč/den</b>${
+          mujDil < 0.999 ? ` <span style="color:var(--muted)">(z ${Math.round(najemCelkem)} Kč za celý dům)</span>` : ''}</p>`;
         if(mojeByty.length){
           const usetri = Math.round(LIVING_COST - dailyHousingCost(currentUser.name));
           radky += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🏠 V ${mojeByty.length===1?'jednom bytě':'bytech'} bydlíš ty — sám sobě nájem neplatíš, proto z ${mojeByty.length===1?'něj':'nich'} nic nechodí.${
@@ -8555,6 +8712,8 @@ async function sellHouseStake(id){
   p.owners[currentUser.name] -= pct;
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
   stampOwners(p, currentUser.name);
+  // Prodej městu se do kroniky nezapisoval, takže v příběhu domu chyběly celé převody.
+  recordSale(p, refund, pct, currentUser.name, 'město', false);   // výkup se slevou ≠ tržní cena
   if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; stampHouse(p); }
   zapisDoDeniku('sell', `Prodal jsem městu ${pct.toFixed(0)} % domu ${domKratce(p)}`, refund);
   addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${domKratce(p)} za ${refund} Kč.`);
@@ -8630,7 +8789,11 @@ async function cancelListing(listingId){
 // Koupě z inzerátu s pevnou cenou (odkudkoliv, bez GPS)
 // Zaznamená skutečný prodej podílu a posune hodnotu domu směrem k realizované ceně.
 // Ceny tak vznikají z reálných transakcí mezi hráči (komparativní prodeje), ne jen z pevného vzorce.
-function recordSale(p, totalPrice, pct, od, komu){
+// `hybeCenou = false` zapíše převod jen do kroniky a NEHNE tržní cenou. Používá se
+// u prodeje městu: město vykupuje se slevou, takže to není tržní obchod. Když se to
+// takhle nerozlišovalo, každý prodej městu srazil cenu domu o 12 % — a dalo se tím
+// cenu domu cíleně sestřelit opakovaným nákupem a prodejem.
+function recordSale(p, totalPrice, pct, od, komu, hybeCenou = true){
   if(!p || pct <= 0) return;
   const pricePerPct = totalPrice / pct; // cena za 1 %
   // "očistíme" cenu od dočasných vlivů (cyklus, gentrifikace, inflace), ať dostaneme strukturální hodnotu
@@ -8641,7 +8804,7 @@ function recordSale(p, totalPrice, pct, od, komu){
   const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult() * lokMult);
   const structuralBase = structuralPerPct * 100; // odpovídající basePrice
   // posun basePrice o 30 % k realizované ceně (zbytek setrvačnost — jeden prodej cenu neurčí úplně)
-  p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
+  if(hybeCenou) p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
   // uložit do historie prodejů (posledních 5)
   if(!p.salesHistory) p.salesHistory = [];
   // Kdo komu a kdy — z toho vznikne čitelný příběh domu. `ts` navíc slouží ke slučování
@@ -8649,7 +8812,8 @@ function recordSale(p, totalPrice, pct, od, komu){
   p.salesHistory.unshift({
     pricePerPct: Math.round(pricePerPct), pct: Math.round(pct*10)/10,
     day: world.day, ts: Date.now(),
-    od: od || null, komu: komu || null, celkem: Math.round(totalPrice)
+    od: od || null, komu: komu || null, celkem: Math.round(totalPrice),
+    mimoTrh: !hybeCenou || undefined
   });
   if(p.salesHistory.length > 12) p.salesHistory.length = 12;
 }
@@ -11291,6 +11455,21 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'9.3', datum:'2026-09-13', body:[
+    ['oprava','Zápis prodeje městu do kroniky (z 9.2) srážel cenu domu o 12 % pokaždé — město totiž vykupuje se slevou a hra to brala jako tržní obchod. Výkup se teď do kroniky zapíše, ale cenou nehne. Pět prodejů za sebou by jinak dům zlevnilo o polovinu.'],
+  ]},
+  { verze:'9.2', datum:'2026-09-13', body:[
+    ['oprava','V „Moje nemovitosti“ se u domu ukazoval nájem za CELÝ dům i tomu, kdo vlastní jen část. Teď je vidět tvůj podíl a celek vedle v závorce.'],
+    ['oprava','Prodej městu se vůbec nezapisoval do kroniky domu — v příběhu domu tak chyběly celé převody.'],
+    ['oprava','Domečky na mapě byly různě velké bez zjevného důvodu: pravidlo pro naklonění nálepky přebíjelo zvětšení u domů v dosahu. Teď je větší opravdu jen ten, ke kterému dojdeš.'],
+    ['info','Kronika u domu teď napíše, proč v ní některý spoluvlastník chybí — dům získal dřív, než hra kroniku vedla, nebo se starší záznam nevešel.'],
+    ['oprava','Počasí občas ukázalo nesmyslnou teplotu (ráno −9 °C v září). Hra teď pozná nesmyslný skok a takovou hodnotu zahodí.'],
+  ]},
+  { verze:'9.1', datum:'2026-09-11', body:[
+    ['novinka','🌙 NOČNÍ UDÁLOSTI. Přes noc se u tvého majetku může něco stát — sprejeři, opilci u vchodu, rozbité okno, vylámané zvonky, zatečený sklep. Stav bytu klesne a někdy zaplatíš úklid. Provozovnu může někdo vykrást o zásoby.'],
+    ['info','Riziko je až dvakrát vyšší v rušných místech u podniků a památek. Rekonstrukce škodu půlí. Občas to dopadne dobře — soused partu odežene nebo nájemník sám uklidí.'],
+    ['novinka','Přibylo devět nových náhodných událostí. Část z nich se váže na to, co doopravdy vlastníš: deratizace v pronájmu, revize hasicích přístrojů v provozovně, spropitné od nájemníka nebo mimořádný podíl na zisku z firmy.'],
+  ]},
   { verze:'9.0', datum:'2026-09-11', body:[
     ['oprava','Tlačítko „Otevřít provozovnu“ z detailu domu zmizelo — vlastní podnikání tak nešlo vůbec spustit. Je zpátky.'],
   ]},
@@ -11727,6 +11906,15 @@ function renderGuide(){
     <p>• <b>Investice</b> — koupíš kousek (podíl) firmy nebo domu a dostáváš část z toho, co vydělá.</p>
     <p>• <b>Vlastní provozovna</b> — z vlastního domu uděláš obchod nebo kavárnu a vyděláváš na zákaznících z okolí.</p>
     <p>• <b>Zakázky</b> — každý den se na mapě objeví dvě jednorázové brigády. Dojdeš na místo, splníš, dostaneš zaplaceno. Nemusíš být zaměstnaný.</p>
+  `);
+
+  html += guideSection('🌙','Co se děje v noci', `
+    <p>Přes noc se u tvého majetku může něco semlít — sprejeři na fasádě, parta opilců u vchodu, rozbité okno, vylámané zvonky nebo zatečená voda ve sklepě. Stav bytu klesne a někdy zaplatíš i úklid.</p>
+    <p><b>Riziko závisí na místě.</b> V rušném okolí — u podniků a památek — se toho děje až dvakrát tolik než na kraji města. Dům v centru vydělá víc, ale taky si ho víc užijí.</p>
+    <p><b>Rekonstrukce škodu půlí.</b> Kvalitní materiály vydrží víc, takže se vylepšení vyplatí i z tohohle důvodu.</p>
+    <p><b>Provozovnu může někdo vykrást</b> — místo poškození přijdeš o 20–50 % zásob.</p>
+    <div class="ex">Občas to dopadne dobře: soused partu odežene, nájemník ráno sám uklidí. Ne každá noc je proti tobě.</div>
+    <p style="color:var(--muted)">Ráno to najdeš v deníku (📔) a v novinách. Když jsi byl pár dní pryč, nic se zpětně nedopočítává.</p>
   `);
 
   html += guideSection('📊','Firmy mají dobré a špatné dny', `
