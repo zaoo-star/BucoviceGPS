@@ -182,6 +182,31 @@
   }
   .evaZnacka.hotovo{ background:#6b7280;opacity:0.6 !important;animation:none; }
 
+  /* ===== MOJE NEMOVITOSTI: rozklikávací domy =====
+     Nativní <details>, takže to funguje i bez JavaScriptu a na mobilu je to jedno klepnutí. */
+  .mineDum{
+    background:var(--panel);border:1px solid var(--border);border-radius:12px;
+    margin:0 0 8px;overflow:hidden;text-align:left;
+  }
+  .mineDum[data-problem]{ border-left:3px solid var(--orange); }
+  .mineDum > summary{
+    list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;
+    padding:10px 12px;-webkit-tap-highlight-color:transparent;
+  }
+  .mineDum > summary::-webkit-details-marker{ display:none; }
+  .mineDum > summary::after{
+    content:'›';font-size:1.4em;color:var(--muted);transition:transform 0.2s;margin-left:2px;
+  }
+  .mineDum[open] > summary::after{ transform:rotate(90deg); }
+  .mineDum[open] > summary{ border-bottom:1px solid var(--border); }
+  .mineIko{ font-size:1.4em;flex:0 0 auto; }
+  .mineJm{ flex:1 1 auto;min-width:0;line-height:1.3; }
+  .mineKc{ flex:0 0 auto;font-weight:700;font-size:1.05em;white-space:nowrap; }
+  .mineKc small{ font-weight:400;font-size:0.75em; }
+  .mineDetail{ padding:6px 12px 12px; }
+  .mineDetail p{ margin:2px 0; }
+  .mineSek{ margin:10px 0 3px !important;font-size:0.8em;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted); }
+
   /* ===== KRESLENÉ ZNAČKY DOMŮ =====
      Podklad mapy necháváme tak, jak přijde z OpenStreetMap — barevné filtry přes celou mapu
      zhoršovaly čitelnost ulic a čísel popisných. Kreslený vzhled se proto týká jen značek:
@@ -652,7 +677,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '9.3';
+const APP_VERSION = '10.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -894,6 +919,7 @@ async function moveInNpc(npcId, houseId, unitIdx){
   if(!ok) return;
 
   u.npc = { name: npc.name, avatar: npc.avatar, minCondition: npc.minCondition };
+  npcZapamatujNajem(p, u);
   u.tenant = null;
   stampHouse(p);
   // odebrat zájemce z nabídky
@@ -4127,7 +4153,16 @@ const PROVOZ_INVESTICE = 0.55;    // kolik z hodnoty domu stojí zařízení pro
 // Základ výnosu je nastavený tak, aby při průměrné poptávce vyšla návratnost kolem 200 dní —
 // tedy mezi pronájmem (400) a podílem ve firmě (150). Dobré místo se vrátí za ~130 dní,
 // špatné za 400+. V tom je celá hra: nejde o to CO otevřeš, ale KDE.
-const PROVOZ_ZAKLAD = 0.00275;    // základ denního výnosu z hodnoty domu
+// Výnos je vyšší než u pronájmu, protože z něj ještě odchází zásoby (viz PROVOZ_ZASOBY_PODIL).
+// Čistá návratnost při průměrné poptávce vychází ~210 dní — mezi firmou (150) a pronájmem (380).
+// Nastaveno tak, aby provozovna vydělala víc než pronájem STEJNÉHO domu i na nejhorším místě
+// (minimum ~1,1×, obvykle ~1,9×). Stojí totiž víc peněz a chce denní péči — kdyby na průměrném
+// místě vyšla nastejno jako pronájem, nedávalo by smysl do ní jít (Eva, v. 9.4).
+const PROVOZ_ZAKLAD = 0.0045;     // základ denního výnosu z hodnoty domu (hrubě, před zásobami)
+// Kolik z hrubého výnosu padne na zásoby. DŘÍV se cena zásob počítala z hodnoty DOMU,
+// ne z toho, kolik provozovna vydělá — zásoby tak stály 260 Kč denně při výnosu 30–65 Kč
+// a každá provozovna byla hluboce ztrátová (nahlásila Eva, v. 9.4).
+const PROVOZ_ZASOBY_PODIL = 0.30;
 const PROVOZ_ZASOBY_DEN = 12;     // o kolik % denně klesnou zásoby
 const PROVOZ_MIN_POPTAVKA = 0.3;
 const PROVOZ_MAX_POPTAVKA = 1.8;
@@ -4214,13 +4249,71 @@ function provozVynos(p){
   if(!typ) return 0;
   const zasoby = Math.max(0, Math.min(100, p.provoz.zasoby ?? 100)) / 100;
   const poptavka = poptavkaProMisto(p, p.provoz.typ).index;
-  return effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * poptavka * zasoby;
+  return effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * poptavka * zasoby * provozVykon(p).mult;
 }
 
 function provozInvestice(p){ return Math.round(effectiveHousePrice(p) * PROVOZ_INVESTICE); }
+// Jak se provozovně dnes daří. Podnikání je risk: kolísá víc než podíl ve firmě (±50 %),
+// občas přijde skvělý den (×1,9) a občas propadák (×0,35). Průměr dlouhodobě vychází
+// kolem 1, takže návratnost se nemění — jen je cesta k ní divočejší. K tomu počasí:
+// v dešti se daří kavárnám a restauracím, za hezka fitku a zmrzlině… tedy kavárnám se zahrádkou.
+const PROVOZ_ROZPTYL = 0.50;
+function provozVykon(p){
+  if(!p || !p.provoz) return { mult:1, popis:'', vlivy:[] };
+  const den = world.day || 1;
+  const klic = p.id + '|' + p.provoz.typ;
+  const los = bizSum(klic, den) * 0.6 + bizSum(klic, den - 1) * 0.4;   // sousední dny navazují
+  let mult = 1 + (los - 0.5) * 2 * PROVOZ_ROZPTYL;
+  const vlivy = [];
+  // vzácné výkyvy — tady je ten „velký zisk" i „risk"
+  const vykyv = bizSum(klic + '|vykyv', den);
+  if(vykyv > 0.95){ mult *= 1.9; vlivy.push('🎉 nával zákazníků'); }
+  else if(vykyv < 0.05){ mult *= 0.35; vlivy.push('📉 propadák — skoro nikdo nepřišel'); }
+  // počasí podle oboru
+  const kod = POCASI ? POCASI.kod : null;
+  const prsi = kod !== null && ((kod >= 51 && kod <= 67) || (kod >= 80 && kod <= 99));
+  const hezky = kod !== null && kod <= 2 && POCASI.teplota >= 15;
+  const t = p.provoz.typ;
+  if(prsi && ['kavarna','restaurace','pekarna'].includes(t)){ mult *= 1.15; vlivy.push('🌧️ lidé se schovávají uvnitř'); }
+  if(prsi && ['fitko','kadernictvi'].includes(t)){ mult *= 0.88; vlivy.push('🌧️ v dešti se nikomu nechce'); }
+  if(hezky && ['fitko','vecerka'].includes(t)){ mult *= 1.1; vlivy.push('☀️ hezky, lidé jsou venku'); }
+  // městská událost
+  const ev = todaysCityEvent(world.day);
+  if(ev && ev.id === 'jarmark' && ['restaurace','kavarna','pekarna','vecerka'].includes(t)){ mult *= 1.25; vlivy.push(`${ev.emoji} ${ev.name}`); }
+  mult = Math.max(0.25, Math.min(2.4, mult));
+  const popis = mult >= 1.4 ? 'skvělý den' : mult >= 1.1 ? 'dobrý den' : mult >= 0.9 ? 'běžný den' : mult >= 0.65 ? 'slabší den' : 'špatný den';
+  return { mult: Math.round(mult * 100) / 100, popis, vlivy };
+}
+
+// Plný denní výnos provozovny, jako by měla plné zásoby.
+function provozPlnyVynos(p){
+  if(!p || !p.provoz || !PROVOZ_TYPY[p.provoz.typ]) return 0;
+  return effectiveHousePrice(p) * PROVOZ_ZAKLAD * PROVOZ_TYPY[p.provoz.typ].vynos
+         * poptavkaProMisto(p, p.provoz.typ).index;
+}
+
+// Zásoby stojí pevný podíl z toho, co provozovna vydělá — ne z hodnoty domu. Denní úbytek
+// (12 %) tak vždycky vyjde na 30 % hrubého výnosu, takže provozovna je v plusu na dobrém
+// i na špatném místě; jen na špatném vydělá málo.
 function doplneniCena(p){
   const chybi = Math.max(0, 100 - (p.provoz?.zasoby ?? 100));
-  return Math.round(effectiveHousePrice(p) * 0.0016 * chybi);
+  const zaProcento = provozPlnyVynos(p) * PROVOZ_ZASOBY_PODIL / PROVOZ_ZASOBY_DEN;
+  return Math.round(zaProcento * chybi);
+}
+
+// Kolik provozovna utrží DNES — s ohledem na to, kolik má zásob. Zásoby během dne ubývají
+// o PROVOZ_ZASOBY_DEN %, takže počítáme s průměrem dne, ne se stavem v tuhle chvíli.
+// Tohle číslo odpovídá tomu, co se opravdu připíše o půlnoci.
+function provozDnes(p){
+  if(!p || !p.provoz) return 0;
+  const prumer = Math.max(0, (p.provoz.zasoby ?? 100) - PROVOZ_ZASOBY_DEN / 2);
+  return provozPlnyVynos(p) * prumer / 100 * provozVykon(p).mult;
+}
+
+// Kolik provozovna vydělá ČISTĚ, po odečtení zásob. Tohle je číslo, které má hráč vidět,
+// když se rozhoduje — hrubý výnos by ho klamal.
+function provozCistyVynos(p){
+  return provozPlnyVynos(p) * (1 - PROVOZ_ZASOBY_PODIL);
 }
 
 function fairRentForHouse(p){
@@ -5689,6 +5782,80 @@ function pricti(u, klic, kolik){
 // Souhrn uzavřeného dne. Volá se při přechodu na nový den, ještě než se počitadla vynulují.
 // Uzavření dne = VÝPLATA. Během dne se všechno jen sčítá, tady se to najednou připíše
 // a strhne. Hráči tak vidí jedno srozumitelné číslo místo neznatelných haléřů.
+// Co se o půlnoci připíše do HOTOVOSTI. Jediné místo, kde je tenhle vzorec — používá ho
+// samotné vyúčtování i pilulka v hlavičce. Dřív měla hlavička vlastní kopii, která se
+// rozešla: počítala úrok ze spoření (ten jde od 6.6 na spořicí účet) a nepočítala
+// provozovny (přibyly v 7.0). Hráč pak v hlavičce viděl jiné číslo, než o půlnoci dostal.
+function pulnocniVyplata(s){
+  s = s || {};
+  const kVyplate = (s.najem||0) + (s.firmy||0) + (s.solar||0) + (s.provoz||0);
+  const kStrzeni = (s.naklady||0) + (s.dane||0) + (s.uroky||0) + (s.najemne||0);
+  return { kVyplate, kStrzeni, cisty: kVyplate - kStrzeni, naSporeni: s.uroky_sporeni || 0 };
+}
+
+// ===== HODNOSTI =====
+// Podle čistého jmění (hotovost + spoření + hodnota podílů − dluhy). Hranice jsou nastavené
+// podle skutečné hry: jeden celý dům je kolem 35 000 Kč, tři domy ~60 000, celé město
+// dohromady asi 77 milionů — nejvyšší hodnost tedy znamená vlastnit zhruba 4 % Bučovic.
+const RANKY = [
+  { od:0,         emoji:'🎒', nazev:'Nováček',         popis:'Teprve se rozhlížíš po městě.' },
+  { od:20000,     emoji:'🪙', nazev:'Střadatel',       popis:'Máš našetřeno na první velký nákup.' },
+  { od:40000,     emoji:'🏠', nazev:'Majitel',         popis:'Máš v Bučovicích vlastní střechu nad hlavou.' },
+  { od:80000,     emoji:'🏘️', nazev:'Pronajímatel',    popis:'Domy ti vydělávají, i když spíš.' },
+  { od:150000,    emoji:'📊', nazev:'Investor',        popis:'Peníze ti pracují na víc místech najednou.' },
+  { od:300000,    emoji:'💼', nazev:'Manažer',         popis:'Řídíš slušné portfolio a lidi to vědí.' },
+  { od:600000,    emoji:'🏢', nazev:'Podnikatel',      popis:'Tvoje jméno se v Bučovicích nosí.' },
+  { od:1200000,   emoji:'🎩', nazev:'Magnát',          popis:'Patří ti kus města.' },
+  { od:3000000,   emoji:'👑', nazev:'Tycoon Bučovic',  popis:'Bez tebe se tady nic nepostaví.' }
+];
+
+function rankPro(jmeni){
+  let idx = 0;
+  for(let i = 0; i < RANKY.length; i++) if(jmeni >= RANKY[i].od) idx = i;
+  const rank = RANKY[idx], dalsi = RANKY[idx + 1] || null;
+  const postup = dalsi ? Math.max(0, Math.min(1, (jmeni - rank.od) / (dalsi.od - rank.od))) : 1;
+  return { idx, rank, dalsi, postup, jmeni };
+}
+
+// Jmění se počítá přes všechny domy, tak si ho na pár vteřin pamatujeme — žebříček a chat
+// by ho jinak přepočítávaly u každého řádku.
+let _rankCache = { t:0, mapa:{} };
+function rankHrace(name){
+  if(!name || !world.users[name]) return rankPro(0);
+  if(Date.now() - _rankCache.t > 5000) _rankCache = { t: Date.now(), mapa: {} };
+  if(!(name in _rankCache.mapa)) _rankCache.mapa[name] = safeCall(() => netWorthEstimate(name)) || 0;
+  return rankPro(_rankCache.mapa[name]);
+}
+
+// Jméno v hlavičce. Dřív se skládalo na třech místech zvlášť — teď na jednom, ať se u něj
+// odznak hodnosti neztrácí.
+function userInfoHtml(name){
+  const u = world.users[name] || {};
+  const r = rankHrace(name).rank;
+  return `<span style="cursor:pointer">${escapeHtml(u.avatar || '🧑')} ${escapeHtml(name)} <span title="${escapeHtml(r.nazev)}">${r.emoji}</span> ▸</span>`;
+}
+
+// Povýšení hlásíme jen směrem nahoru a jen jednou — kdo o peníze přijde a zase je získá,
+// nedostane stejné blahopřání znovu. U hráčů, kteří hráli před zavedením hodností, se
+// dosažená hodnost zapíše potichu.
+function hlidejRank(){
+  if(!currentUser) return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  const r = rankHrace(u.name);
+  if(typeof u.nejRank !== 'number'){ u.nejRank = r.idx; return; }
+  if(r.idx > u.nejRank){
+    u.nejRank = r.idx;
+    addNews('achievement', `${r.rank.emoji} ${u.name} postoupil na hodnost ${r.rank.nazev}!`);
+    zapisDoDeniku('other', `${r.rank.emoji} Nová hodnost: ${r.rank.nazev}`, null);
+    notifyPlayer(`Nová hodnost: ${r.rank.nazev}`, `${r.rank.emoji} ${r.rank.popis}`);
+    playSound('coin');
+    const el = document.getElementById('userInfo');
+    if(el) el.innerHTML = userInfoHtml(u.name);
+    saveWorld();
+  }
+}
+
 function uzavriDen(u, denKtery){
   if(!u) return;
   const s = u.denSoucty;
@@ -5699,8 +5866,7 @@ function uzavriDen(u, denKtery){
   // do HOTOVOSTI společně s nájmem a firmami — samotná částka na spoření se tak nikdy
   // nezvyšovala. Kdo tam měl 7 000 Kč, měl je tam pořád stejně i po týdnu.
   // Úrok teď jde tam, kam patří: na spoření, ne do peněženky.
-  const kVyplate = (s.najem||0) + (s.firmy||0) + (s.solar||0) + (s.provoz||0);
-  const kStrzeni = (s.naklady||0) + (s.dane||0) + (s.uroky||0) + (s.najemne||0);
+  const { kVyplate, kStrzeni } = pulnocniVyplata(s);
   u.balance += kVyplate - kStrzeni;
   u.savings = (u.savings || 0) + (s.uroky_sporeni || 0);
 
@@ -5905,7 +6071,7 @@ function tickVnitrni(){
               addNews('rental', `📤 ${u.npc.name} se odstěhoval z domu ${domKratce(p)} — byt se moc zanedbal.`);
               u.npc = null;
             } else {
-              collected = u.rentPrice;
+              collected = vybranyNajem(p, u);
             }
           } else if(u.ownerOccupied){
             collected = 0;   // v tomhle bytě bydlí sám majitel — nevydělává, ale ani neplatí nájem
@@ -5916,7 +6082,7 @@ function tickVnitrni(){
         // Výnos si připisuje jen ten, kdo zrovna hraje — za dobu, kterou vidí on sám.
         if(collected > 0 && ja){
           const mujPodil = (p.owners?.[ja.name] || 0) / 100;
-          if(mujPodil > 0) pricti(ja, 'najem', collected * mujPodil * mojeDayFraction);
+          if(mujPodil > 0) pricti(ja, 'najem', collected * plnyDumMult(p) * mujPodil * mojeDayFraction);
         }
         // obsazený byt (hráč, NPC nebo poptávka) se opotřebovává; prázdný chátrá pomaleji
         const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : 0;   // buď někdo bydlí, nebo ne
@@ -6105,6 +6271,103 @@ function maybeRandomEvent(){
 // Dřív se místo toho počítala "částečná obsazenost" (byt vydělával třeba 35 % nájmu),
 // což hráči nedávalo smysl: pronajímal jeden byt a nechápal, proč nemá 100 %.
 // Teď je to jednoznačné: byt buď nájemníka má a platí celý nájem, nebo ho nemá a nevydělává nic.
+// ===== KOLIK NÁJEMNÍK SNESE =====
+// Nájemník si pamatuje, za kolik se nastěhoval. Snese zdražení zhruba o pětinu nad to,
+// co tehdy platil (a nad tehdejší férovou cenu) — víc ne. Dřív si to nepamatoval vůbec:
+// hráčka nastěhovala studentku za 38 Kč, zdražila na 120 Kč a studentka platila dál,
+// takže šlo na každý byt napasovat trojnásobný nájem bez rizika.
+// POZOR: tolerance se počítá z FÉROVÉ ceny, ne z toho, za kolik nájemník přišel. Jinak
+// by stačilo nastavit trojnásobek do prázdného bytu, počkat na někoho ochotného — a ten
+// by si trojnásobek „pamatoval" jako únosný a zůstal navždy (ověřeno simulací: 96 %
+// obsazenost i při trojnásobku).
+const NAJEMNIK_TOLERANCE = 1.25;
+
+// Bonus za plně obsazený dům. Když už nejde napálit trojnásobný nájem, má se vyplácet
+// rozumná cena a plný dům: město přihodí 12 % k nájmu, když jsou obsazené všechny byty
+// (aspoň dva). Neplatí ho nájemníci, takže je to čistý bonus za dobrou správu.
+const PLNY_DUM_BONUS = 0.12;
+function plnyDumMult(p){
+  if(!p || p.useType !== 'rental') return 1;
+  const k_pronajmu = asArray(p.units).filter(u => u && !u.ownerOccupied);
+  if(k_pronajmu.length < 2) return 1;
+  const plno = k_pronajmu.every(u => (u.tenant || u.npc) && (u.condition || 0) > 0);
+  return plno ? 1 + PLNY_DUM_BONUS : 1;
+}
+
+function npcMaxNajem(p, u){
+  if(!u || !u.npc) return Infinity;
+  return fairRentForHouse(p) * NAJEMNIK_TOLERANCE;
+}
+
+// Kolik majiteli z bytu DOOPRAVDY přijde. Nájemník víc, než unese, nezaplatí — rozdíl
+// odmítne a jen se rozhlíží po jiném bydlení. Bez tohohle šlo pravidlo obejít cyklem:
+// po nastěhování zdražit na trojnásobek, pár dní vybírat, po odchodu zlevnit a znovu —
+// simulace ukázala 2,1× vyšší výdělek než u férové ceny. Hráč-nájemník platí, na čem
+// se dohodl (a když nemá, odstěhuje se sám).
+// Jediné místo s tímhle pravidlem — používá ho tick i všechny přehledy.
+function vybranyNajem(p, u){
+  if(!u || (u.condition || 0) <= 0) return 0;
+  if(u.tenant) return u.rentPrice || 0;
+  if(!u.npc) return 0;
+  const cena = u.rentPrice || 0;
+  return najemPravidloPlati() ? Math.min(cena, npcMaxNajem(p, u)) : cena;
+}
+
+// Zapamatovat si, kdy a za kolik se nájemník nastěhoval — jen pro přehled.
+function npcZapamatujNajem(p, u){
+  if(!u || !u.npc) return;
+  u.npc.odDne = calendarDay();
+  u.npc.zaKolik = u.rentPrice || 0;
+}
+
+// Jednou denně: kdo platí víc, než snese, se může odstěhovat. Čím větší přestřelení,
+// tím dřív — při trojnásobku skoro hned, při mírném zdražení se rozmýšlí dny.
+// Kolik dní po zavedení pravidla se nájemníci jen „rozmýšlejí". Hráči mají teď spoustu
+// bytů za trojnásobek — bez přechodu by jim nájemníci zmizeli přes noc a nestihli by
+// na to zareagovat.
+const NAJEM_PRECHOD_DNI = 3;
+function najemPravidloPlati(){
+  if(!world.najemToleranceOd) world.najemToleranceOd = calendarDay() + NAJEM_PRECHOD_DNI;
+  return calendarDay() >= world.najemToleranceOd;
+}
+function najemPrechodZbyva(){
+  if(!world.najemToleranceOd) return NAJEM_PRECHOD_DNI;
+  return Math.max(0, world.najemToleranceOd - calendarDay());
+}
+
+function najemniciReagujiNaNajem(){
+  const den = calendarDay();
+  if(!najemPravidloPlati()) return;
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p || p.useType !== 'rental') return;
+    asArray(p.units).forEach((u, idx) => {
+      if(!u || !u.npc) return;
+      const max = npcMaxNajem(p, u);
+      if((u.rentPrice || 0) <= max) return;
+      const prestrel = (u.rentPrice / max) - 1;
+      const sance = Math.min(0.55, prestrel * 0.6);
+      // Stejně jako nastěhování: los z domu, bytu a dne, ať to vyjde stejně na všech zařízeních.
+      // Los z CELÉHO id domu. Dřív se brala jen jeho délka, takže všechny domy se stejně
+      // dlouhým číslem (h_120, h_455, h_873…) házely stejnou kostkou a nájemníci z nich
+      // odcházeli ve stejný den.
+      let idHash = 0;
+      for(let i = 0; i < p.id.length; i++) idHash = (idHash * 31 + p.id.charCodeAt(i)) % 2147483647;
+      let seed = Math.abs((idHash * 6151 + idx * 92821 + den * 1500007)) % 2147483647;
+      seed = (seed * 9301 + 49297) % 233280;
+      if((seed / 233280) > sance) return;
+      const kdo = u.npc.name || 'Nájemník';
+      const bylo = u.rentPrice;
+      u.npc = null;
+      stampUnit(u); stampHouse(p);
+      addNews('rental', `📤 ${kdo} se odstěhoval z domu ${domKratce(p)} — nájem ${bylo} Kč/den mu byl moc.`);
+      if(currentUser && (p.owners?.[currentUser.name] || 0) > 50){
+        notifyPlayer('Nájemník se odstěhoval', `${kdo} z domu ${domLabel(p)} — nájem ${bylo} Kč/den mu byl moc. Unesl by zhruba ${Math.round(max)} Kč.`);
+        zapisDoDeniku('rent', `${kdo} se odstěhoval z ${domKratce(p)} — nájem ${bylo} Kč mu byl moc`, null);
+      }
+    });
+  });
+}
+
 function tryFillVacantUnits(){
   Object.values(world.parcels || {}).forEach(p => {
     if(!p || p.useType !== 'rental') return;
@@ -6126,6 +6389,7 @@ function tryFillVacantUnits(){
       if(!volnaJmena.length) return;
       const jmeno = volnaJmena[Math.abs(seed >> 3) % volnaJmena.length];
       un.npc = { name: jmeno, avatar: typ.avatar, minCondition: typ.minCondition };
+      npcZapamatujNajem(p, un);
       stampHouse(p);
       if(currentUser && (p.owners?.[currentUser.name] || 0) > 50){
         addNews('rental', `📥 ${jmeno} se nastěhoval do domu ${domKratce(p)} (${un.rentPrice} Kč/den).`);
@@ -6288,6 +6552,7 @@ function onNewDay(catchUp){
     safeCall(() => nocniIncident(world.users[currentUser.name]));
   }
   if(!catchUp) notifyNewDay();   // nové balíky + nové úkoly (jen když appka běží)
+  najemniciReagujiNaNajem();     // kdo platí víc, než snese, se může odstěhovat
   tryFillVacantUnits();          // volné byty si najdou nájemníky podle ceny
   // Při dopočítávání zameškaných dnů se událost nevypisuje — hráč u toho nebyl a noviny
   // by zaplavilo několik hlášení najednou. Píše se jen ta k dnešnímu dni.
@@ -6846,6 +7111,7 @@ async function encounterNajemnik(enc, u){
     `${stav < 50 ? '⚠️ Byt je ve špatném stavu — brzy se odstěhuje.\n\n' : ''}Nastěhovat?`);
   if(!ok){ showToast('Zájemce šel jinam.'); return; }
   cil.p.units[cil.idx].npc = { name: 'Nájemník z ulice', avatar: '🧑', minCondition: 35 };
+  npcZapamatujNajem(cil.p, cil.p.units[cil.idx]);
   cil.p.units[cil.idx].rentPrice = nabidka;
   stampUnit(cil.p.units[cil.idx]);
   stampHouse(cil.p);
@@ -7589,11 +7855,7 @@ function updateHeaderStats(){
 
     const elRate = document.getElementById('rateVal');
     if(elRate){
-      const s2 = u.denSoucty;
-      const naskocilo = s2
-        ? ((s2.najem||0) + (s2.firmy||0) + (s2.solar||0) + (s2.uroky_sporeni||0))
-          - ((s2.naklady||0) + (s2.dane||0) + (s2.uroky||0) + (s2.najemne||0))
-        : 0;
+      const naskocilo = pulnocniVyplata(u.denSoucty).cisty;
       const kladne = naskocilo >= 0;
       elRate.className = 'rate ' + (kladne ? 'up' : 'down');
       // „370 dnes" hráči četli jako dnešní výsledek a nesedělo jim to s denní bilancí.
@@ -7601,7 +7863,7 @@ function updateHeaderStats(){
       // Proto to říkáme rovnou v textu, ne až v popisku.
       elRate.textContent = Math.abs(naskocilo) < 0.5 ? ''
         : `${kladne ? '▲' : '▼'}${Math.round(Math.abs(naskocilo)).toLocaleString('cs-CZ')} o půlnoci`;
-      elRate.title = 'Kolik se dnes nasčítalo z nájmu, firem a soláru po odečtení účtů a splátek. Připíše se ti to najednou o půlnoci. Plat, balíky a odměny za úkoly v tom nejsou — ty dostáváš hned.';
+      elRate.title = 'Kolik se dnes nasčítalo z nájmu, firem, provozoven a soláru po odečtení účtů a splátek. Připíše se ti to najednou o půlnoci. Plat, balíky a odměny za úkoly v tom nejsou — ty dostáváš hned. Úrok ze spoření taky ne, ten jde rovnou na spořicí účet.';
     }
     document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
     const status = housingStatus(currentUser.name);
@@ -7717,22 +7979,30 @@ function renderSelected(id){
     const zas = Math.round(p.provoz.zasoby ?? 100);
     const barvaZ = zas > 60 ? 'var(--accent)' : zas > 25 ? 'var(--gold)' : 'var(--danger)';
     const denne = Math.round(provozVynos(p));
-    const plne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * pop.index);
+    const plne = Math.round(provozPlnyVynos(p));
+    const zasobyDenne = Math.round(plne * PROVOZ_ZASOBY_PODIL);
+    const cisteDenne = plne - zasobyDenne;
     html += `<div class="card" style="border-left:3px solid var(--accent2);">
       <h3>${typ.emoji} ${typ.name}</h3>
       <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">${typ.popis}</p>
       <p style="margin:4px 0;">Poptávka v okolí: <b style="color:${pop.index>=1.1?'var(--accent)':(pop.index>=0.8?'var(--gold)':'var(--danger)')}">${pop.popis}</b>
         <span style="color:var(--muted);font-size:0.9em;">(${pop.faktory.join(' · ')})</span></p>
+      ${(() => { const vk = provozVykon(p);
+        const b = vk.mult >= 1.1 ? 'var(--accent)' : vk.mult >= 0.9 ? 'var(--muted)' : 'var(--danger)';
+        return `<p style="margin:4px 0;">Dnes: <b style="color:${b}">${vk.popis} (${Math.round(vk.mult*100)} %)</b>${
+          vk.vlivy.length ? ` <span style="color:var(--muted);font-size:0.9em;">— ${vk.vlivy.join(' · ')}</span>` : ''}</p>`; })()}
       <p style="margin:4px 0;">Zásoby: <b style="color:${barvaZ}">${zas} %</b></p>
       <div style="background:var(--panel2);border-radius:4px;height:8px;margin:4px 0;overflow:hidden;">
         <div style="width:${zas}%;height:100%;background:${barvaZ};"></div>
       </div>
-      <p style="margin:4px 0;">Vydělává <b style="color:var(--gold)">${denne} Kč/den</b>${zas < 99 ? ` <span style="color:var(--muted)">(při plných zásobách ${plne} Kč)</span>` : ''}</p>
-      ${myPct > 0 ? `<p style="font-size:0.9em;margin:2px 0;">Tvůj podíl ${myPct.toFixed(0)} % → <b style="color:var(--accent)">${Math.round(denne*myPct/100)} Kč/den pro tebe</b></p>` : ''}
+      <p style="margin:4px 0;">Tržby <b>${plne} Kč/den</b> − zásoby <b style="color:var(--danger)">${zasobyDenne} Kč/den</b>
+        = čistě <b style="color:var(--gold)">${cisteDenne} Kč/den</b></p>
+      ${zas < 99 ? `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Dnes kvůli nižším zásobám vydělává ${denne} Kč hrubě.</p>` : ''}
+      ${myPct > 0 ? `<p style="font-size:0.9em;margin:2px 0;">Tvůj podíl ${myPct.toFixed(0)} % → čistě <b style="color:var(--accent)">${Math.round(cisteDenne*myPct/100)} Kč/den pro tebe</b></p>` : ''}
       ${iDecide ? `<div class="row">
         <button ${near?'':'disabled'} onclick="doplnitZasoby('${p.id}')">Doplnit zásoby${zas<99?` (${doplneniCena(p).toLocaleString('cs-CZ')} Kč)`:' — plné'}</button>
       </div>` : ''}
-      <p style="font-size:0.83em;color:var(--muted);margin:4px 0 0;">Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně. Bez nich provozovna nevydělá nic — doplňují se na místě.</p>
+      <p style="font-size:0.83em;color:var(--muted);margin:4px 0 0;">Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně a stojí ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % tržeb. Bez nich provozovna nevydělá nic — doplňují se na místě.</p>
     </div>`;
   }
 
@@ -7878,10 +8148,23 @@ function renderSelected(id){
       // Hráči si museli sami násobit „Kč na procento × můj podíl". Spočítáme to za ně —
       // a u toho, kdo v domě ještě nic nemá, ukážeme příklad na 10 %.
       const mujTok = myPct > 0 ? cisty * myPct : null;
+      // Co hráči chodí DOOPRAVDY — jen z obsazených bytů. Hráčka si nebyla jistá, jestli se
+      // o půlnoci připisuje částka „za plně obsazený dům" (nepřipisuje), protože tady byla
+      // vidět jen ta. Skutečná částka teď stojí na prvním místě a sedí s denním vyúčtováním.
+      const byty = asArray(p.units);
+      const obsazene = byty.filter(u => u && (u.tenant || u.npc) && u.condition > 0);
+      const realne = p.useType === 'rental' && myPct > 0
+        ? obsazene.reduce((s2, u) => s2 + vybranyNajem(p, u), 0) * plnyDumMult(p) * myPct / 100 : null;
+      if(realne !== null){
+        html += `<p style="font-size:0.9em;margin:4px 0 0 0;">
+          💰 Teď ti reálně chodí <b style="color:var(--gold)">${Math.round(realne)} Kč/den</b>
+          <span style="color:var(--muted)">(obsazeno ${obsazene.length} z ${byty.length} ${byty.length===1?'bytu':'bytů'}) — přesně tohle se připíše o půlnoci</span></p>`;
+      }
       html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
-        📈 Za plně obsazený dům: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
+        📈 Při plném obsazení: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
         ${mujTok !== null
-          ? `Při tvých <b>${myPct.toFixed(1)} %</b> to je <b style="color:var(--accent)">${Math.round(mujTok)} Kč/den</b> pro tebe.`
+          ? `Při tvých <b>${myPct.toFixed(1)} %</b> by to bylo <b>${Math.round(mujTok)} Kč/den</b>${
+              realne !== null && obsazene.length < byty.length ? ' — až se obsadí i volné byty' : ''}.`
           : (free > 0
               ? `Za ${Math.min(10, free).toFixed(0)} % by ti chodilo <b style="color:var(--accent)">${Math.round(cisty * Math.min(10, free))} Kč/den</b>.`
               : 'Dům je celý rozebraný — volné podíly tu nejsou.')}
@@ -7926,11 +8209,11 @@ function renderSelected(id){
       // Vlastní podnikání — třetí způsob využití domu vedle bydlení a pronájmu.
       if(p.useType !== 'provozovna'){
         const nejlepsi = Object.entries(PROVOZ_TYPY)
-          .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index }))
+          .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index * (1 - PROVOZ_ZASOBY_PODIL) }))
           .sort((a, b) => b.denne - a.denne)[0];
         html += `<button class="secondary" ${near?'':'disabled'} onclick="otevritProvozovnu('${p.id}')">🏪 Otevřít provozovnu (od ${provozInvestice(p).toLocaleString('cs-CZ')} Kč)</button>`;
         if(nejlepsi) html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0;">
-          Nejlépe by tu šla ${nejlepsi.t.emoji} <b>${nejlepsi.t.name.toLowerCase()}</b> — poptávka ${poptavkaProMisto(p, nejlepsi.k).popis}, odhad <b>${Math.round(nejlepsi.denne)} Kč/den</b>.
+          Nejlépe by tu šla ${nejlepsi.t.emoji} <b>${nejlepsi.t.name.toLowerCase()}</b> — poptávka ${poptavkaProMisto(p, nejlepsi.k).popis}, odhad <b>${Math.round(nejlepsi.denne)} Kč/den čistě</b> (po zásobách).
           Výnos závisí na tom, kolik lidí v okolí bydlí a jaká je konkurence.</p>`;
       }
     }
@@ -7996,10 +8279,7 @@ function renderSelected(id){
   if(p.useType === 'rental' && p.units){
     const fair = fairRentForHouse(p);
     // reálně vybraný nájem celkem (po obsazenosti)
-    const collectedTotal = p.units.reduce((s,u)=>{
-      const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;   // buď někdo bydlí, nebo ne
-      return s + u.rentPrice * occ;
-    }, 0);
+    const collectedTotal = p.units.reduce((s,u) => s + vybranyNajem(p, u), 0);
     const myShare = collectedTotal * (myPct/100);
     html += `<div class="card"><h3>🏘️ Pronájem — ${p.units.length} ${p.units.length===1?'byt':'bytů'}</h3>
       <p>Reálný výběr: <b style="color:var(--gold)">${collectedTotal.toFixed(0)} Kč/den</b>${myPct>0?` · tvůj podíl (${myPct.toFixed(1)} %): <b style="color:var(--gold)">${myShare.toFixed(0)} Kč/den</b>`:''}</p>
@@ -8049,14 +8329,21 @@ function renderSelected(id){
       else if(sanceNaNajemnika >= 70){ occLabel='volný — zájemci se hlásí'; occColor='var(--gold)'; }
       else if(sanceNaNajemnika >= 30){ occLabel='volný — zájem je slabší'; occColor='var(--orange)'; }
       else { occLabel='volný — za tuhle cenu nikdo nechce'; occColor='var(--danger)'; }
-      const realCollected = (u.tenant || u.npc) ? u.rentPrice : 0;
+      const realCollected = vybranyNajem(p, u);
       const pocetObsazenych = asArray(p.units).filter(x => x && (x.tenant || x.npc)).length;
       const canRent = !u.tenant && !u.npc && u.condition>0 && myPct===0 && housingStatus(currentUser?.name)==='homeless';
       // popis obyvatele bytu
       let occupantLine;
       if(u.condition <= 0) occupantLine = '<span style="color:var(--danger)">Neobyvatelný — nutná oprava</span>';
       else if(u.tenant) occupantLine = iAmTenant ? `Bydlí zde: <b>${u.tenant}</b> (ty)` : `Bydlí zde: <b style="cursor:pointer;text-decoration:underline;" ${profileAttr(u.tenant)}>${escapeHtml(u.tenant)}</b>`;
-      else if(u.npc) occupantLine = `Bydlí zde: <b>${escapeHtml(u.npc.avatar||'🧑')} ${escapeHtml(u.npc.name)}</b> <span style="font-size:0.85em;color:var(--muted)">(platí spolehlivě plný nájem)</span>`;
+      else if(u.npc){
+        // Dřív tu stálo „platí spolehlivě plný nájem" — od 9.9 to u přemrštěného nájmu neplatí.
+        const unese = Math.round(npcMaxNajem(p, u));
+        const plati = Math.round(vybranyNajem(p, u));
+        occupantLine = `Bydlí zde: <b>${escapeHtml(u.npc.avatar||'🧑')} ${escapeHtml(u.npc.name)}</b> ` + (plati < (u.rentPrice || 0)
+          ? `<br><span style="font-size:0.88em;color:var(--danger)">Platí jen <b>${plati} Kč</b> — víc neunese a rozdíl nezaplatí. Když nesleviš, odstěhuje se.</span>`
+          : `<span style="font-size:0.85em;color:var(--muted)">(platí celý nájem, unese zhruba do ${unese} Kč)</span>`);
+      }
       else if(u.ownerOccupied) occupantLine = `<b style="color:var(--accent)">🏠 Bydlíš tu ty</b> <span style="font-size:0.85em;color:var(--muted)">(nevydělává, ale máš nižší náklady)</span>`;
       else if(sanceNaNajemnika > 0) occupantLine = `<span style="color:var(--muted)">Zatím prázdný</span> — každý den je <b>${sanceNaNajemnika}% šance</b>, že se někdo nastěhuje`;
       else occupantLine = '<span style="color:var(--danger)">Prázdný — za tuhle cenu se nikdo nenastěhuje</span>';
@@ -8065,8 +8352,10 @@ function renderSelected(id){
       let priceNote;
       if(ratio <= 0.85) priceNote = '<span style="color:var(--accent)">pod tržní cenou — plno, ale necháváš peníze ležet</span>';
       else if(ratio <= 1.15) priceNote = '<span style="color:var(--accent)">kolem tržní ceny — dobrá rovnováha</span>';
-      else if(ratio <= 1.6) priceNote = '<span style="color:var(--gold)">nad trhem — vyšší výnos, ale prázdnější</span>';
-      else priceNote = '<span style="color:var(--danger)">hodně přes trh — riziko prázdna</span>';
+      // Hranice se řídí tím, kolik nájemníci unesou (NAJEMNIK_TOLERANCE). Nad ní už vyšší
+      // nájem nic nepřinese — nájemník rozdíl nezaplatí a byt se navíc obsazuje hůř.
+      else if(ratio <= NAJEMNIK_TOLERANCE) priceNote = '<span style="color:var(--gold)">nad trhem — nájemníci to ještě unesou, ale byt se obsadí pomaleji</span>';
+      else priceNote = `<span style="color:var(--danger)">víc, než nájemníci unesou (~${Math.round(fair * NAJEMNIK_TOLERANCE)} Kč) — rozdíl nezaplatí a budou se stěhovat pryč</span>`;
       html += `<div class="card">
         <h3>Byt ${idx+1}. patro <span class="badge" style="background:transparent;color:${occColor};border:1px solid ${occColor}">${occLabel}</span></h3>
         <p style="font-size:1em;">${occupantLine}</p>
@@ -8133,8 +8422,8 @@ function renderSelected(id){
     <p style="margin:3px 0;">• kolik je poblíž <b>konkurence</b> — třetí kavárna v ulici vydělá zlomek toho, co první</p>
     <p style="margin:3px 0;">• jestli tam zrovna neběží <b>lokální událost</b></p>
     <div class="ex">Stejná kavárna vydělá v centru i třikrát víc než na okraji. Než ji otevřeš, hra ti u každého oboru ukáže odhad pro tohle konkrétní místo.</div>
-    <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se <b>na místě</b>. Bez nich provozovna nevydělá nic — musíš k ní chodit.</p>
-    <p><b>Kdy se vyplatí.</b> Na dobrém místě se vrátí zhruba za 120 dní, na špatném i za 480. Pro srovnání: pronájem ~400 dní, podíl ve firmě 150. Provozovna je nejvýnosnější, ale jediná vyžaduje péči.</p>
+    <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se <b>na místě</b>. Stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % toho, co provozovna utrží — zbytek je tvůj čistý zisk. Bez zásob provozovna nevydělá nic, takže k ní musíš chodit.</p>
+    <p><b>Kdy se vyplatí.</b> Investice do zařízení se čistě (po zásobách) vrátí na dobrém místě zhruba za 80 dní, obvykle kolem 110, na špatném za 230. Proti pronájmu stejného domu vydělá provozovna víc všude — obvykle skoro dvojnásobek, na nejlepších místech i víc. Za to po tobě chce péči.</p>
     <p style="color:var(--muted)">Byty v domě zůstanou zachované — na pronájem se dá kdykoliv vrátit.</p>
   `);
 
@@ -8147,20 +8436,22 @@ function renderSelected(id){
   `);
 
   html += infoBox('Jak funguje pronájem a čekání na nájemníka?', `
-    <p><b>Byt buď někdo obývá, nebo ne.</b> Žádné poloviny: když máš nájemníka, platí ti <b>celý nájem každý den</b>. Když je byt prázdný, nevydělává <b>nic</b>.</p>
+    <p><b>Byt buď někdo obývá, nebo ne.</b> Když máš nájemníka, platí ti nájem každý den — <b>ale nejvýš tolik, kolik unese</b>. Když je byt prázdný, nevydělává <b>nic</b>.</p>
     <p><b>Jak se nájemník objeví.</b> Každý den se hra podívá na tvoje volné byty a rozhodne, jestli se do nich někdo nastěhuje. Šance závisí na ceně:</p>
     <p style="margin:2px 0;">• za <b>férovou cenu</b> se někdo nastěhuje prakticky hned<br>
        • o čtvrtinu dráž → počkáš pár dní<br>
        • dvojnásobek → čekání i týdny<br>
        • trojnásobek → skoro nikdo nepřijde</p>
-    <div class="ex"><b>Férová cena 74 Kč</b><br>
+    <p><b>Kolik nájemník unese.</b> Zhruba o čtvrtinu víc než férovou cenu. <b>Víc nezaplatí</b> — rozdíl odmítne, dál platí jen tolik, kolik unese, a začne se stěhovat pryč. Tahle hranice platí i pro nájemníky, kteří v bytě už bydlí.</p>
+    <div class="ex"><b>Férová cena 74 Kč</b> (nájemník unese asi 92 Kč)<br>
     74 Kč → nájemník hned, vyděláváš 74 Kč/den<br>
     85 Kč → počkáš ~1 den, pak 85 Kč/den ← nejvýhodnější<br>
-    110 Kč → počkáš ~2 dny, pak 110 Kč/den<br>
-    150 Kč → čekáš ~3 dny, a mezitím nemáš nic</div>
-    <p><b>Kde je optimum?</b> Kousek nad férovou cenou. Krátké čekání se vyplatí, protože pak vyděláváš víc každý den. Ale od zhruba dvojnásobku už proděláváš — byt stojí prázdný déle, než kolik ti vyšší nájem přinese.</p>
+    110 Kč → čekáš, a i když někdo přijde, zaplatí jen 92 Kč a odstěhuje se<br>
+    150 Kč → skoro nikdo nepřijde, a kdo ano, zaplatí taky jen 92 Kč</div>
+    <p><b>Kde je optimum?</b> Mezi férovou cenou a tím, co nájemník unese. Nad hranicí nevyděláš ani korunu navíc — jen riskuješ prázdný byt.</p>
+    <p><b>🎉 Plný dům se vyplácí.</b> Když jsou obsazené všechny byty (aspoň dva), město přihodí ${Math.round(PLNY_DUM_BONUS*100)} % k nájmu. Proto se často vyplatí držet cenu spíš u férové, ať je dům pořád plný.</p>
     <p><b>Férovou cenu</b> ti hra ukazuje u každého bytu. Odvíjí se od hodnoty domu a počtu bytů.</p>
-    <p><b>Nájemník má nároky.</b> Odstěhuje se, když stav bytu klesne pod jeho mez. Pak čekáš na dalšího — proto se vyplatí opravovat včas.</p>
+    <p><b>Nájemník má nároky.</b> Odstěhuje se, když stav bytu klesne pod jeho mez nebo když je nájem vyšší, než unese. Pak čekáš na dalšího — proto se vyplatí opravovat včas a nepřehánět cenu.</p>
     <p><b>Co pomáhá:</b> 🌡️ zateplení a 🔧 rekonstrukce zvyšují šanci, že se někdo nastěhuje. ❄️ klimatizace zvedne férovou cenu, takže si můžeš říct víc.</p>
     <p><b>A v domě, kde bydlíš sám?</b> Vylepšení dávají smysl i tam — jen jinak. Zateplení ušetří 15 % životních nákladů, solár 20 % (a ještě ti vydělává každý den), klimatizace 5 %. Dohromady až 40 %.</p>
   `);
@@ -8204,88 +8495,260 @@ function renderSelected(id){
 
 function renderMine(){
   if(!currentUser) return;
-  const mine = Object.values(world.parcels).filter(p => myHousePct(p) > 0);
   const el = document.getElementById('mineContent');
+  const ja = currentUser.name;
+  const mine = Object.values(world.parcels).filter(p => myHousePct(p) > 0);
   if(!mine.length){ el.innerHTML = '<div class="empty-state">Zatím nevlastníš žádný podíl v domě. Klikni na dům na mapě a kup si podíl.</div>'; return; }
-  let totalRentShare = 0, totalTax = 0;
-  mine.forEach(p => {
-    if(p.useType==='rental' && p.units){
-      const collected = p.units.reduce((s,u)=>{
-        const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;
-        return s + u.rentPrice*occ;
-      },0);
-      totalRentShare += collected * (myHousePct(p)/100);
-    }
-    totalTax += effectiveHousePrice(p) * (myHousePct(p)/100) * PROPERTY_TAX_RATE / 365;
-  });
-  const netDaily = totalRentShare - totalTax;
-  setHtml(el, `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">
-    Příjem z pronájmů: <b style="color:var(--gold)">+${totalRentShare.toFixed(0)} Kč/den</b><br>
-    Daň z nemovitosti: <b style="color:var(--orange)">−${totalTax.toFixed(1)} Kč/den</b><br>
-    Čistý tok z nemovitostí: <b style="color:${netDaily>=0?'var(--accent)':'var(--danger)'}">${netDaily>=0?'+':''}${netDaily.toFixed(0)} Kč/den</b>
-  </p>` +
-    mine.map(p => {
-      const iDecide = iAmDecider(p);
-      return `<div class="card">
-      <h3>${domLabel(p)} ${badgeFor(p)}</h3>
-      <p>Tvůj podíl: <b>${myHousePct(p).toFixed(1)} %</b>${
-        iDecide ? ' 👑 <span style="color:var(--accent)">rozhoduješ</span>'
-        : (houseDecider(p)
-            ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" ${profileAttr(houseDecider(p))}>${escapeHtml(houseDecider(p))}</span>`
-            : ' · <span style="color:var(--orange)">nikdo nemá většinu — dokup podíl nad 50 %, ať můžeš rozhodovat</span>')}</p>
-      ${p.useType==='provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ] ? (() => {
-        const typ = PROVOZ_TYPY[p.provoz.typ];
-        const zas = Math.round(p.provoz.zasoby ?? 100);
-        const barva = zas > 60 ? 'var(--accent)' : zas > 25 ? 'var(--gold)' : 'var(--danger)';
-        const pop = poptavkaProMisto(p, p.provoz.typ);
-        const denne = Math.round(provozVynos(p) * myHousePct(p) / 100);
-        const celkemProvoz = Math.round(provozVynos(p));
-        return `<p>${typ.emoji} ${typ.name} · poptávka <b>${pop.popis}</b> · vyděláváš <b style="color:var(--gold)">${denne} Kč/den</b>${
-          myHousePct(p) < 99.9 ? ` <span style="color:var(--muted)">(z ${celkemProvoz} Kč celkem)</span>` : ''}</p>
-          <p style="font-size:0.88em;color:${barva};margin:2px 0;">📦 Zásoby ${zas} %${zas < 30 ? ' — dochází, zajdi doplnit!' : (zas < 70 ? ' — brzy dojdou' : '')}</p>
-          <div style="background:var(--panel2);border-radius:4px;height:6px;margin:3px 0;overflow:hidden;">
-            <div style="width:${zas}%;height:100%;background:${barva};"></div></div>`;
-      })() : ''}
-      ${p.useType==='rental' && p.units ? (() => {
-        const byty = asArray(p.units);
-        const obsazene = byty.filter(u => u && (u.tenant || u.npc));
-        const mojeByty = byty.filter(u => u && u.ownerOccupied);
-        const najemCelkem = obsazene.reduce((s,u) => s + (u.rentPrice||0), 0);
-        // Ukazovali jsme nájem za CELÝ dům i tomu, kdo vlastní jen část — hráč pak čekal
-        // víc peněz, než mu reálně chodilo. Teď je vidět tvůj podíl a vedle něj celek.
-        const mujDil = myHousePct(p) / 100;
-        const vydelava = Math.round(najemCelkem * mujDil);
-        const prazdne = byty.filter(u => u && !u.tenant && !u.npc && !u.ownerOccupied && (u.condition||0) > 0).length;
-        const rozbite = byty.filter(u => u && (u.condition||0) <= 40).length;
-        // Byt, ve kterém bydlí sám majitel, se dřív počítal jako PRÁZDNÝ — hráči to četli
-        // jako „nikdo tam nebydlí, proto nic nevydělává". Bydlí tam, jen sám sobě nájem
-        // neplatí. Uvádíme to proto zvlášť.
-        const obsazenoCelkem = obsazene.length + mojeByty.length;
-        let radky = `<p>${byty.length} ${byty.length===1?'byt':'bytů'} · obsazeno ${obsazenoCelkem}${
-          mojeByty.length ? ` <span style="color:var(--accent)">(z toho ${mojeByty.length===1?'1 tvůj':mojeByty.length+' tvoje'})</span>` : ''
-        } · vyděláváš <b style="color:var(--gold)">${vydelava} Kč/den</b>${
-          mujDil < 0.999 ? ` <span style="color:var(--muted)">(z ${Math.round(najemCelkem)} Kč za celý dům)</span>` : ''}</p>`;
-        if(mojeByty.length){
-          const usetri = Math.round(LIVING_COST - dailyHousingCost(currentUser.name));
-          radky += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🏠 V ${mojeByty.length===1?'jednom bytě':'bytech'} bydlíš ty — sám sobě nájem neplatíš, proto z ${mojeByty.length===1?'něj':'nich'} nic nechodí.${
-            usetri > 0 ? ` Šetříš ale <b>${usetri} Kč/den</b> na životních nákladech.` : ''}</p>`;
+
+  // Všechno, co o domě potřebujeme, spočítáme na jednom místě — přehled nahoře i rozpis
+  // u každého domu pak čerpají ze stejných čísel a nemůžou se rozejít.
+  // Obsazený byt = má nájemníka A je obyvatelný; přesně takhle to počítá i denní tick.
+  const data = mine.map(p => {
+    const pct = myHousePct(p);
+    const dil = pct / 100;
+    const byty = asArray(p.units);
+    const obsazene = byty.filter(u => u && (u.tenant || u.npc) && (u.condition || 0) > 0);
+    const mojeByty = byty.filter(u => u && u.ownerOccupied);
+    const prazdne = byty.filter(u => u && !u.tenant && !u.npc && !u.ownerOccupied && (u.condition || 0) > 0);
+    const rozbite = byty.filter(u => u && (u.condition || 0) <= 40);
+    const bonusMult = plnyDumMult(p);
+    const najemCelkem = p.useType === 'rental' ? obsazene.reduce((a, u) => a + vybranyNajem(p, u), 0) * bonusMult : 0;
+    // Výhled „při plném obsazení" (bonus za plný dům se přidává až při zobrazení).
+    // Každý byt by vynesl nejvýš tolik, kolik nájemník unese — dřív se sčítala požadovaná
+    // cena, takže u přemrštěného nájmu výhled sliboval peníze, které nikdo nezaplatí.
+    const najemPlne = p.useType === 'rental'
+      ? byty.filter(u => u && !u.ownerOccupied && (u.condition||0) > 0)
+          .reduce((a, u) => a + (u.tenant ? (u.rentPrice || 0) : Math.min(u.rentPrice || 0, fairRentForHouse(p) * NAJEMNIK_TOLERANCE)), 0)
+      : 0;
+    const provoz = (p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ]);
+    const provozCisty = provoz ? provozCistyVynos(p) : 0;     // potenciál s plnými zásobami
+    const provozDnesKc = provoz ? provozDnes(p) : 0;         // co opravdu přijde dnes
+    const solar = solarBonusForHouse(p);
+    const hodnota = effectiveHousePrice(p);
+    const dan = hodnota * dil * PROPERTY_TAX_RATE / DAYS_PER_YEAR;
+    // Příjem = přesně to, co se připíše o půlnoci. Zásoby se platí zvlášť, až je hráč doplní.
+    const prijem = (najemCelkem + provozDnesKc + solar) * dil;
+    const zasoby = provoz ? Math.round(p.provoz.zasoby ?? 100) : null;
+    // Hypotéka na tenhle dům. Splátka se počítá stejně jako v ticku: 0,8 % jistiny denně,
+    // nejvýš zbytek dluhu. Dřív tady chyběla úplně, takže přehled sliboval víc, než přišlo.
+    const hypo = mortgageForHouse(world.users[ja], p.id);
+    const hypoSplatka = hypo ? Math.min(hypo.principal * MORTGAGE_MIN_PAYMENT_RATIO, hypo.balance) : 0;
+    const hypoUrok = hypo ? hypo.balance * (hypo.dailyRate || 0) : 0;
+    const problemy = [];
+    if(prazdne.length) problemy.push(`${prazdne.length}× prázdný byt`);
+    const predrazene = p.useType === 'rental' ? byty.filter(u => u && u.npc && (u.rentPrice || 0) > npcMaxNajem(p, u)) : [];
+    if(predrazene.length) problemy.push(`${predrazene.length}× nájem nad únosnou mez`);
+    if(rozbite.length) problemy.push(`${rozbite.length}× oprava`);
+    if(provoz && zasoby < 30) problemy.push('dochází zásoby');
+    if(!p.useType && pct > 50) problemy.push('bez využití');
+    return { p, pct, dil, byty, obsazene, mojeByty, prazdne, rozbite, najemCelkem, najemPlne,
+             provoz, provozCisty, provozDnesKc, solar, hodnota, dan, prijem, zasoby, problemy,
+             hypo, hypoSplatka, hypoUrok, bonusMult };
+  }).sort((a, b) => b.prijem - a.prijem);
+
+  const sum = k => data.reduce((a, d) => a + d[k], 0);
+  const najem = data.reduce((a, d) => a + d.najemCelkem * d.dil, 0);
+  const provozy = data.reduce((a, d) => a + d.provozDnesKc * d.dil, 0);
+  const solary = data.reduce((a, d) => a + d.solar * d.dil, 0);
+  const dane = sum('dan');
+  const hypoteky = sum('hypoSplatka');
+  const hypoUroky = sum('hypoUrok');
+  const cisty = najem + provozy + solary - dane - hypoteky;
+  // Úspora na bydlení: vlastní bydlení a vylepšení (zateplení, klimatizace, solár) snižují
+  // životní náklady. Na účet nic nepřijde, ale o tolik míň odejde — a to je taky zásluha domů.
+  const bydleniTed = dailyHousingCost(ja);
+  const usporaBydleni = Math.max(0, LIVING_COST - bydleniTed);
+  const hodnotaPodilu = data.reduce((a, d) => a + d.hodnota * d.dil, 0);
+  const bytuCelkem = data.reduce((a, d) => a + d.byty.length, 0);
+  const obsazenoCelkem = data.reduce((a, d) => a + d.obsazene.length + d.mojeByty.length, 0);
+  const sProblemem = data.filter(d => d.problemy.length).length;
+  const kc = v => Math.round(v).toLocaleString('cs-CZ');
+  const radek = (popis, v, barva) => `<div style="display:flex;justify-content:space-between;margin:2px 0;">
+      <span>${popis}</span><b style="color:${barva}">${v >= 0 ? '+' : '−'}${kc(Math.abs(v))} Kč</b></div>`;
+
+  let html = `<div class="card" style="border-left:3px solid var(--gold);">
+    <h3>📊 Přehled za den</h3>
+    <div style="font-size:0.93em;max-width:340px;margin:0 auto;text-align:left;">
+      ${najem > 0.5 ? radek('🏘️ Nájem z obsazených bytů', najem, 'var(--accent)') : ''}
+      ${provozy > 0.5 ? radek('🏪 Provozovny (dnešní tržby)', provozy, 'var(--accent)') : ''}
+      ${solary > 0.5 ? radek('☀️ Solární panely', solary, 'var(--accent)') : ''}
+      ${radek('🏛️ Daň z nemovitostí', -dane, 'var(--orange)')}
+      ${hypoteky > 0.5 ? radek('🏦 Splátky hypoték', -hypoteky, 'var(--orange)') : ''}
+      <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
+        ${radek('<b>Čistě za den</b>', cisty, cisty >= 0 ? 'var(--gold)' : 'var(--danger)')}</div>
+    </div>
+    ${hypoteky > 0.5 ? `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Ze splátek hypoték je jen ${kc(hypoUroky)} Kč úrok — zbytek ${kc(hypoteky - hypoUroky)} Kč snižuje dluh, takže to není ztráta, dům ti tím postupně patří.</p>` : ''}
+    ${usporaBydleni > 0.5 ? `<p style="font-size:0.88em;margin:6px 0 0;">🏠 Navíc <b style="color:var(--accent)">šetříš ${kc(usporaBydleni)} Kč/den</b> na bydlení — platíš ${kc(bydleniTed)} místo ${LIVING_COST} Kč.
+      <span style="color:var(--muted);font-size:0.9em;">Na účet to nepřijde, ale o tolik míň odejde.</span></p>` : ''}
+    <p style="font-size:0.84em;color:var(--muted);margin:6px 0 0;">
+      ${data.length} ${data.length===1?'dům':(data.length<5?'domy':'domů')} · obsazeno ${obsazenoCelkem} z ${bytuCelkem} bytů ·
+      tvé podíly mají hodnotu ${kc(hodnotaPodilu)} Kč</p>
+    ${sProblemem ? `<p style="font-size:0.86em;color:var(--orange);margin:4px 0 0;">⚠️ ${sProblemem} ${sProblemem===1?'dům potřebuje':'domy potřebují'} pozornost — označené níž</p>` : ''}
+    ${(() => {
+      const nadMez = data.reduce((a, d) => a + (d.p.useType === 'rental' ? d.byty.filter(u => u && u.npc && (u.rentPrice||0) > npcMaxNajem(d.p, u)).length : 0), 0);
+      if(!nadMez) return '';
+      return `<p style="font-size:0.86em;color:var(--danger);margin:4px 0 0;">🏃 V ${nadMez} ${nadMez===1?'bytě':'bytech'} máš nájem nad to, co nájemníci unesou.
+        ${najemPravidloPlati() ? 'Začnou se stěhovat pryč.' : `Zatím se rozmýšlejí — za ${najemPrechodZbyva()} ${najemPrechodZbyva()===1?'den':'dny'} začnou odcházet.`} Sniž nájem, ať o ně nepřijdeš.</p>`;
+    })()}
+    <p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Tohle se připíše o půlnoci.${provozy > 0.5 ? ' Zásoby do provozoven platíš zvlášť, když je doplníš.' : ''} Klepni na dům pro podrobnosti.</p>
+  </div>`;
+
+  html += data.map(d => {
+    const p = d.p;
+    const iDecide = iAmDecider(p);
+    const rozhoduje = houseDecider(p);
+    const ikona = d.provoz ? PROVOZ_TYPY[p.provoz.typ].emoji : (p.useType === 'rental' ? '🏘️' : (p.useType === 'residence' ? '🏠' : '🏚️'));
+
+    // --- rozbalený obsah ---
+    let detail = '';
+
+    // vlastnictví
+    const spolu = Object.entries(p.owners || {}).filter(([n]) => n !== ja).sort((a, b) => b[1] - a[1]);
+    detail += `<p class="mineSek">👑 Vlastnictví</p>
+      <p>Tvůj podíl <b>${d.pct.toFixed(1)} %</b>${iDecide ? ' — <span style="color:var(--accent)">rozhoduješ</span>'
+        : (rozhoduje ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" ${profileAttr(rozhoduje)}>${escapeHtml(rozhoduje)}</span>`
+          : ' · <span style="color:var(--orange)">nikdo nemá většinu</span>')}</p>
+      ${spolu.length ? `<p style="font-size:0.88em;color:var(--muted);">Spolu s tebou: ${spolu.map(([n, v]) => `${escapeHtml(n)} ${v.toFixed(1)} %`).join(' · ')}</p>` : ''}`;
+
+    // hodnota
+    detail += `<p class="mineSek">💎 Hodnota</p>
+      <p>Celý dům ${kc(d.hodnota)} Kč · tvůj podíl <b>${kc(d.hodnota * d.dil)} Kč</b></p>
+      <p style="font-size:0.88em;color:var(--muted);">Daň z tvého podílu ${d.dan.toFixed(1)} Kč/den (${Math.round(PROPERTY_TAX_RATE*100)} % hodnoty ročně)</p>`;
+
+    // byty
+    if(p.useType === 'rental' && d.byty.length){
+      const ferovy = fairRentForHouse(p);
+      detail += `<p class="mineSek">🚪 Byty</p>` + d.byty.map((u, i) => {
+        if(!u) return '';
+        const stav = Math.round(u.condition || 0);
+        const barvaStav = stav > 60 ? 'var(--accent)' : stav > 35 ? 'var(--gold)' : 'var(--danger)';
+        let kdo, cena;
+        if((u.condition || 0) <= 0){ kdo = '<span style="color:var(--danger)">neobyvatelný — nutná oprava</span>'; cena = '0 Kč'; }
+        else if(u.ownerOccupied){ kdo = '🏠 bydlíš tu ty'; cena = '<span style="color:var(--muted)">neplatíš si</span>'; }
+        else if(u.tenant){ kdo = `👤 ${escapeHtml(u.tenant)} (hráč)`; cena = `<b>${u.rentPrice} Kč</b>`; }
+        else if(u.npc){
+          kdo = `👤 ${escapeHtml(u.npc.name || 'nájemník')}`;
+          const max = npcMaxNajem(p, u);
+          cena = u.rentPrice > max
+            ? `<b style="color:var(--danger)">${u.rentPrice} Kč ⚠️</b>`
+            : `<b>${u.rentPrice} Kč</b>`;
+          if(u.rentPrice > max) kdo += `<br><span style="color:var(--danger);font-size:0.9em;">unese ~${Math.round(max)} Kč — ${najemPravidloPlati()
+            ? `víc nezaplatí a brzo se odstěhuje`
+            : `za ${najemPrechodZbyva()} ${najemPrechodZbyva()===1?'den':'dny'} začne platit jen ${Math.round(max)} Kč a stěhovat se`}</span>`;
         }
-        if(prazdne > 0) radky += `<p style="font-size:0.88em;color:var(--orange);margin:2px 0;">⚠️ ${prazdne} ${prazdne===1?'byt stojí prázdný':'bytů stojí prázdných'} — zvaž nižší nájem</p>`;
-        if(rozbite > 0) radky += `<p style="font-size:0.88em;color:var(--danger);margin:2px 0;">🔧 ${rozbite} ${rozbite===1?'byt potřebuje opravit':'bytů potřebuje opravit'}</p>`;
-        return radky;
-      })() : ''}
-      <div class="row"><button class="secondary" onclick="flyToParcel('${p.id}')">Zobrazit na mapě</button></div>
-    </div>`;
-    }).join('')
+        else { kdo = '<span style="color:var(--orange)">prázdný — čeká na nájemníka</span>';
+               cena = `<span style="color:var(--muted)">${u.rentPrice} Kč${u.rentPrice > ferovy * 1.2 ? ' (drahý)' : ''}</span>`; }
+        return `<div style="display:flex;justify-content:space-between;gap:6px;font-size:0.88em;margin:3px 0;padding:4px 6px;background:var(--panel2);border-radius:6px;">
+          <span>Byt ${i + 1} · ${kdo}</span>
+          <span style="white-space:nowrap;">${cena} · <span style="color:${barvaStav}">${stav} %</span></span></div>`;
+      }).join('') +
+      `<p style="font-size:0.84em;color:var(--muted);margin-top:4px;">Férový nájem tady je ${Math.round(ferovy)} Kč na byt. Za ten se byt obsadí skoro hned. Nájemníci unesou zhruba o čtvrtinu víc (${Math.round(ferovy * NAJEMNIK_TOLERANCE)} Kč) — nad tím se začnou stěhovat pryč.</p>`;
+      // Kolik byty chátrají a kolik to stojí na opravách — ať je vidět, co dělá rekonstrukce.
+      // Hráčka měla pocit, že opravy stojí s rekonstrukcí stejně; chátrání je ale 4× pomalejší,
+      // jen jsou ty částky malé, takže bez čísel rozdíl nepoznáš.
+      {
+        const obydlenych = d.byty.filter(u => u && (u.tenant || u.npc || u.ownerOccupied)).length || d.byty.length;
+        const mRek = hasUpgrade(p, 'renovation');
+        const tydne = RENT_DECAY * 7 * (mRek ? RENOVATION_DECAY_MULT : 1);
+        const oprava = tydne * REPAIR_COST_PER_POINT * obydlenych;
+        const bezRek = RENT_DECAY * 7 * REPAIR_COST_PER_POINT * obydlenych;
+        detail += mRek
+          ? `<p style="font-size:0.86em;margin-top:4px;">🔧 Díky rekonstrukci chátrají byty o <b>${tydne.toFixed(1)} % týdně</b> (bez ní ${(RENT_DECAY*7).toFixed(1)} %). Opravy tě stojí asi <b>${kc(oprava)} Kč týdně</b> místo ${kc(bezRek)} Kč.</p>`
+          : `<p style="font-size:0.86em;color:var(--muted);margin-top:4px;">🔧 Byty chátrají asi o ${tydne.toFixed(1)} % týdně, opravy vyjdou zhruba na ${kc(oprava)} Kč týdně. S rekonstrukcí by to bylo 4× méně (${kc(oprava * RENOVATION_DECAY_MULT)} Kč) a noční škody by byly poloviční.</p>`;
+      }
+      if(d.mojeByty.length){
+        const usetri = Math.round(LIVING_COST - dailyHousingCost(ja));
+        detail += `<p style="font-size:0.86em;color:var(--muted);">🏠 Z bytu, ve kterém bydlíš, nájem nechodí${usetri > 0 ? ` — zato šetříš ${usetri} Kč/den na životních nákladech` : ''}.</p>`;
+      }
+    }
+
+    // provozovna
+    if(d.provoz){
+      const typ = PROVOZ_TYPY[p.provoz.typ];
+      const plny = provozPlnyVynos(p);
+      const barva = d.zasoby > 60 ? 'var(--accent)' : d.zasoby > 25 ? 'var(--gold)' : 'var(--danger)';
+      detail += `<p class="mineSek">${typ.emoji} ${typ.name}</p>
+        <p>Poptávka <b>${poptavkaProMisto(p, p.provoz.typ).popis}</b></p>
+        ${(() => { const vk = provozVykon(p);
+          const b = vk.mult >= 1.1 ? 'var(--accent)' : vk.mult >= 0.9 ? 'var(--muted)' : 'var(--danger)';
+          return `<p style="font-size:0.9em;"><span style="color:${b}">${vk.mult >= 1.1 ? '▲' : vk.mult >= 0.9 ? '▪' : '▼'} ${vk.popis} — ${Math.round(vk.mult*100)} % běžných tržeb</span>${
+            vk.vlivy.length ? `<br><span style="color:var(--muted);font-size:0.9em;">${vk.vlivy.join(' · ')}</span>` : ''}</p>`; })()}
+        <p>Dnes utrží <b style="color:var(--gold)">${kc(d.provozDnesKc)} Kč</b>${d.zasoby < 95 ? ` <span style="color:var(--muted)">(se zásobami ${d.zasoby} %)</span>` : ''}</p>
+        <p style="font-size:0.88em;color:var(--muted);">S plnými zásobami: tržby ${kc(plny)} − zásoby ${kc(plny * PROVOZ_ZASOBY_PODIL)} = čistě ${kc(d.provozCisty)} Kč/den</p>
+        <p style="font-size:0.88em;color:${barva};">📦 Zásoby ${d.zasoby} %${d.zasoby < 30 ? ' — dochází, zajdi doplnit!' : ''}</p>
+        <div style="background:var(--panel2);border-radius:4px;height:6px;margin:3px 0;overflow:hidden;">
+          <div style="width:${d.zasoby}%;height:100%;background:${barva};"></div></div>`;
+    }
+
+    // výnos pro mě
+    detail += `<p class="mineSek">💰 Co ti to nese</p>`;
+    if(p.useType === 'rental'){
+      detail += `<p>Teď reálně <b style="color:var(--gold)">${kc(d.najemCelkem * d.dil)} Kč/den</b>${d.dil < 0.999 ? ` <span style="color:var(--muted)">(z ${kc(d.najemCelkem)} Kč za celý dům)</span>` : ''}</p>`;
+      if(d.bonusMult > 1)
+        detail += `<p style="font-size:0.88em;color:var(--accent);">🎉 Dům je plně obsazený — město přihazuje ${Math.round(PLNY_DUM_BONUS*100)} % k nájmu (už je v částce).</p>`;
+      else if(d.najemPlne > 0){
+        const kPronajmu = d.byty.filter(u => u && !u.ownerOccupied).length;
+        const plneSBonusem = d.najemPlne * (kPronajmu >= 2 ? 1 + PLNY_DUM_BONUS : 1);
+        if(plneSBonusem > d.najemCelkem + 0.5)
+          detail += `<p style="font-size:0.88em;color:var(--muted);">Při plném obsazení by to bylo ${kc(plneSBonusem * d.dil)} Kč/den${kPronajmu >= 2 ? ` (včetně bonusu ${Math.round(PLNY_DUM_BONUS*100)} % za plný dům)` : ''}.</p>`;
+      }
+    }
+    if(d.provoz) detail += `<p>Provozovna dnes <b style="color:var(--gold)">${kc(d.provozDnesKc * d.dil)} Kč</b>${
+      d.zasoby < 60 ? ` <span style="color:var(--orange)">— doplň zásoby a bude to ${kc(provozPlnyVynos(p) * (100 - PROVOZ_ZASOBY_DEN/2) / 100 * d.dil)} Kč</span>` : ''}</p>`;
+    if(d.solar > 0.5) detail += `<p>Solár <b style="color:var(--gold)">${kc(d.solar * d.dil)} Kč/den</b></p>`;
+    const poVsem = d.prijem - d.dan - d.hypoSplatka;
+    detail += `<p style="font-size:0.88em;">Po dani${d.hypo ? ' a splátce hypotéky' : ''} <b style="color:${poVsem >= 0 ? 'var(--accent)' : 'var(--danger)'}">${poVsem >= 0 ? '+' : '−'}${kc(Math.abs(poVsem))} Kč/den</b></p>`;
+    if(d.hypo){
+      detail += `<p class="mineSek">🏦 Hypotéka</p>
+        <p>Dluh <b>${kc(d.hypo.balance)} Kč</b> · splátka <b style="color:var(--orange)">${kc(d.hypoSplatka)} Kč/den</b></p>
+        <p style="font-size:0.86em;color:var(--muted);">Z toho ${kc(d.hypoUrok)} Kč úrok a ${kc(d.hypoSplatka - d.hypoUrok)} Kč jde na snížení dluhu. Ručí ${Math.round(d.hypo.pct || 0)} % domu — ty se nedají prodat, dokud dluh nesplatíš.${
+          d.hypoSplatka > 0 ? ` Splaceno bude zhruba za ${Math.ceil(d.hypo.balance / Math.max(0.01, d.hypoSplatka - d.hypoUrok))} dní.` : ''}</p>`;
+    }
+    if(p.useType === 'residence' || d.mojeByty.length){
+      // Co konkrétně snižuje náklady na bydlení v TOMHLE domě.
+      const snizuje = ['insulation','ac','solar'].filter(k => hasUpgrade(p, k)).map(k => HOUSE_UPGRADES[k].name.toLowerCase());
+      detail += `<p style="font-size:0.88em;color:var(--muted);">🏠 Bydlíš tu — z vlastního bydlení nájem nechodí, ale platíš za bydlení ${kc(bydleniTed)} Kč místo ${LIVING_COST} Kč denně${
+        snizuje.length ? ` (šetří i ${snizuje.join(', ')})` : ''}.</p>`;
+    }
+    if(!p.useType) detail += `<p style="font-size:0.88em;color:var(--orange);">Dům nemá využití, takže nic nevydělává — jen platíš daň.${d.pct > 50 ? ' Otevři ho a urči, co s ním.' : ''}</p>`;
+
+    // vylepšení
+    const upg = Object.keys(p.upgrades || {}).filter(k => p.upgrades[k] && HOUSE_UPGRADES[k]);
+    if(upg.length) detail += `<p class="mineSek">🔧 Vylepšení</p><p style="font-size:0.9em;">${upg.map(k => `${HOUSE_UPGRADES[k].icon} ${HOUSE_UPGRADES[k].name}`).join(' · ')}</p>`;
+
+    // problémy
+    if(d.problemy.length) detail += `<p style="font-size:0.88em;color:var(--orange);margin-top:6px;">⚠️ ${d.problemy.join(' · ')}</p>`;
+
+    detail += `<div class="row" style="margin-top:8px;">
+      <button onclick="selectParcel('${p.id}')">Otevřít dům</button>
+      <button class="secondary" onclick="flyToParcel('${p.id}')">Na mapě</button></div>`;
+
+    // --- sbalený řádek ---
+    return `<details class="mineDum"${d.problemy.length ? ' data-problem="1"' : ''}>
+      <summary>
+        <span class="mineIko">${ikona}</span>
+        <span class="mineJm"><b>${domLabel(p)}</b><br>
+          <span style="font-size:0.82em;color:var(--muted);">${d.pct.toFixed(0)} %${iDecide ? ' 👑' : ''}${
+            p.useType === 'rental' && d.byty.length ? ` · obsazeno ${d.obsazene.length + d.mojeByty.length}/${d.byty.length}` : ''}${
+            d.provoz ? ` · zásoby ${d.zasoby} %` : ''}${d.problemy.length ? ' · <span style="color:var(--orange)">⚠️</span>' : ''}</span></span>
+        <span class="mineKc" style="color:${d.prijem > 0.5 ? 'var(--gold)' : 'var(--muted)'}">${d.prijem > 0.5 ? '+' + kc(d.prijem) : '0'}<small> Kč</small></span>
+      </summary>
+      <div class="mineDetail">${detail}</div>
+    </details>`;
+  }).join('');
+
+  setHtml(el, html
     + infoBox('Jak vydělávat na nemovitostech?', `
       <p><b>Podíl v domě.</b> Domy se kupují po procentech — nemusíš mít celý dům. Kdo má <b>přes 50 %</b>, ten o domě rozhoduje (přestavba, nájem, vylepšení). Ostatní jen berou svůj díl z výnosu.</p>
       <p><b>Dva způsoby využití:</b></p>
       <p>• <b>Bydlení</b> — sám v něm bydlíš a klesnou ti životní náklady na polovinu. Nevydělává, ale šetří.<br>
          • <b>Pronájem</b> — dům se rozdělí na byty a nájemníci ti platí každý den. Vydělává, ale sám tam bydlet nemůžeš.</p>
-      <p><b>Kolik si říct za nájem.</b> Hra počítá <b>férovou cenu</b> podle hodnoty domu. Za tu se byt pronajme prakticky hned. Čím víc si řekneš, tím déle čekáš na nájemníka — a <b>prázdný byt nevydělává nic</b>.</p>
-      <div class="ex">Férová cena 74 Kč: nájemník hned → 74 Kč/den.<br>
-      Za 93 Kč počkáš ~1 den → pak 93 Kč/den (nejvýhodnější).<br>
-      Za 222 Kč čekáš ~8 dnů → většinu času nemáš nic.</div>
+      <p><b>Kolik si říct za nájem.</b> Hra počítá <b>férovou cenu</b> podle hodnoty domu. Za tu se byt pronajme prakticky hned. Nájemníci unesou zhruba <b>o čtvrtinu víc</b> — nad tím se začnou poohlížet po levnějším bydlení a odstěhují se. Čím víc přestřelíš, tím dřív.</p>
+      <div class="ex">Férovka 40 Kč: obsazeno pořád → 40 Kč/den a k tomu bonus za plný dům.<br>
+      Za 48 Kč (o pětinu víc): pořád skoro plno → <b>nejvýhodnější</b>.<br>
+      Za 80 Kč: nájemníci přijdou, ale brzo odejdou — vyjde to hůř než férovka.<br>
+      Za 120 Kč: byt stojí většinu času prázdný.</div>
+      <p><b>Bonus za plný dům.</b> Když jsou obsazené všechny byty (aspoň dva), město ti přihodí <b>${Math.round(PLNY_DUM_BONUS*100)} %</b> k nájmu. Rozumná cena a plný dům se tak vyplatí víc než napálený nájem.</p>
       <p><b>Byty chátrají.</b> Každý den se stav obydleného bytu zhorší. Když spadne pod to, co nájemník snese, <b>odstěhuje se</b>. Proto se vyplatí opravovat dřív, než odejde.</p>
       <p><b>Daň z nemovitosti.</b> Z hodnoty tvých podílů platíš každý den malou daň — i z domů, které nic nevydělávají. Prázdný drahý dům tě tedy stojí peníze.</p>
       <p><b>Gentrifikace.</b> Když se v okolí kupuje a staví, hodnota tvých domů roste. Proto se vyplatí kupovat tam, kde je živo.</p>
@@ -8954,11 +9417,8 @@ function financeBreakdown(name){
     const mujPodil = (p.owners?.[name] || 0) / 100;
     if(mujPodil <= 0) return;
     if(p.useType==='rental' && p.units){
-      const collected = asArray(p.units).reduce((s,un)=>{
-        const occ = (un && un.condition>0 && (un.tenant||un.npc)) ? 1 : 0;
-        return s + (un.rentPrice||0)*occ;
-      },0);
-      rentIncome += collected * mujPodil;
+      const collected = asArray(p.units).reduce((s,un) => s + vybranyNajem(p, un), 0);
+      rentIncome += collected * plnyDumMult(p) * mujPodil;
     }
     // Solár se v tick() vyplácí u KAŽDÉHO domu, i toho, ve kterém majitel bydlí.
     // Dřív se tady počítal jen uvnitř větve pro pronájem, takže rozpočet ukazoval
@@ -8983,9 +9443,11 @@ function financeBreakdown(name){
   let provozIncome = 0;
   Object.values(world.parcels).forEach(p => {
     const pct = p.owners?.[name] || 0;
-    if(pct > 0 && p.useType === 'provozovna') provozIncome += provozVynos(p) * (pct/100);
+    // provozDnes počítá s ubýváním zásob během dne — sedí s tím, co se připíše o půlnoci
+    if(pct > 0 && p.useType === 'provozovna') provozIncome += provozDnes(p) * (pct/100);
   });
-  if(provozIncome > 0.5) income.push({label:'🏪 Provozovny', amount: provozIncome});
+  // Tady jsou tržby; zásoby platíš zvlášť, když je jdeš doplnit (zhruba 30 % tržeb).
+  if(provozIncome > 0.5) income.push({label:'🏪 Provozovny (tržby, bez zásob)', amount: provozIncome});
 
   let bizIncome = 0;
   Object.values(world.businesses).forEach(b => {
@@ -8994,8 +9456,10 @@ function financeBreakdown(name){
   });
   if(bizIncome>0) income.push({label:'📈 Výnos z podniků', amount: bizIncome});
   // spoření úrok
+  // Úrok ze spoření NEZAPOČÍTÁVÁME do příjmů hotovosti: od 6.6 se připisuje přímo na
+  // spořicí účet. Když byl v příjmech, bilance i odhad „za kolik dní dojdou peníze" slibovaly
+  // hotovost, která nikdy nepřišla. Vracíme ho zvlášť jako `naSporeni`.
   const savingsInterest = (u.savings||0) * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR;
-  if(savingsInterest>0.5) income.push({label:'🐷 Úrok ze spoření', amount: savingsInterest});
   // práce (pokud má) — orientačně 1 směna/den
   // Plat počítáme jen tehdy, když se dnes do práce OPRAVDU dá jít. Dřív se započítával
   // i o víkendu (zavřeno) a i po odpracované směně, takže předpověď "za kolik dní ti dojdou
@@ -9061,8 +9525,8 @@ function financeBreakdown(name){
     let dayFlow = 0;
     if(p.useType === 'provozovna') dayFlow += provozVynos(p) * (pct/100);
     if(p.useType==='rental' && p.units){
-      const collected = asArray(p.units).reduce((s,un)=>{const occ=(un && un.condition>0&&(un.tenant||un.npc))?1:0; return s+(un.rentPrice||0)*occ;},0);
-      dayFlow += collected*(pct/100);
+      const collected = asArray(p.units).reduce((s,un) => s + vybranyNajem(p, un), 0);
+      dayFlow += collected * plnyDumMult(p) * (pct/100);
     }
     dayFlow += solarBonusForHouse(p)*(pct/100);       // panely nesou i u domu, kde bydlím
     dayFlow -= value*PROPERTY_TAX_RATE/DAYS_PER_YEAR; // daň
@@ -9082,7 +9546,8 @@ function financeBreakdown(name){
     daysUntilBroke = Math.max(0, Math.floor(cash / -net));
   }
 
-  return {income, expense, totalIncome, totalExpense, net, assets, liabilities, daysUntilBroke};
+  return {income, expense, totalIncome, totalExpense, net, assets, liabilities, daysUntilBroke,
+          naSporeni: savingsInterest};
 }
 
 async function takeLoan(){
@@ -9453,13 +9918,12 @@ function checkAchievements(){
 
 // Hodnost podle jmění. POZOR: nesmí obsahovat slova o bydlení ("nájemník", "majitel"),
 // jinak si to hráč plete se svým stavem bydlení — přesně tahle záměna mátla testery.
+// Starší seznam hodností (Nováček → Realitní král) byl vidět jen v profilu. Nahradil ho
+// systém RANKY — tahle funkce zůstává kvůli starším voláním a vrací název z něj,
+// ať nejsou ve hře dvě různé hodnosti pro stejného hráče.
 function titleForWorth(worth){
-  if(worth < 5000) return 'Nováček';
-  if(worth < 20000) return 'Střádal';
-  if(worth < 60000) return 'Podnikavec';
-  if(worth < 150000) return 'Investor';
-  if(worth < 400000) return 'Magnát';
-  return 'Realitní král';
+  const r = rankPro(worth).rank;
+  return `${r.emoji} ${r.nazev}`;
 }
 
 async function changeAvatar(){
@@ -9470,7 +9934,7 @@ async function changeAvatar(){
     const picked = choice.trim();
     const safe = AVATAR_CHOICES.includes(picked) ? picked : '🧑';
     world.users[currentUser.name].avatar = safe;
-    document.getElementById('userInfo').innerHTML = `<span style="cursor:pointer">${escapeHtml(safe)} ${escapeHtml(currentUser.name)} ▸</span>`;
+    document.getElementById('userInfo').innerHTML = userInfoHtml(currentUser.name);
     saveWorld(); renderProfile();
   }
 }
@@ -9493,7 +9957,7 @@ async function changeName(){
   currentUser = { name: newName };
   try { localStorage.setItem('bucovice_lastuser', newName); } catch(e){}
   addNews('join', `✏️ ${oldName} si změnil jméno na ${newName}.`);
-  document.getElementById('userInfo').innerHTML = `<span style="cursor:pointer">${escapeHtml(world.users[newName].avatar||'🧑')} ${escapeHtml(newName)} ▸</span>`;
+  document.getElementById('userInfo').innerHTML = userInfoHtml(newName);
   document.getElementById('userInfo').onclick = () => viewProfile(currentUser.name);
   saveWorld(); refreshAll(); viewProfile(newName);
   showAlert('Přezdívka změněna.');
@@ -11027,10 +11491,8 @@ function renderStatDetail(which){
     // Dnešní pohyb rozepsaný tak, aby bylo jasné, co UŽ na účtu je a co teprve přijde.
     const s3 = u.denSoucty && u.denSouctyDen === world.day ? u.denSoucty : null;
     const uzMam = s3 ? (s3.mzdy||0) + (s3.akce||0) : 0;
-    const prijde = s3
-      ? ((s3.najem||0)+(s3.firmy||0)+(s3.solar||0)+(s3.uroky_sporeni||0))
-        - ((s3.naklady||0)+(s3.dane||0)+(s3.uroky||0)+(s3.najemne||0))
-      : 0;
+    // Stejný vzorec jako vyúčtování — dřív tu byla třetí vlastní kopie se stejnou chybou.
+    const prijde = s3 ? pulnocniVyplata(s3).cisty : 0;
     const dnesCelkem = uzMam + prijde;
     const barva = v => v >= 0 ? 'var(--accent)' : 'var(--danger)';
     const znam = v => (v >= 0 ? '+' : '−') + kc(Math.abs(v));
@@ -11266,7 +11728,8 @@ function renderChat(forceScroll){
     return `<div style="margin-bottom:10px;padding:8px 10px;border-radius:12px;background:${mine?'rgba(74,222,128,0.12)':'var(--panel2)'};">
       ${quote}
       <div style="display:flex;align-items:center;gap:6px;">
-        <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" ${profileAttr(m.name)}>${escapeHtml(m.avatar||'🧑')} ${escapeHtml(m.name)}</span>
+        <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" ${profileAttr(m.name)}>${escapeHtml(m.avatar||'🧑')} ${escapeHtml(m.name)}${
+          world.users[m.name] ? ` <span title="${escapeHtml(rankHrace(m.name).rank.nazev)}" style="font-weight:400;">${rankHrace(m.name).rank.emoji}</span>` : ''}</span>
         <span style="font-size:0.72em;color:var(--muted);">${timeAgo(m.ts)}</span>
       </div>
       <div style="font-size:0.95em;margin-top:2px;word-break:break-word;">${escapeHtml(m.text)}</div>
@@ -11455,6 +11918,51 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'10.1', datum:'2026-09-16', body:[
+    ['oprava','Nápověda k pronájmu radila, že se vyplatí nájem i výrazně nad férovou cenou — to po změně ve 9.9 už neplatí. Přepsáno: nájemník unese zhruba o čtvrtinu víc, víc nezaplatí, a plný dům dostává bonus.'],
+    ['oprava','U nájemníka v detailu domu stálo „platí spolehlivě plný nájem“, i když u přemrštěného nájmu platí jen část. Teď je napsané, kolik doopravdy platí a kolik unese.'],
+    ['novinka','Dialog na nastavení nájmu říká, kolik nájemníci unesou. Když zdražuješ obsazený byt nad tuhle hranici, hra se ještě zeptá s konkrétními čísly, kolik ti nájemník opravdu zaplatí.'],
+    ['oprava','Výhled „při plném obsazení“ sčítal požadovanou cenu, i když by ji nikdo nezaplatil. Teď počítá s tím, kolik nájemníci unesou.'],
+    ['info','V Průvodci je u nájmu vysvětlené, kolik nájemníci unesou, že víc nezaplatí, a jak funguje bonus za plný dům.'],
+  ]},
+  { verze:'10.0', datum:'2026-09-16', body:[
+    ['novinka','🎖️ HODNOSTI. Podle čistého jmění teď máš hodnost: 🎒 Nováček → 🪙 Střadatel → 🏠 Majitel → 🏘️ Pronajímatel → 📊 Investor → 💼 Manažer → 🏢 Podnikatel → 🎩 Magnát → 👑 Tycoon Bučovic.'],
+    ['info','Hodnost je vidět u tvého jména nahoře, v profilu (i s tím, kolik ti chybí do další), v žebříčku a v chatu. Když postoupíš, napíšou o tom noviny. Starší hodnosti z profilu (Střádal, Podnikavec, Realitní král) nahradil tenhle nový seznam.'],
+  ]},
+  { verze:'9.9', datum:'2026-09-16', body:[
+    ['oprava','Přemrštěný nájem se dal pořád obejít: po nastěhování zdražit na trojnásobek, pár dní vybírat, po odchodu zlevnit a nastěhovat dalšího. Simulace ukázala, že to vynášelo 2,1× víc než férová cena. Teď nájemník víc, než unese, prostě nezaplatí — rozdíl odmítne a jen se rozhlíží jinde. Zdražení nad hranici tak nic nepřinese, jen riziko odchodu. Férová cena s bonusem za plný dům teď vydělá nejvíc.'],
+    ['oprava','Nájemníci ze stejně očíslovaných bytů v různých domech odcházeli ve stejný den — los o odchodu bral jen délku čísla domu. Teď každý dům hází vlastní kostkou.'],
+  ]},
+  { verze:'9.8', datum:'2026-09-15', body:[
+    ['zmena','⚠️ NÁJEMNÍCI REAGUJÍ NA CENU. Dřív šlo na každý byt nastavit trojnásobný nájem a nikdo se neodstěhoval. Teď nájemníci unesou zhruba o čtvrtinu víc než férová cena — nad tím se začnou stěhovat pryč, a čím víc přestřelíš, tím dřív. Nejvýhodnější je nájem mírně nad férovkou, přemrštěný se nevyplatí.'],
+    ['info','Máš tři dny na přizpůsobení: do té doby se nájemníci jen rozmýšlejí. V „Moje nemovitosti“ jsou byty s přemrštěným nájmem označené červeně a je u nich napsané, kolik nájemník unese.'],
+    ['novinka','🎉 Bonus za plný dům: když máš obsazené všechny byty (aspoň dva), město přihodí 12 % k nájmu. Rozumná cena a plný dům se vyplatí víc než napálený nájem. Díky, Evo, za nápad.'],
+    ['novinka','📈 Provozovna je teď opravdové podnikání — každý den se jí daří jinak (±50 %), občas přijde nával zákazníků (téměř dvojnásobek) a občas propadák. Mluví do toho i počasí a jarmark. Dlouhodobě to vyjde nastejno, jen je cesta divočejší.'],
+    ['info','U každého domu je teď vidět, jak rychle byty chátrají a kolik stojí opravy týdně — s rekonstrukcí je to 4× méně.'],
+  ]},
+  { verze:'9.8', datum:'2026-09-14', body:[
+    ['oprava','Pilulka „▲ o půlnoci“ v hlavičce počítala jinak než samotné vyúčtování: přičítala úrok ze spoření (ten jde rovnou na spořicí účet) a vynechávala provozovny. Teď obě místa počítá jedna společná funkce, takže se už rozejít nemůžou.'],
+    ['oprava','Karta „📆 Dnešek“ měla stejnou chybu jako hlavička — teď počítá stejně jako vyúčtování.'],
+    ['oprava','Finanční přehled započítával úrok ze spoření do denní bilance hotovosti. Bilance i odhad, za kolik dní dojdou peníze, tak slibovaly víc, než přišlo. Úrok je teď vidět zvlášť s poznámkou, že jde na spoření.'],
+  ]},
+  { verze:'9.7', datum:'2026-09-14', body:[
+    ['oprava','Přehled v „Moje nemovitosti“ nezapočítával splátky hypoték — sliboval tak víc, než o půlnoci přišlo. Teď jsou v přehledu i v detailu každého domu, včetně toho, kolik je úrok a kolik snižuje dluh.'],
+    ['novinka','Přehled ukazuje i to, kolik ti domy šetří na bydlení — vlastní bydlení a vylepšení (zateplení, klimatizace, solár) snižují životní náklady. Na účet to nepřijde, ale o tolik míň odejde.'],
+  ]},
+  { verze:'9.6', datum:'2026-09-14', body:[
+    ['novinka','„Moje nemovitosti“ jsou přehlednější. Nahoře je souhrn za den — nájem, provozovny, solár, daň a čistý výsledek, který se připíše o půlnoci. Každý dům je sbalený do jednoho řádku a po klepnutí se rozbalí s podrobnostmi: kdo v kterém bytě bydlí, za kolik a v jakém stavu, hodnota tvého podílu, daň, vylepšení a co ti dům reálně nese.'],
+    ['info','Domy jsou seřazené podle výnosu a ty, které potřebují pozornost (prázdný byt, oprava, docházející zásoby), mají oranžový okraj.'],
+    ['oprava','Horní souhrn v „Moje nemovitosti“ nezapočítával provozovny ani solár — ukazoval jen nájem.'],
+    ['oprava','Odhad příjmu z provozovny počítal s plnými zásobami, i když jich měla málo. Teď počítá se skutečným stavem zásob a s tím, jak během dne ubývají — přehled i finanční výhled sedí na korunu s tím, co se připíše o půlnoci.'],
+  ]},
+  { verze:'9.5', datum:'2026-09-14', body:[
+    ['info','U domu na pronájem je teď nahoře vidět, kolik ti REÁLNĚ chodí — jen z obsazených bytů. Přesně tahle částka se připíše o půlnoci. Číslo „při plném obsazení“ je jen výhled, kolik by dům vynášel, kdyby byly obsazené všechny byty.'],
+  ]},
+  { verze:'9.4', datum:'2026-09-14', body:[
+    ['oprava','Provozovny byly hluboce ztrátové: doplnění zásob stálo kolem 260 Kč denně, ale provozovna vydělala jen 30–65 Kč. Cena zásob se chybně počítala z hodnoty domu, ne z tržeb. Teď stojí zásoby vždycky zhruba 30 % toho, co provozovna utrží, a zbytek je čistý zisk. Díky, Evo, za přepočet na papíře.'],
+    ['zmena','Provozovny zároveň víc vynášejí. Proti pronájmu stejného domu vydělají čistě víc na každém místě — obvykle skoro dvojnásobek, na nejhorším místě aspoň o desetinu. Investice se vrátí zhruba za 80–230 dní podle místa.'],
+    ['info','U provozovny je teď vidět tržba, cena zásob i čistý zisk zvlášť. Všechny odhady (i při otevírání) ukazují čistou částku po zásobách.'],
+  ]},
   { verze:'9.3', datum:'2026-09-13', body:[
     ['oprava','Zápis prodeje městu do kroniky (z 9.2) srážel cenu domu o 12 % pokaždé — město totiž vykupuje se slevou a hra to brala jako tržní obchod. Výkup se teď do kroniky zapíše, ale cenou nehne. Pět prodejů za sebou by jinak dům zlevnilo o polovinu.'],
   ]},
@@ -11736,6 +12244,7 @@ function renderFinance(){
     <p style="font-size:0.85em;color:var(--muted)">Kolik ti každý den přiteče a odteče (odhad podle současného stavu).</p>
     <p style="font-size:0.82em;color:var(--muted);margin:2px 0 6px;">🕛 = vyplácí se najednou o půlnoci · ⚡ = chodí hned, jakmile si to vyděláš</p>`;
   html += `<p style="margin-top:6px;color:var(--accent)"><b>Příjmy: +${Math.round(f.totalIncome)} Kč/den</b></p>`;
+  if(f.naSporeni > 0.05) html += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🐷 Úrok ze spoření +${f.naSporeni.toFixed(1)} Kč/den — připisuje se rovnou na spořicí účet, do hotovosti nepřijde.</p>`;
   // U každé položky značka, kdy se peníze objeví — bez toho hráči nesedělo číslo
   // v hlavičce s denní bilancí.
   const kdy = l => /Plat|Spropitné/.test(l) ? '⚡' : '🕛';
@@ -11949,8 +12458,8 @@ function renderGuide(){
     <p>• jaký je tam <b>ruch</b> (památky, firmy, průchozí místa)</p>
     <p>• kolik je poblíž <b>konkurence</b> — třetí kavárna v ulici vydělá zlomek toho, co první</p>
     <p>Než ji otevřeš, hra ti u každého oboru ukáže odhad výnosu <b>pro ten konkrétní dům</b>. Stejná kavárna vydělá v centru i třikrát víc než na kraji města.</p>
-    <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se přímo na místě. Bez zásob provozovna nevydělá vůbec nic — je to jediný způsob výdělku, který po tobě chce, abys tam občas zašel.</p>
-    <p style="color:var(--muted)">💡 Na dobrém místě se investice vrátí zhruba za 120 dní, na špatném i za 480. Pronájem se vrací asi za 400 dní, podíl ve firmě za 150.</p>
+    <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se přímo na místě. Stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % tržeb. Bez zásob provozovna nevydělá vůbec nic — je to jediný způsob výdělku, který po tobě chce, abys tam občas zašel.</p>
+    <p style="color:var(--muted)">💡 Čistě, po zásobách, se investice vrátí na dobrém místě zhruba za 80 dní, obvykle kolem 110, na špatném za 230. Proti pronájmu stejného domu vydělá víc všude — obvykle skoro dvojnásobek.</p>
     <p style="color:var(--muted)">Byty v domě zůstanou zachované — kdykoliv se dá vrátit k pronájmu.</p>
   `);
 
@@ -11982,6 +12491,9 @@ function renderGuide(){
   html += guideSection('🏘️','Nájem a byty', `
     <p>Když z domu uděláš pronájem, každé patro = jeden byt. Ty jako majitel si <b>nastavíš nájemné</b>.</p>
     <p>Pozor: <b>moc vysoký nájem = nikdo si byt nepronajme</b> (prázdný byt = žádné peníze). Appka ti vždycky poradí "tržní cenu" — kolem ní bývá byt obsazený a spokojený zároveň nájemce i majitel.</p>
+    <p><b>Nájemníci hlídají cenu.</b> Unesou zhruba o čtvrtinu víc, než je férová cena. Když nájem zvýšíš nad to, <b>rozdíl nezaplatí</b> — dál platí jen tolik, kolik unesou — a začnou se stěhovat pryč. Předražit byt se tedy nevyplatí nikdy: přijdeš o nájemníka a nevyděláš nic navíc.</p>
+    <p><b>🎉 Bonus za plný dům.</b> Když máš obsazené všechny byty (aspoň dva), město přihodí ${Math.round(PLNY_DUM_BONUS*100)} % k nájmu. Rozumná cena a plný dům je nejvýnosnější kombinace.</p>
+    <div class="ex">Férový nájem 40 Kč → nájemník unese asi 50 Kč. Když nastavíš 120, zaplatí dál jen 50 a za pár dní se odstěhuje. Když necháš 40 na všech bytech a dům bude plný, dostaneš 45 Kč za byt.</div>
     <p>Byty <b>postupně chátrají</b> (víc, když jsou obydlené) — musíš je čas od času opravit, jinak přestanou vydělávat.</p>
   `);
 
@@ -12138,6 +12650,13 @@ function renderGuide(){
     <p>⚠️ Když máš práci a v pracovní den <b>nepřijdeš na směnu</b>, appka to toleruje ${JOB_SICK_DAYS_ALLOWED}×, pak přijde vyhazov a ${JOB_BAN_DAYS} dní nesmíš nikde pracovat. Víkendy se do docházky nepočítají.</p>
   `);
 
+  html += guideSection('🎖️','Hodnosti', `
+    <p>Podle toho, jak bohatý jsi, dostáváš hodnost. Počítá se z <b>čistého jmění</b> — hotovost, spoření a hodnota podílů minus dluhy.</p>
+    ${RANKY.map(r => `<p style="margin:3px 0;">${r.emoji} <b>${r.nazev}</b> <span style="color:var(--muted)">— od ${r.od.toLocaleString('cs-CZ')} Kč</span></p>`).join('')}
+    <div class="ex">Jeden celý dům je kolem 35 000 Kč, celé Bučovice dohromady asi 77 milionů. Tycoon tedy vlastní zhruba 4 % města.</div>
+    <p style="color:var(--muted)">Hodnost vidíš u svého jména nahoře, v profilu (i kolik ti chybí do další), v žebříčku a v chatu. Když postoupíš výš, dozví se to celé město v novinách.</p>
+  `);
+
   html += guideSection('🧮','Čisté jmění — jak "bohatý" doopravdy jsi', `
     <p>Čisté jmění = <b>všechno, co máš</b> (peníze v kapse + hodnota domů a podílů) <b>mínus všechno, co dlužíš</b> (půjčky).</p>
     <p>Proto může mít někdo hodně domů, ale malé jmění, pokud má i velké dluhy. Sleduj svoje jmění v profilu a žebříčku — je to nejlepší způsob, jak poznat, jak se ti ve hře opravdu daří.</p>
@@ -12218,7 +12737,17 @@ function renderProfile(){
   html += `<div class="card" style="text-align:center;">
     <div style="font-size:48px;${isOwn?'cursor:pointer':''}" ${isOwn?'onclick="changeAvatar()"':''}>${escapeHtml(u.avatar||'🧑')}</div>
     <h3 style="margin:4px 0;">${escapeHtml(u.name)}${isOwn?' <span style="color:var(--accent);font-size:1em;">(ty)</span>':''}</h3>
-    <p style="color:var(--gold);font-weight:600;">🏅 hodnost: ${title}</p>
+    ${(() => {
+      const r = rankPro(worth);
+      return `<p style="color:var(--gold);font-weight:600;font-size:1.05em;margin:2px 0;">${r.rank.emoji} ${r.rank.nazev}</p>
+        <p style="font-size:0.86em;color:var(--muted);margin:0 0 4px;">${r.rank.popis}</p>
+        ${r.dalsi ? `<div style="max-width:260px;margin:4px auto 2px;">
+            <div style="background:var(--panel2);border-radius:4px;height:7px;overflow:hidden;">
+              <div style="width:${Math.round(r.postup*100)}%;height:100%;background:var(--gold);"></div></div>
+            <p style="font-size:0.8em;color:var(--muted);margin:3px 0 0;">
+              do hodnosti ${r.dalsi.emoji} ${r.dalsi.nazev} chybí ${Math.max(0, Math.round(r.dalsi.od - worth)).toLocaleString('cs-CZ')} Kč</p></div>`
+          : '<p style="font-size:0.84em;color:var(--gold);">Nejvyšší hodnost ve hře.</p>'}`;
+    })()}
     ${isOwn?'<p style="font-size:0.92em;color:var(--muted)">klepni na avatar pro změnu</p>':''}
     ${isOwn?'<div class="row" style="justify-content:center;margin-top:6px;"><button class="secondary" onclick="changeName()">✏️ Změnit jméno</button><button class="secondary" onclick="changePin()">🔒 '+(u.pinHash?'Změnit PIN':'Nastavit PIN')+'</button></div>':''}
   </div>`;
@@ -12297,7 +12826,7 @@ function renderProfile(){
   `);
 
   html += infoBox('Co znamenají údaje v profilu?', `
-    <p><b>🏅 Hodnost.</b> Postup podle čistého jmění: Nováček → Střádal → Podnikavec → Investor → Magnát → Realitní král. Je to jen titul, nic neodemyká — ale je vidět ostatním.</p>
+    <p><b>🎖️ Hodnost.</b> Postup podle čistého jmění: ${RANKY.map(r => r.emoji + ' ' + r.nazev).join(' → ')}. Je to jen titul, nic neodemyká — ale je vidět ostatním u tvého jména, v žebříčku i v chatu.</p>
     <p><b>Bydlení.</b> Tři možné stavy:</p>
     <p>• <b>vlastní bydlení</b> — máš přes 50 % domu určeného k bydlení, platíš poloviční náklady,<br>
        • <b>v nájmu</b> — bydlíš v cizím bytě, platíš nájem majiteli,<br>
@@ -12416,7 +12945,8 @@ function renderLeaderboard(){
     ].filter(Boolean).join(' · ');
 
     return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':profileAttr(pl.name)}>
-      <h3>${rank} ${escapeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}</h3>
+      <h3>${rank} ${escapeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}
+        <span style="font-weight:400;font-size:0.8em;color:var(--muted);">· ${rankPro(pl.worth).rank.emoji} ${rankPro(pl.worth).rank.nazev}</span></h3>
       <p style="margin:2px 0;"><b style="color:var(--gold);font-size:1.15em;">${m.fmt(pl[m.key])}</b></p>
       <div style="background:var(--panel2);border-radius:4px;height:6px;margin:5px 0;overflow:hidden;">
         <div style="width:${pomer}%;height:100%;background:${isMe?'var(--accent)':'var(--accent2)'};"></div>
@@ -12655,6 +13185,10 @@ function evaRada(u){
   const zchatraly = moje.find(p => asArray(p.units).some(x => x && (x.condition ?? 100) < 35));
   if(zchatraly) return { text:`Byt v domě ${domKratce(zchatraly)} je ve špatném stavu. Oprav ho, než se ti odtud nájemník odstěhuje.`, id:zchatraly.id };
 
+  // 2b) Nájemník platí víc, než unese — odstěhuje se.
+  const nadMez = moje.find(p => p.useType === 'rental' && asArray(p.units).some(x => x && x.npc && (x.rentPrice || 0) > npcMaxNajem(p, x)));
+  if(nadMez) return { text:`V domě ${domKratce(nadMez)} máš nájem výš, než nájemníci unesou (zhruba ${Math.round(fairRentForHouse(nadMez) * NAJEMNIK_TOLERANCE)} Kč). Sniž ho, jinak se ti odstěhují.`, id:nadMez.id };
+
   // 3) Prázdný byt s nájmem nad trhem — sám se nenajme.
   const predrazeny = moje.find(p => p.useType === 'rental' && asArray(p.units).some(x =>
     x && !x.tenant && !x.npc && !x.ownerOccupied && (x.rentPrice || 0) > fairRentForHouse(p) * 1.3));
@@ -12875,14 +13409,15 @@ async function otevritProvozovnu(id){
   // stejná pekárna vydělá jinde třikrát víc.
   const seznam = Object.entries(PROVOZ_TYPY).map(([k, t]) => {
     const pop = poptavkaProMisto(p, k);
-    const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index);
+    // Čistě, po zásobách — hrubý odhad by hráče nalákal na čísla, která nikdy neuvidí.
+    const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index * (1 - PROVOZ_ZASOBY_PODIL));
     return { k, t, pop, denne };
   }).sort((a,b) => b.denne - a.denne);
 
   const vyber = await showPrompt(
     `🏪 Otevřít provozovnu v domě ${domKratce(p)}\n\n` +
     `Zařízení stojí ${cena.toLocaleString('cs-CZ')} Kč. Výnos závisí na tom, kolik lidí je v okolí a jaká je konkurence.\n\n` +
-    seznam.map((x, i) => `${i+1}) ${x.t.emoji} ${x.t.name} — poptávka ${x.pop.popis}, ~${x.denne} Kč/den`).join('\n') +
+    seznam.map((x, i) => `${i+1}) ${x.t.emoji} ${x.t.name} — poptávka ${x.pop.popis}, ~${x.denne} Kč/den čistě`).join('\n') +
     `\n\nNapiš číslo (1–${seznam.length}):`, '1');
   if(vyber === null) return;
   const idx = parseInt(vyber, 10) - 1;
@@ -12895,8 +13430,8 @@ async function otevritProvozovnu(id){
   if(!(await showConfirm(
     `${volba.t.emoji} ${volba.t.name} za ${cena.toLocaleString('cs-CZ')} Kč?\n\n` +
     `Poptávka na tomhle místě: ${volba.pop.popis}\n${volba.pop.faktory.join(' · ')}\n\n` +
-    `Odhad výnosu: ~${volba.denne} Kč/den při plných zásobách\n` +
-    `Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně — musíš je chodit doplňovat, jinak výnos klesá.\n\n` +
+    `Čistý výnos: ~${volba.denne} Kč/den (po odečtení zásob)\n` +
+    `Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně a stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % toho, co provozovna vydělá. Doplňují se na místě.\n\n` +
     (najemnici ? `⚠️ Vystěhuje ${najemnici} ${najemnici===1?'nájemníka':'nájemníků'}.\n\n` : '') +
     `Byty zůstanou zachované, na pronájem se dá kdykoliv vrátit.`))) return;
 
@@ -13049,8 +13584,20 @@ async function setUnitRentPrice(id, idx){
     `Nájemné za ${idx+1}. byt (Kč/den)\n\n` +
     `Férová cena je ${fair} Kč — za tu se byt pronajme hned. Čím dráž, tím déle čekáš, ` +
     `než se někdo nastěhuje. Prázdný byt nevydělává nic.\n\n` +
-    `Jak dlouho budeš čekat:\n${ukazky}\n\nKolik chceš? (nejvýš ${maxRentForHouse(p)} Kč)`, unit.rentPrice), 10);
+    `Jak dlouho budeš čekat:\n${ukazky}\n\n` +
+    // Hranice nájemníka — dialog o ní dřív mlčel, přitom tady se nájem zvyšuje.
+    `💡 Nájemníci unesou zhruba ${Math.round(fair * NAJEMNIK_TOLERANCE)} Kč. Víc nezaplatí — rozdíl odmítnou a začnou se stěhovat pryč.` +
+    (unit.npc && !unit.tenant ? `\nTeď tu bydlí ${unit.npc.name}.` : '') +
+    `\n\nKolik chceš? (nejvýš ${maxRentForHouse(p)} Kč)`, unit.rentPrice), 10);
   if(isNaN(rent) || rent <= 0) return;
+  // Zdražení nad to, co nájemník unese: upozornit ještě jednou konkrétními čísly.
+  if(unit.npc && !unit.tenant && rent > npcMaxNajem(p, unit) && rent > (unit.rentPrice || 0)){
+    const unese = Math.round(npcMaxNajem(p, unit));
+    if(!(await showConfirm(
+      `${unit.npc.name} unese nejvýš ${unese} Kč.\n\n` +
+      `Za ${rent} Kč bude platit dál jen ${unese} Kč — rozdíl ${rent - unese} Kč ti nezaplatí — a začne se rozhlížet po jiném bydlení.\n\n` +
+      `Vyšší nájem ti tak nic nepřinese, jen riziko, že byt zůstane prázdný. Opravdu nastavit ${rent} Kč?`))) return;
+  }
   if(rent > maxRentForHouse(p)){
     showAlert(`Nejvyšší povolený nájem za tenhle byt je ${maxRentForHouse(p)} Kč/den (${NAJEM_MAX_NASOBEK}× férová cena). Vyšší nájem už není podnikání, ale vydírání nájemníka.`);
     return;
@@ -13074,9 +13621,11 @@ async function setUnitRentPrice(id, idx){
   // nájemníkovi se cena mění taky — ať o tom hráč ví
   if((unit.tenant || unit.npc) && rent > (unit.rentPrice || 0)){
     const kdo = unit.tenant || (unit.npc && unit.npc.name) || 'nájemník';
-    const ok = await showConfirm(
-      `V bytě bydlí ${kdo} a platí ${unit.rentPrice} Kč/den.\n\n` +
-      `Po zdražení na ${rent} Kč se může odstěhovat, pokud mu to nebude vyhovovat.\n\nZdražit?`);
+    const max = unit.npc ? npcMaxNajem(p, unit) : null;
+    const riziko = max && rent > max
+      ? `⚠️ Nájemníci tady unesou nejvýš zhruba ${Math.round(max)} Kč (férovka je ${Math.round(fairRentForHouse(p))} Kč). Za ${rent} Kč se ${kdo} ${rent > max * 1.8 ? 'nejspíš do pár dnů' : 'časem'} odstěhuje.`
+      : (max ? `${kdo} to unese (zvládne zhruba do ${Math.round(max)} Kč).` : `Nájemník-hráč se rozhodne sám, jestli zůstane.`);
+    const ok = await showConfirm(`V bytě bydlí ${kdo} a platí ${unit.rentPrice} Kč/den.\n\n${riziko}\n\nZdražit na ${rent} Kč?`);
     if(!ok) return;
   }
 
@@ -13723,7 +14272,7 @@ function doLogin(name, pinHash){
   }
   currentUser = {name};
   const u = world.users[name];
-  document.getElementById('userInfo').innerHTML = `<span style="cursor:pointer">${escapeHtml(u.avatar||'🧑')} ${escapeHtml(name)} ▸</span>`;
+  document.getElementById('userInfo').innerHTML = userInfoHtml(name);
   document.getElementById('userInfo').onclick = () => viewProfile(currentUser.name);
   document.getElementById('loginOverlay').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
@@ -13955,6 +14504,7 @@ window.onload = async () => {
   nastavOchranuProtiObnoveni();
   safeCall(() => oznacNoveZmeny());
   safeCall(() => nactiAdresy());
+  setInterval(() => safeCall(() => hlidejRank()), 15000);   // povýšení stačí zkontrolovat občas
   safeCall(() => nactiPocasi());
   // Kontrolujeme častěji, než je platnost uložených dat. Když se obojí rovnalo, interval
   // se trefil těsně pod hranici platnosti, data se vyhodnotila jako čerstvá a stahovalo
