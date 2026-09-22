@@ -677,7 +677,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '10.3';
+const APP_VERSION = '10.4';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8246,22 +8246,27 @@ function renderSelected(id){
       // hráči si to pletli a báli se cokoli zmáčknout, aby nepřišli o nájemníky.
       html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet v CELÉM domě (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)${obsazenych?` ⚠️ vystěhuje ${obsazenych}`:''}</button>`;
 
-      // Vlastní podnikání — třetí způsob využití domu vedle bydlení a pronájmu.
-      if(!maProvoz(p)){
-        const nejlepsi = Object.entries(PROVOZ_TYPY)
-          .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index * (1 - PROVOZ_ZASOBY_PODIL) }))
-          .sort((a, b) => b.denne - a.denne)[0];
-        html += `<button class="secondary" ${near?'':'disabled'} onclick="otevritProvozovnu('${p.id}')">🏪 Otevřít provozovnu (od ${provozInvestice(p).toLocaleString('cs-CZ')} Kč)</button>`;
-        if(nejlepsi) html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0;">
-          Nejlépe by tu šla ${nejlepsi.t.emoji} <b>${nejlepsi.t.name.toLowerCase()}</b> — poptávka ${poptavkaProMisto(p, nejlepsi.k).popis}, odhad <b>${Math.round(nejlepsi.denne)} Kč/den čistě</b> (po zásobách).
-          Výnos závisí na tom, kolik lidí v okolí bydlí a jaká je konkurence.</p>`;
-      }
     }
     if(p.useType !== 'rental'){
       const uzZarizeno = asArray(p.units).length;   // dům byl přestavěný dřív → znovu otevřít je zdarma
       html += uzZarizeno
         ? `<button class="secondary" ${near?'':'disabled'} onclick="startRental('${p.id}')">Zase pronajímat (${uzZarizeno} ${uzZarizeno===1?'byt':'bytů'}, zdarma)</button>`
         : `<button class="secondary" ${near?'':'disabled'} onclick="startRental('${p.id}')">Přestavět na pronájem (${p.levels||1} ${(p.levels||1)===1?'byt':'bytů'}, ${Math.round(effectiveHousePrice(p)*RENTAL_SETUP_RATIO)} Kč)</button>`;
+    }
+
+    // Vlastní podnikání — třetí způsob využití domu vedle bydlení a pronájmu. Dřív bylo
+    // tlačítko uvnitř podmínky „dům není bydlení", takže u domu, ve kterém hráč bydlí,
+    // se nikdy neukázalo. Hráči pak ani nevěděli, že provozovna existuje.
+    if(!maProvoz(p)){
+      const pater = pocetPater(p);
+      const nejlepsi = Object.entries(PROVOZ_TYPY)
+        .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index * (1 - PROVOZ_ZASOBY_PODIL) }))
+        .sort((a, b) => b.denne - a.denne)[0];
+      html += `<button class="secondary" ${near?'':'disabled'} onclick="otevritProvozovnu('${p.id}')">🏪 Otevřít provozovnu (od ${provozInvestice(p, pater >= 2).toLocaleString('cs-CZ')} Kč)</button>`;
+      if(nejlepsi) html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0;">
+        Nejlépe by tu šla ${nejlepsi.t.emoji} <b>${nejlepsi.t.name.toLowerCase()}</b> — poptávka ${poptavkaProMisto(p, nejlepsi.k).popis}, odhad <b>${Math.round(nejlepsi.denne)} Kč/den čistě</b> (po zásobách) přes celý dům.
+        ${pater >= 2 ? `Dům má ${pater} ${pater < 5 ? 'patra' : 'pater'}, takže můžeš otevřít jen přízemí a nahoře dál bydlet nebo pronajímat.`
+          : (p.useType === 'residence' ? 'Dům má jen jedno patro — provozovna by zabrala celý a přišel bys o bydlení.' : '')}</p>`;
     }
     html += `</div>`;
   } else if(iDecide) {
@@ -11961,6 +11966,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'10.4', datum:'2026-09-16', body:[
+    ['oprava','U domu, ve kterém bydlíš, se vůbec neukazovalo tlačítko „Otevřít provozovnu“ — bylo schované v části, která se u bydlení nezobrazuje. Hráči tak často ani nevěděli, že provozovna existuje. Teď je vidět u každého domu, kde máš většinu.'],
+  ]},
   { verze:'10.3', datum:'2026-09-16', body:[
     ['novinka','🏘️ PROVOZOVNA V PŘÍZEMÍ. Ve vícepatrovém domě si při otevírání vybereš, jestli provozovna zabere celý dům, nebo jen přízemí. Nahoře pak zůstanou byty — můžeš v nich dál bydlet nebo je pronajímat.'],
     ['info','Přízemí je komerčně nejcennější patro (vstup z ulice, výloha), proto vydělá víc než jeho poměrná část: ve dvoupatrovém domě 67 % toho, co celá provozovna, ve třípatrovém 50 %, ve čtyřpatrovém 40 %. Zařízení i zásoby stojí úměrně méně a k tomu máš nájem z bytů nahoře.'],
