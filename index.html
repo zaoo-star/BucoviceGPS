@@ -677,7 +677,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '10.1';
+const APP_VERSION = '10.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4175,7 +4175,7 @@ let _popCache = { klic: null, mapa: new Map() };
 function popKlic(){
   let provozoven = 0;
   const parcely = world.parcels || {};
-  for(const k in parcely){ if(parcely[k] && parcely[k].useType === 'provozovna') provozoven++; }
+  for(const k in parcely){ if(maProvoz(parcely[k])) provozoven++; }
   const c = lokalniDnes();
   return `${world.day}|${provozoven}|${c.ev ? c.ev.id : ''}`;
 }
@@ -4216,7 +4216,7 @@ function poptavkaVypocet(p, typId){
   // 3) Konkurence — stejný typ provozovny v okolí si zákazníky rozdělí.
   let konkurence = 0;
   Object.values(world.parcels).forEach(q => {
-    if(!q || q === p || q.useType !== 'provozovna' || !q.provoz) return;
+    if(!q || q === p || !maProvoz(q)) return;   // i obchod v přízemí je konkurence
     if(!vOkoli(q)) return;
     konkurence += (q.provoz.typ === typId) ? 1 : 0.35;   // jiný obor konkuruje jen zčásti
   });
@@ -4242,17 +4242,45 @@ function poptavkaVypocet(p, typId){
   };
 }
 
+// ===== PROVOZOVNA V PŘÍZEMÍ =====
+// Ve vícepatrovém domě může provozovna zabrat jen přízemí, patra nad ní zůstanou byty.
+// Přízemí je komerčně nejcennější patro — vstup z ulice, výloha, lidé chodí kolem —
+// a obchodní prostor v něm se platí zhruba dvojnásobně proti patrům. Proto má pro
+// provozovnu váhu 2 a každé další patro 1: ve dvoupatrovém domě vydělá přízemí 2/3
+// toho, co provozovna přes celý dům, ve třípatrovém polovinu, ve čtyřpatrovém 2/5.
+// Byty nad ní pak nesou jen svůj díl nájmu (bez přízemí).
+
+// Má dům provozovnu? (přes celý dům, nebo jen v přízemí)
+function maProvoz(p){
+  return !!(p && p.provoz && PROVOZ_TYPY[p.provoz.typ] && (p.useType === 'provozovna' || p.provoz.prizemi));
+}
+function pocetPater(p){
+  if(!p) return 1;
+  const byty = asArray(p.units).length + (p.provoz && p.provoz.prizemi ? 1 : 0);
+  return Math.max(p.levels || 1, byty, 1);
+}
+// Jakou část výnosu „provozovny přes celý dům" přízemí nese.
+function provozPodilPater(n){ return n <= 1 ? 1 : 2 / (n + 1); }
+function provozPodil(p){
+  if(!p || !p.provoz || !p.provoz.prizemi) return 1;
+  return provozPodilPater(pocetPater(p));
+}
+
 // Denní výnos provozovny — poptávka × zásoby × hodnota domu.
 function provozVynos(p){
-  if(!p || p.useType !== 'provozovna' || !p.provoz) return 0;
+  if(!maProvoz(p)) return 0;
   const typ = PROVOZ_TYPY[p.provoz.typ];
   if(!typ) return 0;
   const zasoby = Math.max(0, Math.min(100, p.provoz.zasoby ?? 100)) / 100;
   const poptavka = poptavkaProMisto(p, p.provoz.typ).index;
-  return effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * poptavka * zasoby * provozVykon(p).mult;
+  return effectiveHousePrice(p) * PROVOZ_ZAKLAD * typ.vynos * poptavka * zasoby * provozVykon(p).mult * provozPodil(p);
 }
 
-function provozInvestice(p){ return Math.round(effectiveHousePrice(p) * PROVOZ_INVESTICE); }
+// `jenPrizemi` umožní spočítat cenu dřív, než se provozovna otevře (pro nabídku v dialogu).
+function provozInvestice(p, jenPrizemi){
+  const podil = jenPrizemi ? provozPodilPater(pocetPater(p)) : provozPodil(p);
+  return Math.round(effectiveHousePrice(p) * PROVOZ_INVESTICE * podil);
+}
 // Jak se provozovně dnes daří. Podnikání je risk: kolísá víc než podíl ve firmě (±50 %),
 // občas přijde skvělý den (×1,9) a občas propadák (×0,35). Průměr dlouhodobě vychází
 // kolem 1, takže návratnost se nemění — jen je cesta k ní divočejší. K tomu počasí:
@@ -4289,7 +4317,7 @@ function provozVykon(p){
 function provozPlnyVynos(p){
   if(!p || !p.provoz || !PROVOZ_TYPY[p.provoz.typ]) return 0;
   return effectiveHousePrice(p) * PROVOZ_ZAKLAD * PROVOZ_TYPY[p.provoz.typ].vynos
-         * poptavkaProMisto(p, p.provoz.typ).index;
+         * poptavkaProMisto(p, p.provoz.typ).index * provozPodil(p);
 }
 
 // Zásoby stojí pevný podíl z toho, co provozovna vydělá — ne z hodnoty domu. Denní úbytek
@@ -4318,9 +4346,12 @@ function provozCistyVynos(p){
 
 function fairRentForHouse(p){
   const numUnits = (p.units && p.units.length) || p.levels || 1;
+  // Když je v přízemí provozovna, byty nad ní nesou jen svůj díl domu. Bez tohohle by se
+  // nájem přízemí rozpočítal do ostatních bytů a každý by byl dražší, než odpovídá.
+  const bytovyDil = (p.provoz && p.provoz.prizemi) ? (1 - 1 / pocetPater(p)) : 1;
   // podlaha 35 Kč zajišťuje, že nájemník (35 + TENANT_LIVING_COST) vždy platí víc než vlastník bydlení,
   // i u vícepatrových domů, kde by se jinak nájem na byt propadl moc nízko
-  let fair = Math.max(35, Math.round(effectiveHousePrice(p) * FAIR_RENT_RATIO / Math.max(1, numUnits/1)) );
+  let fair = Math.max(35, Math.round(effectiveHousePrice(p) * FAIR_RENT_RATIO * bytovyDil / Math.max(1, numUnits/1)) );
   if(hasUpgrade(p, 'ac')) fair = Math.round(fair * AC_RENT_BONUS); // klimatizace zvedne snesitelný nájem
   return fair;
 }
@@ -4949,6 +4980,8 @@ function migrateWorld(){
         if(p.useType === 'shop') p.useType = 'residence';
         // Provozovna bez platného typu (poškozená data) se vrátí na dům bez využití.
         if(p.useType === 'provozovna' && (!p.provoz || !PROVOZ_TYPY[p.provoz.typ])){ p.useType = null; delete p.provoz; }
+        // Obchod v přízemí s poškozeným typem: zavřít ho, byty zůstanou.
+        if(p.provoz && p.provoz.prizemi && !PROVOZ_TYPY[p.provoz.typ]) delete p.provoz;
         if(p.provoz && typeof p.provoz.zasoby !== 'number') p.provoz.zasoby = 100;
         delete p.shopName; delete p.shopDesc; delete p.goods;
         delete p.hiring; delete p.employeeName; delete p.employeeSalary;
@@ -6093,8 +6126,9 @@ function tickVnitrni(){
     }
     // Solární panely vydělávají u KAŽDÉHO domu — i toho, ve kterém majitel bydlí.
     // Dřív to bylo uvnitř bloku pro pronájem, takže u vlastního bydlení se nepřipsalo nic.
-    // Provozovna: výnos podle poptávky a zásob, zásoby ubývají.
-    if(p.useType === 'provozovna' && p.provoz){
+    // Provozovna: výnos podle poptávky a zásob, zásoby ubývají. (Celý dům i přízemí —
+    // u přízemí běží zároveň i blok pro pronájem bytů nad ním.)
+    if(maProvoz(p)){
       const predZasoby = p.provoz.zasoby ?? 100;
       p.provoz.zasoby = Math.max(0, predZasoby - PROVOZ_ZASOBY_DEN * dayFraction);
       // Upozornit majitele, až zásoby klesnou pod čtvrtinu — jinak si toho všimne,
@@ -6233,7 +6267,7 @@ function maybeRandomEvent(){
   const mojeDomy = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
   if(mojeDomy.some(p => p.useType === 'rental'))
     events.push({txt:'🐀 Deratizace v pronájmu', amount: -Math.round(70 + Math.random()*90), good:false});
-  if(mojeDomy.some(p => p.useType === 'provozovna'))
+  if(mojeDomy.some(p => maProvoz(p)))
     events.push({txt:'🧯 Revize hasicích přístrojů v provozovně', amount: -Math.round(60 + Math.random()*80), good:false});
   if(asArray(u.loans).length)
     events.push({txt:'🏦 Banka si naúčtovala poplatek za vedení úvěru', amount: -Math.round(25 + Math.random()*35), good:false});
@@ -6497,7 +6531,7 @@ function nocniIncident(u){
   if(Math.random() > NOCNI_SANCE * rizikoDomu(p) / 1.6) return;
 
   // Provozovna: vykradené zásoby místo poškození bytu.
-  if(p.useType === 'provozovna' && p.provoz){
+  if(maProvoz(p)){
     const ubylo = Math.round(20 + Math.random() * 30);
     p.provoz.zasoby = Math.max(0, (p.provoz.zasoby ?? 100) - ubylo);
     stampHouse(p);
@@ -7624,7 +7658,7 @@ function iconFor(p){
   let cls = 'p-empty', emoji = '🏚️';
   // Provozovna má na mapě vlastní ikonu podle oboru — ať je na první pohled poznat,
   // kde už někdo podniká (a kde tedy bude konkurence).
-  if(p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ]){
+  if(maProvoz(p)){
     const barva = myHousePct(p) > 0 ? 'p-mine' : 'p-rental';
     let cls2 = 'parcelMarker ' + barva;
     if(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS) cls2 += ' p-inreach';
@@ -7907,9 +7941,13 @@ function selectParcel(id){
 function badgeFor(p){
   if(!houseHasOwner(p)) return '<span class="badge badge-empty">Volný</span>';
   if(p.useType === 'residence') return '<span class="badge badge-res">🏠 Bydlení</span>';
+  // Obchod v přízemí musí být před pronájmem — dům je formálně pronájem, ale dole je provozovna.
+  if(maProvoz(p) && p.provoz.prizemi)
+    return `<span class="badge badge-rent">${PROVOZ_TYPY[p.provoz.typ].emoji} ${PROVOZ_TYPY[p.provoz.typ].name} + 🏘️ byty</span>`;
   if(p.useType === 'rental') return '<span class="badge badge-rent">🏘️ Pronájem</span>';
   if(p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ])
     return `<span class="badge badge-rent">${PROVOZ_TYPY[p.provoz.typ].emoji} ${PROVOZ_TYPY[p.provoz.typ].name}</span>`;
+
   return '<span class="badge badge-res">Bez využití</span>';
 }
 
@@ -7973,7 +8011,7 @@ function renderSelected(id){
   }
 
   // Karta provozovny — stav zásob, poptávka a co ji ovlivňuje.
-  if(p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ]){
+  if(maProvoz(p)){
     const typ = PROVOZ_TYPY[p.provoz.typ];
     const pop = poptavkaProMisto(p, p.provoz.typ);
     const zas = Math.round(p.provoz.zasoby ?? 100);
@@ -7983,7 +8021,8 @@ function renderSelected(id){
     const zasobyDenne = Math.round(plne * PROVOZ_ZASOBY_PODIL);
     const cisteDenne = plne - zasobyDenne;
     html += `<div class="card" style="border-left:3px solid var(--accent2);">
-      <h3>${typ.emoji} ${typ.name}</h3>
+      <h3>${typ.emoji} ${typ.name}${p.provoz.prizemi ? ' <span style="font-weight:400;font-size:0.8em;color:var(--muted)">v přízemí</span>' : ''}</h3>
+      ${p.provoz.prizemi ? `<p style="font-size:0.86em;color:var(--muted);margin:2px 0;">Obchod zabírá přízemí, v ${pocetPater(p) - 1 === 1 ? 'patře nad ním je byt' : `${pocetPater(p) - 1} patrech nad ním jsou byty`}. Přízemí je komerčně nejcennější patro, proto vydělá ${Math.round(provozPodil(p)*100)} % toho, co provozovna přes celý dům.</p>` : ''}
       <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">${typ.popis}</p>
       <p style="margin:4px 0;">Poptávka v okolí: <b style="color:${pop.index>=1.1?'var(--accent)':(pop.index>=0.8?'var(--gold)':'var(--danger)')}">${pop.popis}</b>
         <span style="color:var(--muted);font-size:0.9em;">(${pop.faktory.join(' · ')})</span></p>
@@ -8001,6 +8040,7 @@ function renderSelected(id){
       ${myPct > 0 ? `<p style="font-size:0.9em;margin:2px 0;">Tvůj podíl ${myPct.toFixed(0)} % → čistě <b style="color:var(--accent)">${Math.round(cisteDenne*myPct/100)} Kč/den pro tebe</b></p>` : ''}
       ${iDecide ? `<div class="row">
         <button ${near?'':'disabled'} onclick="doplnitZasoby('${p.id}')">Doplnit zásoby${zas<99?` (${doplneniCena(p).toLocaleString('cs-CZ')} Kč)`:' — plné'}</button>
+        ${p.provoz.prizemi ? `<button class="secondary" onclick="zavritProvozovnuPrizemi('${p.id}')">Zavřít provozovnu</button>` : ''}
       </div>` : ''}
       <p style="font-size:0.83em;color:var(--muted);margin:4px 0 0;">Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně a stojí ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % tržeb. Bez nich provozovna nevydělá nic — doplňují se na místě.</p>
     </div>`;
@@ -8207,7 +8247,7 @@ function renderSelected(id){
       html += `<button class="secondary" ${near?'':'disabled'} onclick="setUseType('${p.id}','residence')">Bydlet v CELÉM domě (−${Math.round(RESIDENCE_LIVING_DISCOUNT*100)} % nákladů)${obsazenych?` ⚠️ vystěhuje ${obsazenych}`:''}</button>`;
 
       // Vlastní podnikání — třetí způsob využití domu vedle bydlení a pronájmu.
-      if(p.useType !== 'provozovna'){
+      if(!maProvoz(p)){
         const nejlepsi = Object.entries(PROVOZ_TYPY)
           .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index * (1 - PROVOZ_ZASOBY_PODIL) }))
           .sort((a, b) => b.denne - a.denne)[0];
@@ -8425,6 +8465,9 @@ function renderSelected(id){
     <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se <b>na místě</b>. Stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % toho, co provozovna utrží — zbytek je tvůj čistý zisk. Bez zásob provozovna nevydělá nic, takže k ní musíš chodit.</p>
     <p><b>Kdy se vyplatí.</b> Investice do zařízení se čistě (po zásobách) vrátí na dobrém místě zhruba za 80 dní, obvykle kolem 110, na špatném za 230. Proti pronájmu stejného domu vydělá provozovna víc všude — obvykle skoro dvojnásobek, na nejlepších místech i víc. Za to po tobě chce péči.</p>
     <p style="color:var(--muted)">Byty v domě zůstanou zachované — na pronájem se dá kdykoliv vrátit.</p>
+    <p><b>🏘️ Jen v přízemí.</b> Ve vícepatrovém domě může provozovna zabrat jen přízemí a v patrech nad ní zůstanou byty — můžeš v nich bydlet nebo je pronajímat. Přízemí je komerčně nejcennější patro (vstup z ulice, výloha), proto vydělá víc než jeho poměrná část:</p>
+    <p style="margin:2px 0;">• dvoupatrový dům → 67 % výnosu celé provozovny<br>• třípatrový → 50 %<br>• čtyřpatrový → 40 %</p>
+    <p>Zařízení i zásoby stojí úměrně méně a k výnosu z obchodu máš navíc nájem z bytů. Obchod v přízemí jde kdykoliv zavřít — přízemí se zase stane bytem.</p>
   `);
 
   html += infoBox('Co ovlivňuje cenu domu?', `
@@ -8520,7 +8563,7 @@ function renderMine(){
       ? byty.filter(u => u && !u.ownerOccupied && (u.condition||0) > 0)
           .reduce((a, u) => a + (u.tenant ? (u.rentPrice || 0) : Math.min(u.rentPrice || 0, fairRentForHouse(p) * NAJEMNIK_TOLERANCE)), 0)
       : 0;
-    const provoz = (p.useType === 'provozovna' && p.provoz && PROVOZ_TYPY[p.provoz.typ]);
+    const provoz = maProvoz(p);
     const provozCisty = provoz ? provozCistyVynos(p) : 0;     // potenciál s plnými zásobami
     const provozDnesKc = provoz ? provozDnes(p) : 0;         // co opravdu přijde dnes
     const solar = solarBonusForHouse(p);
@@ -8597,7 +8640,7 @@ function renderMine(){
     const p = d.p;
     const iDecide = iAmDecider(p);
     const rozhoduje = houseDecider(p);
-    const ikona = d.provoz ? PROVOZ_TYPY[p.provoz.typ].emoji : (p.useType === 'rental' ? '🏘️' : (p.useType === 'residence' ? '🏠' : '🏚️'));
+    const ikona = d.provoz ? PROVOZ_TYPY[p.provoz.typ].emoji + (p.provoz.prizemi ? '🏘️' : '') : (p.useType === 'rental' ? '🏘️' : (p.useType === 'residence' ? '🏠' : '🏚️'));
 
     // --- rozbalený obsah ---
     let detail = '';
@@ -8667,7 +8710,7 @@ function renderMine(){
       const typ = PROVOZ_TYPY[p.provoz.typ];
       const plny = provozPlnyVynos(p);
       const barva = d.zasoby > 60 ? 'var(--accent)' : d.zasoby > 25 ? 'var(--gold)' : 'var(--danger)';
-      detail += `<p class="mineSek">${typ.emoji} ${typ.name}</p>
+      detail += `<p class="mineSek">${typ.emoji} ${typ.name}${p.provoz.prizemi ? ' v přízemí' : ''}</p>
         <p>Poptávka <b>${poptavkaProMisto(p, p.provoz.typ).popis}</b></p>
         ${(() => { const vk = provozVykon(p);
           const b = vk.mult >= 1.1 ? 'var(--accent)' : vk.mult >= 0.9 ? 'var(--muted)' : 'var(--danger)';
@@ -9444,7 +9487,7 @@ function financeBreakdown(name){
   Object.values(world.parcels).forEach(p => {
     const pct = p.owners?.[name] || 0;
     // provozDnes počítá s ubýváním zásob během dne — sedí s tím, co se připíše o půlnoci
-    if(pct > 0 && p.useType === 'provozovna') provozIncome += provozDnes(p) * (pct/100);
+    if(pct > 0 && maProvoz(p)) provozIncome += provozDnes(p) * (pct/100);
   });
   // Tady jsou tržby; zásoby platíš zvlášť, když je jdeš doplnit (zhruba 30 % tržeb).
   if(provozIncome > 0.5) income.push({label:'🏪 Provozovny (tržby, bez zásob)', amount: provozIncome});
@@ -9523,7 +9566,7 @@ function financeBreakdown(name){
     const value = houseMarketPricePerPercent(p)*pct;
     // dům nesoucí příjem (pronájem) = aktivum; nevyužitý/bydlení jen s daní = spíš pasivum
     let dayFlow = 0;
-    if(p.useType === 'provozovna') dayFlow += provozVynos(p) * (pct/100);
+    if(maProvoz(p)) dayFlow += provozVynos(p) * (pct/100);
     if(p.useType==='rental' && p.units){
       const collected = asArray(p.units).reduce((s,un) => s + vybranyNajem(p, un), 0);
       dayFlow += collected * plnyDumMult(p) * (pct/100);
@@ -11918,6 +11961,14 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'10.3', datum:'2026-09-16', body:[
+    ['novinka','🏘️ PROVOZOVNA V PŘÍZEMÍ. Ve vícepatrovém domě si při otevírání vybereš, jestli provozovna zabere celý dům, nebo jen přízemí. Nahoře pak zůstanou byty — můžeš v nich dál bydlet nebo je pronajímat.'],
+    ['info','Přízemí je komerčně nejcennější patro (vstup z ulice, výloha), proto vydělá víc než jeho poměrná část: ve dvoupatrovém domě 67 % toho, co celá provozovna, ve třípatrovém 50 %, ve čtyřpatrovém 40 %. Zařízení i zásoby stojí úměrně méně a k tomu máš nájem z bytů nahoře.'],
+    ['info','Obchod v přízemí se dá kdykoliv zavřít — přízemí se zase stane bytem.'],
+  ]},
+  { verze:'10.2', datum:'2026-09-16', body:[
+    ['oprava','Když sis otevřel provozovnu v domě, kde bydlíš, přišel jsi o bydlení a životní náklady ti skočily na dvojnásobek — a hra tě varovala jen před vystěhováním nájemníků. Teď předem napíše, že bydlení ztratíš a kolik budeš platit.'],
+  ]},
   { verze:'10.1', datum:'2026-09-16', body:[
     ['oprava','Nápověda k pronájmu radila, že se vyplatí nájem i výrazně nad férovou cenou — to po změně ve 9.9 už neplatí. Přepsáno: nájemník unese zhruba o čtvrtinu víc, víc nezaplatí, a plný dům dostává bonus.'],
     ['oprava','U nájemníka v detailu domu stálo „platí spolehlivě plný nájem“, i když u přemrštěného nájmu platí jen část. Teď je napsané, kolik doopravdy platí a kolik unese.'],
@@ -12461,6 +12512,7 @@ function renderGuide(){
     <p><b>Zásoby.</b> Ubývají ${PROVOZ_ZASOBY_DEN} % denně a doplňují se přímo na místě. Stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % tržeb. Bez zásob provozovna nevydělá vůbec nic — je to jediný způsob výdělku, který po tobě chce, abys tam občas zašel.</p>
     <p style="color:var(--muted)">💡 Čistě, po zásobách, se investice vrátí na dobrém místě zhruba za 80 dní, obvykle kolem 110, na špatném za 230. Proti pronájmu stejného domu vydělá víc všude — obvykle skoro dvojnásobek.</p>
     <p style="color:var(--muted)">Byty v domě zůstanou zachované — kdykoliv se dá vrátit k pronájmu.</p>
+    <p><b>🏘️ Obchod v přízemí, byty nahoře.</b> Ve vícepatrovém domě si můžeš vybrat, jestli provozovna zabere celý dům, nebo jen přízemí. Přízemí je komerčně nejcennější patro, takže vydělá víc než jeho poměrná část — ve třípatrovém domě polovinu toho, co celá provozovna. Nahoře ti zůstanou byty: bydlíš v nich, nebo je pronajímáš. Hodí se to hlavně tam, kde v domě sám bydlíš a nechceš se stěhovat.</p>
   `);
 
   html += guideSection('💼','Práce, povýšení a přesčas', `
@@ -12875,7 +12927,7 @@ function renderLeaderboard(){
     // Byt, kde bydlí sám majitel, je taky obsazený — jen z něj nechodí nájem.
     const obsazenych = domy.reduce((n, p) => n + asArray(p.units).filter(x => x && (x.tenant || x.npc || x.ownerOccupied)).length, 0);
     const firmy = Object.values(world.businesses).filter(b => (b.owners?.[u.name]||0) > 0);
-    const provozovny = domy.filter(p => p.useType === 'provozovna' && p.provoz);
+    const provozovny = domy.filter(p => maProvoz(p));
     const f = safeCall(() => financeBreakdown(u.name)) || {income:[], expense:[], net:0};
     const zPolozky = re => (f.income || []).filter(i => re.test(i.label)).reduce((a,i)=>a+i.amount, 0);
     const maj = safeCall(() => majetekHodnota(u.name)) || {trzni:0};
@@ -13178,7 +13230,7 @@ function evaRada(u){
   const f = safeCall(() => financeBreakdown(u.name)) || { net:0, totalIncome:0, expense:[] };
 
   // 1) Provozovna bez zásob — nevydělává vůbec nic.
-  const bezZasob = moje.find(p => p.useType === 'provozovna' && p.provoz && (p.provoz.zasoby ?? 100) < 20);
+  const bezZasob = moje.find(p => maProvoz(p) && (p.provoz.zasoby ?? 100) < 20);
   if(bezZasob) return { text:`V provozovně ${domKratce(bezZasob)} ti došly zásoby. Bez nich nevydělá ani korunu — zajdi je doplnit.`, id:bezZasob.id };
 
   // 2) Zchátralé byty — nájemníci se z nich stěhují.
@@ -13402,20 +13454,41 @@ async function otevritProvozovnu(id){
   if(!p) return;
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být u domu.'); return; }
   if(!iHaveMajority(p)){ showAlert('Provozovnu může otevřít jen vlastník s víc než 50 % podílu.'); return; }
+  if(maProvoz(p)){ showAlert('V tomhle domě už provozovna je.'); return; }
   const me = world.users[currentUser.name];
-  const cena = provozInvestice(p);
+  const pater = pocetPater(p);
 
-  // Nabídneme typy i s odhadem poptávky PRO TOHLE MÍSTO — v tom je celá hra:
-  // stejná pekárna vydělá jinde třikrát víc.
+  // 1) Celý dům, nebo jen přízemí? U jednopatrového domu volba není.
+  let jenPrizemi = false;
+  if(pater >= 2){
+    const podil = provozPodilPater(pater);
+    const bydlimTu = p.useType === 'residence' || asArray(p.units).some(u => u && u.ownerOccupied);
+    const volbaRozsahu = await showPrompt(
+      `🏪 Provozovna v domě ${domKratce(p)} (${pater} ${pater < 5 ? 'patra' : 'pater'})\n\n` +
+      `1) Jen PŘÍZEMÍ — za ${provozInvestice(p, true).toLocaleString('cs-CZ')} Kč\n` +
+      `   Obchod dole, nahoře ${pater - 1 === 1 ? 'zůstane byt' : `zůstane ${pater - 1} ${pater - 1 < 5 ? 'byty' : 'bytů'}`}` +
+      `${bydlimTu ? ' — v jednom můžeš dál bydlet' : ' k pronájmu'}.\n` +
+      `   Vydělá ${Math.round(podil * 100)} % toho, co provozovna přes celý dům (přízemí je komerčně nejcennější patro), a k tomu nájem z bytů.\n\n` +
+      `2) CELÝ DŮM — za ${provozInvestice(p, false).toLocaleString('cs-CZ')} Kč\n` +
+      `   Nejvyšší výnos z provozovny, ale vystěhuje všechny${bydlimTu ? ' včetně tebe' : ''}.\n\n` +
+      `Napiš 1 nebo 2:`, '1');
+    if(volbaRozsahu === null) return;
+    if(volbaRozsahu.trim() === '1') jenPrizemi = true;
+    else if(volbaRozsahu.trim() !== '2'){ showAlert('Neplatná volba.'); return; }
+  }
+  const podil = jenPrizemi ? provozPodilPater(pater) : 1;
+  const cena = provozInvestice(p, jenPrizemi);
+
+  // 2) Obor — s odhadem poptávky PRO TOHLE MÍSTO. Stejná pekárna vydělá jinde třikrát víc.
   const seznam = Object.entries(PROVOZ_TYPY).map(([k, t]) => {
     const pop = poptavkaProMisto(p, k);
     // Čistě, po zásobách — hrubý odhad by hráče nalákal na čísla, která nikdy neuvidí.
-    const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index * (1 - PROVOZ_ZASOBY_PODIL));
+    const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index * (1 - PROVOZ_ZASOBY_PODIL) * podil);
     return { k, t, pop, denne };
   }).sort((a,b) => b.denne - a.denne);
 
   const vyber = await showPrompt(
-    `🏪 Otevřít provozovnu v domě ${domKratce(p)}\n\n` +
+    `🏪 ${jenPrizemi ? 'Provozovna v přízemí' : 'Provozovna přes celý dům'} — ${domKratce(p)}\n\n` +
     `Zařízení stojí ${cena.toLocaleString('cs-CZ')} Kč. Výnos závisí na tom, kolik lidí je v okolí a jaká je konkurence.\n\n` +
     seznam.map((x, i) => `${i+1}) ${x.t.emoji} ${x.t.name} — poptávka ${x.pop.popis}, ~${x.denne} Kč/den čistě`).join('\n') +
     `\n\nNapiš číslo (1–${seznam.length}):`, '1');
@@ -13426,24 +13499,85 @@ async function otevritProvozovnu(id){
 
   if(me.balance < cena){ showAlert(`Na zařízení potřebuješ ${cena.toLocaleString('cs-CZ')} Kč, máš ${Math.round(me.balance).toLocaleString('cs-CZ')} Kč.`); return; }
 
-  const najemnici = asArray(p.units).filter(u => u && (u.tenant || u.npc)).length;
+  // 3) Kdo přijde o bydlení — u celého domu všichni, u přízemí jen ten, kdo bydlí v přízemí.
+  const nakladyTed = Math.round(dailyHousingCost(currentUser.name));
+  let varovani = '';
+  if(jenPrizemi){
+    const dole = asArray(p.units)[0];
+    if(p.useType === 'rental' && dole && (dole.tenant || dole.npc))
+      varovani += `⚠️ Z přízemí se vystěhuje ${dole.npc ? dole.npc.name : dole.tenant}.\n`;
+    const bydlimDole = p.useType === 'rental' && dole && dole.ownerOccupied;
+    const volnyNahore = asArray(p.units).slice(1).some(u => u && !u.tenant && !u.npc && !u.ownerOccupied);
+    if(p.useType === 'residence') varovani += `🏠 Bydlet budeš dál — v prvním patře nad obchodem.\n`;
+    else if(bydlimDole) varovani += volnyNahore
+      ? `🏠 Bydlíš v přízemí — přestěhuješ se do volného bytu nahoře.\n`
+      : `⚠️ Bydlíš v přízemí a nahoře není volný byt — přijdeš o bydlení (${LIVING_COST} Kč denně místo ${nakladyTed} Kč).\n`;
+  } else {
+    const najemnici = asArray(p.units).filter(u => u && (u.tenant || u.npc)).length;
+    const bydlimTu = p.useType === 'residence' || asArray(p.units).some(u => u && u.ownerOccupied);
+    if(najemnici) varovani += `⚠️ Vystěhuje ${najemnici} ${najemnici===1?'nájemníka':'nájemníků'}.\n`;
+    // Dřív varování zmínilo jen nájemníky, takže hráč přišel o bydlení nečekaně.
+    if(bydlimTu) varovani += `⚠️ Bydlíš tady — provozovna zabere celý dům, takže přijdeš o bydlení. Za bydlení pak budeš platit ${LIVING_COST} Kč denně místo ${nakladyTed} Kč.\n`;
+  }
+
   if(!(await showConfirm(
-    `${volba.t.emoji} ${volba.t.name} za ${cena.toLocaleString('cs-CZ')} Kč?\n\n` +
+    `${volba.t.emoji} ${volba.t.name}${jenPrizemi ? ' v přízemí' : ''} za ${cena.toLocaleString('cs-CZ')} Kč?\n\n` +
     `Poptávka na tomhle místě: ${volba.pop.popis}\n${volba.pop.faktory.join(' · ')}\n\n` +
     `Čistý výnos: ~${volba.denne} Kč/den (po odečtení zásob)\n` +
     `Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně a stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % toho, co provozovna vydělá. Doplňují se na místě.\n\n` +
-    (najemnici ? `⚠️ Vystěhuje ${najemnici} ${najemnici===1?'nájemníka':'nájemníků'}.\n\n` : '') +
-    `Byty zůstanou zachované, na pronájem se dá kdykoliv vrátit.`))) return;
+    (varovani ? varovani + '\n' : '') +
+    (jenPrizemi ? `Byty nahoře zůstávají — dál z nich bereš nájem. Provozovnu můžeš kdykoliv zavřít a přízemí se zase stane bytem.`
+                : `Byty zůstanou zachované, na pronájem se dá kdykoliv vrátit.`)))) return;
 
   me.balance -= cena;
-  asArray(p.units).forEach(u => { if(u){ u.tenant = null; u.npc = null; u.ownerOccupied = false; stampUnit(u); } });
-  p.useType = 'provozovna';
-  p.provoz = { typ: volba.k, zasoby: 100, otevrenoDen: world.day };
+  if(jenPrizemi){
+    // Byty v patrech. Z bydlení v celém domě nebo z domu bez využití se stane pronájem.
+    let byty = asArray(p.units).slice();
+    if(p.useType !== 'rental' || !byty.length){
+      byty = [];
+      for(let i = 0; i < pater; i++) byty.push({ uid: newUnitId(), rentPrice: 0, condition: 100 });
+    }
+    const bydlelVCelem = p.useType === 'residence';
+    const dole = byty.shift();                     // přízemí přestává být bytem
+    const bydlelDole = !!(dole && dole.ownerOccupied);
+    p.useType = 'rental';
+    p.units = byty;
+    p.provoz = { typ: volba.k, zasoby: 100, otevrenoDen: world.day, prizemi: true };
+    // nájmy bytů nad obchodem nastavíme podle férové ceny s ohledem na obchod dole
+    const fer = fairRentForHouse(p);
+    p.units.forEach(u => { if(u && !u.rentPrice) u.rentPrice = fer; });
+    if(bydlelVCelem || bydlelDole){
+      const volny = p.units.find(u => u && !u.tenant && !u.npc && !u.ownerOccupied);
+      if(volny) volny.ownerOccupied = true;
+    }
+    p.units.forEach(u => u && stampUnit(u));
+  } else {
+    asArray(p.units).forEach(u => { if(u){ u.tenant = null; u.npc = null; u.ownerOccupied = false; stampUnit(u); } });
+    p.useType = 'provozovna';
+    p.provoz = { typ: volba.k, zasoby: 100, otevrenoDen: world.day };
+  }
   stampHouse(p);
-  zapisDoDeniku('provoz', `Otevřel jsem ${volba.t.name.toLowerCase()} v domě ${domKratce(p)}`, -cena);
-  addNews('trade', `${volba.t.emoji} ${currentUser.name} otevřel ${volba.t.name.toLowerCase()} v domě ${domKratce(p)}.`);
+  zapisDoDeniku('provoz', `Otevřel jsem ${volba.t.name.toLowerCase()}${jenPrizemi ? ' v přízemí' : ''} v domě ${domKratce(p)}`, -cena);
+  addNews('trade', `${volba.t.emoji} ${currentUser.name} otevřel ${volba.t.name.toLowerCase()}${jenPrizemi ? ' v přízemí' : ''} v domě ${domKratce(p)}.`);
   saveWorld(); refreshAll();
-  showAlert(`${volba.t.emoji} ${volba.t.name} otevřena!\n\nVýnos ti poroste podle poptávky. Nezapomeň chodit doplňovat zásoby — bez nich provozovna nevydělá nic.`);
+  showAlert(`${volba.t.emoji} ${volba.t.name} otevřena!\n\nVýnos ti poroste podle poptávky. Nezapomeň chodit doplňovat zásoby — bez nich provozovna nevydělá nic.` +
+    (jenPrizemi ? `\n\nByty nahoře: ${p.units.length}${p.units.some(u => u.ownerOccupied) ? ', v jednom bydlíš ty' : ''}. Nájem jsem nastavil na férových ${fairRentForHouse(p)} Kč.` : ''));
+}
+
+// Zavřít obchod v přízemí — přízemí se zase stane bytem (prázdným, za férovou cenu).
+async function zavritProvozovnuPrizemi(id){
+  const p = world.parcels[id];
+  if(!p || !p.provoz || !p.provoz.prizemi) return;
+  if(!iAmDecider(p)){ showAlert('Provozovnu může zavřít jen ten, kdo o domě rozhoduje.'); return; }
+  const typ = PROVOZ_TYPY[p.provoz.typ];
+  if(!(await showConfirm(`Zavřít ${typ ? typ.name.toLowerCase() : 'provozovnu'} v přízemí?\n\nPřízemí se zase stane bytem k pronájmu. Za zařízení peníze zpátky nedostaneš.`))) return;
+  delete p.provoz;
+  const byt = { uid: newUnitId(), rentPrice: 0, condition: 100 };
+  p.units = [byt].concat(asArray(p.units));
+  byt.rentPrice = fairRentForHouse(p);
+  stampUnit(byt); stampHouse(p);
+  zapisDoDeniku('provoz', `Zavřel jsem provozovnu v přízemí domu ${domKratce(p)}`, null);
+  saveWorld(); refreshAll();
 }
 
 async function doplnitZasoby(id){
@@ -13512,6 +13646,9 @@ async function setUseType(id, type){
     });
   }
 
+  // Z celé provozovny se změnou využití stává obyčejný dům — data o ní nenecháme viset.
+  // (Obchod v přízemí se takhle nezavírá: zůstane dole i pod bydlením v celém domě.)
+  if(p.useType === 'provozovna' && p.provoz && !p.provoz.prizemi) delete p.provoz;
   p.useType = type;
   stampHouse(p);
   saveWorld(); refreshAll();
