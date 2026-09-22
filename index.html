@@ -677,7 +677,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '10.4';
+const APP_VERSION = '10.7';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -844,13 +844,13 @@ function hasUpgrade(p, key){ return !!(p.upgrades && p.upgrades[key]); }
 // unikátní jména jako "Student Tomáš" / "Studentka Petra" — ne pořád jeden a týž člověk.
 const NPC_TENANT_TYPES = [
   {avatar:'👵', maxRent:50, minCondition:40, needs:[],                    names:['Paní Nováková','Paní Svobodová','Paní Horáková','Paní Marková','Paní Kučerová']},
-  {avatar:'🧑‍🎓', maxRent:40, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam']},
-  {avatar:'👨‍👩‍👧', maxRent:80, minCondition:70, needs:['insulation'],         names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových']},
-  {avatar:'🧑‍💼', maxRent:95, minCondition:75, needs:['insulation','ac'],    names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban']},
+  {avatar:'🎓', maxRent:40, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam']},
+  {avatar:'👪', maxRent:80, minCondition:70, needs:['insulation'],         names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových']},
+  {avatar:'💼', maxRent:95, minCondition:75, needs:['insulation','ac'],    names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban']},
   {avatar:'👴', maxRent:45, minCondition:50, needs:['insulation'],        names:['Důchodce Karel','Důchodkyně Marie','Pan Jaroslav','Paní Věra','Pan Bohumil']},
   {avatar:'💑', maxRent:70, minCondition:60, needs:['renovation'],        names:['Novomanželé Malí','Mladý pár Novákovi','Snoubenci Veselí','Pár Dvořákovi']},
-  {avatar:'🧑‍💻', maxRent:90, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza']},
-  {avatar:'🧑‍🎨', maxRent:60, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela']},
+  {avatar:'💻', maxRent:90, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza']},
+  {avatar:'🎨', maxRent:60, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela']},
 ];
 const NPC_REFRESH_HOURS = 12; // nabídka zájemců se obměňuje
 
@@ -1521,6 +1521,13 @@ const PRESCAS_UNAVA = 0.6;    // kolik zbude z mzdy den po přesčase
 
 const JOB_BAN_DAYS = 7; // po vyčerpání omluvenek a vynechání směny zákaz práce na 7 dní
 const JOB_SICK_DAYS_ALLOWED = 2; // kolik vynechaných směn za sebou appka toleruje, než přijde vyhazov
+// DOVOLENÁ / NEMOC (nápad Evy). Místo vynechané směny si hráč vezme volno — o místo nepřijde
+// a dostane náhradu mzdy. Jako ve skutečnosti: náhrada, ne plný plat, bez příplatku za stáž
+// a bez spropitného, a stáž během volna neroste. Omezené počtem dní, ať to není pohodlnější
+// než do práce chodit — hra je o tom vyjít ven.
+const DOVOLENA_DNU = 5;          // kolik dní volna za posledních 30 dní
+const DOVOLENA_OKNO = 30;
+const DOVOLENA_NAHRADA = 0.5;    // náhrada = polovina základní mzdy
 const SENIORITY_BONUS_PER_SHIFT = 0.4; // Kč navíc k platu za každou odslouženou směnu na AKTUÁLNÍ pozici
 const SENIORITY_BONUS_CAP = 60;        // max příplatek za stáž (Kč/směna)
 const TIP_CHANCE = 0.35;               // 35% šance na bonus/spropitné při směně
@@ -3887,12 +3894,36 @@ function gentrify(p){
   if(!(typeof g === 'number') || !isFinite(g) || g < 1) return 1;
   return Math.min(g, GENTRIFY_MAX);
 }
+// ===== HODNOTA STAVEBNÍCH ÚPRAV =====
+// Dřív do hodnoty domu vylepšení ani přístavby vůbec nevstupovaly — i když rekonstrukce
+// v popisu slibovala „vyšší hodnotu". A protože se férový nájem počítá z hodnoty domu a dělí
+// mezi byty, vestavba podkroví za 30 % ceny domu přidala byt, ale dům pak vydělával o pár
+// korun víc a hodnota zůstala stejná (Eva, v. 10.6).
+// Teď každá úprava zvedne hodnotu o něco MÉNĚ, než stála — jako ve skutečnosti. Nedá se tak
+// koupit, vylepšit a se ziskem prodat, ale investice se promítne do ceny i do nájmu.
+const VYLEPSENI_HODNOTA = { insulation:0.04, ac:0.03, renovation:0.07, solar:0.04 };
+const PRISTAVBA_HODNOTA = 0.25;   // každý byt navíc nad počet pater (vestavba podkroví)
+const PRISTAVBA_MAX = 2;          // víc přístaveb se na dům nevejde
+
+function pristavebNavic(p){
+  if(!p) return 0;
+  const bytu = asArray(p.units).length + (p.provoz && p.provoz.prizemi ? 1 : 0);
+  return Math.max(0, bytu - (p.levels || 1));
+}
+function stavebniMult(p){
+  if(!p) return 1;
+  let m = 1;
+  for(const k in VYLEPSENI_HODNOTA) if(hasUpgrade(p, k)) m += VYLEPSENI_HODNOTA[k];
+  m += Math.min(PRISTAVBA_MAX, pristavebNavic(p)) * PRISTAVBA_HODNOTA;
+  return m;
+}
+
 function effectiveHousePrice(p){
   // Lokální událost dnes zlevňuje/zdražuje jen zasažený okrsek — proto se do ceny
   // promítá tady, ne přes celoměstský marketMultiplier.
   const lok = localEventFor(p);
   const lokMult = lok ? (lok.ev.localPriceMult || 1) : 1;
-  return p.basePrice * gentrify(p) * marketMultiplier() * inflationMult() * lokMult;
+  return p.basePrice * gentrify(p) * marketMultiplier() * inflationMult() * lokMult * stavebniMult(p);
 }
 
 function houseSoldPct(p){ return Object.values(p.owners||{}).reduce((s,v)=>s+v, 0); }
@@ -4240,6 +4271,17 @@ function poptavkaVypocet(p, typId){
       lok ? `${lok.ev.emoji} ${lok.ev.name}` : null
     ].filter(Boolean)
   };
+}
+
+// Ikona, kterou zobrazí i starší telefon. Složené emoji (osoba + spojovník + předmět) a emoji
+// z roku 2017 a novější se na starších Androidech (hlavně Huawei) ukazovaly jako „◆◆◆◆".
+const BEZPECNE_IKONY = { '🧑‍🎓':'🎓', '👨‍👩‍👧':'👪', '🧑‍💼':'💼', '🧑‍💻':'💻', '🧑‍🎨':'🎨', '🧑':'👤' };
+function bezpecnaIkona(a){
+  if(!a) return '👤';
+  if(BEZPECNE_IKONY[a]) return BEZPECNE_IKONY[a];
+  // cokoliv jiného složeného nebo z bloku U+1F900 (2016+) nahradíme obecnou postavou
+  if(a.includes('‍') || [...a].some(c => { const k = c.codePointAt(0); return k >= 0x1F900 && k <= 0x1FAFF; })) return '👤';
+  return a;
 }
 
 // ===== PROVOZOVNA V PŘÍZEMÍ =====
@@ -4982,6 +5024,8 @@ function migrateWorld(){
         if(p.useType === 'provozovna' && (!p.provoz || !PROVOZ_TYPY[p.provoz.typ])){ p.useType = null; delete p.provoz; }
         // Obchod v přízemí s poškozeným typem: zavřít ho, byty zůstanou.
         if(p.provoz && p.provoz.prizemi && !PROVOZ_TYPY[p.provoz.typ]) delete p.provoz;
+        // Nájemníci s novějšími/složenými ikonami — přepsat na staré, které umí každý telefon.
+        asArray(p.units).forEach(u => { if(u && u.npc && u.npc.avatar) u.npc.avatar = bezpecnaIkona(u.npc.avatar); });
         if(p.provoz && typeof p.provoz.zasoby !== 'number') p.provoz.zasoby = 100;
         delete p.shopName; delete p.shopDesc; delete p.goods;
         delete p.hiring; delete p.employeeName; delete p.employeeSalary;
@@ -5431,17 +5475,22 @@ function adoptWorldVnitrni(incoming){
     // jinak si jde na druhém (staršího stavu) telefonu odpracovat směna podruhé.
     if(cloudMe){
       const ja = world.users[myName];
-      const vyssi = (k) => { const a = ja[k], b = cloudMe[k];
+      // S čím slučovat: s tou verzí, která NEVYHRÁLA. Dřív se slučovalo vždycky s cloudem —
+      // a když vyhrál cloud, slučoval se sám se sebou, takže se ztratilo všechno, co bylo jen
+      // v tomhle zařízení: odpracovaná směna (druhý den pak hrozila absence), zápisy v deníku,
+      // vyzvednuté dárky, dovolená… Stávalo se to při hraní na dvou zařízeních.
+      const druhy = (ja === cloudMe) ? myUser : cloudMe;
+      const vyssi = (k) => { const a = ja[k], b = druhy[k];
         if(typeof a === 'number' || typeof b === 'number') ja[k] = Math.max(a || 0, b || 0); };
       // Změna práce má vlastní razítko — vyhrává novější, ať už je novější účet kterýkoliv.
-      if((cloudMe.jobChangedTs || 0) > (ja.jobChangedTs || 0)){
-        ja.currentJobId = cloudMe.currentJobId;
-        ja.currentJobShifts = cloudMe.currentJobShifts;
-        ja.jobStartDay = cloudMe.jobStartDay;
-        ja.jobChangedTs = cloudMe.jobChangedTs;
+      if((druhy.jobChangedTs || 0) > (ja.jobChangedTs || 0)){
+        ja.currentJobId = druhy.currentJobId;
+        ja.currentJobShifts = druhy.currentJobShifts;
+        ja.jobStartDay = druhy.jobStartDay;
+        ja.jobChangedTs = druhy.jobChangedTs;
       }
       // Razítko výpočtu peněz musí jít jen dopředu — jinak by se stejný čas proplatil dvakrát.
-      ja.lastTick = Math.max(ja.lastTick || 0, cloudMe.lastTick || 0);
+      ja.lastTick = Math.max(ja.lastTick || 0, druhy.lastTick || 0);
 
       // Deník a souhrny se SLUČUJÍ, ne přepisují — hráč může hrát na dvou zařízeních
       // a nesmí kvůli tomu o zápisy přijít. Klíčem je čas záznamu.
@@ -5450,21 +5499,40 @@ function adoptWorldVnitrni(incoming){
         [...asArray(bb), ...asArray(aa)].forEach(x => { if(x) mapa.set(klic(x), x); });
         return Array.from(mapa.values()).sort((x, y) => (y.ts || 0) - (x.ts || 0)).slice(0, limit);
       };
-      ja.denik = spojit(ja.denik, cloudMe.denik, x => `${x.ts}|${x.text}`, DENIK_MAX);
-      ja.souhrny = spojit(ja.souhrny, cloudMe.souhrny, x => `den${x.den}`, SOUHRNU_MAX);
+      ja.denik = spojit(ja.denik, druhy.denik, x => `${x.ts}|${x.text}`, DENIK_MAX);
+      ja.souhrny = spojit(ja.souhrny, druhy.souhrny, x => `den${x.den}`, SOUHRNU_MAX);
       ['lastWorkedCalDay','totalShifts','totalDistance',
-       'questBonusDay','streakDay','streakBest','peakWorth'].forEach(vyssi);
+       'questBonusDay','streakDay','streakBest','peakWorth',
+       // nejvyšší dosažená hodnost jen roste — jinak by se po přepnutí zařízení povýšení ohlásilo znovu
+       'nejRank'].forEach(vyssi);
+      // Dny dovolené sjednotit z obou zařízení. Dřív vyhrál celý záznam z novějšího zařízení,
+      // takže dovolená vzatá na telefonu zmizela, když hráč pak hrál na tabletu — a druhý den
+      // se mu počítala absence (hrozil vyhazov), i když si volno řádně vzal.
+      {
+        const dnes = calendarDay();
+        const dny = new Set([...asArray(ja.dovolenaDny), ...asArray(druhy.dovolenaDny)]);
+        ja.dovolenaDny = Array.from(dny).filter(d => d > dnes - DOVOLENA_OKNO).sort((a, b) => a - b);
+      }
+      // Setkání s postavami (Eva) za den taky sjednotit — jinak šlo přepnutím zařízení
+      // dostat odměnu dvakrát.
+      {
+        const a = (ja.npcDen && typeof ja.npcDen === 'object') ? ja.npcDen : {};
+        const b = (druhy.npcDen && typeof druhy.npcDen === 'object') ? druhy.npcDen : {};
+        const spoj = { ...b };
+        Object.keys(a).forEach(k => { spoj[k] = Math.max(a[k] || 0, spoj[k] || 0); });
+        ja.npcDen = spoj;
+      }
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
-      const darky = new Set([...asArray(ja.claimedGifts), ...asArray(cloudMe.claimedGifts)]);
+      const darky = new Set([...asArray(ja.claimedGifts), ...asArray(druhy.claimedGifts)]);
       ja.claimedGifts = Array.from(darky).slice(-100);
       // Splněné denní úkoly taky — jinak šlo tentýž úkol na druhém zařízení splnit znovu.
       // Sjednocujeme jen v rámci téhož dne, jinak by staré splnění blokovalo dnešní úkol.
-      if(ja.questDay === cloudMe.questDay){
-        ja.questDone = Array.from(new Set([...asArray(ja.questDone), ...asArray(cloudMe.questDone)]));
+      if(ja.questDay === druhy.questDay){
+        ja.questDone = Array.from(new Set([...asArray(ja.questDone), ...asArray(druhy.questDone)]));
       }
-      if(ja.pickupDay === cloudMe.pickupDay) ja.pickupGot = Array.from(new Set([...asArray(ja.pickupGot), ...asArray(cloudMe.pickupGot)]));
-      if(ja.lmDay === cloudMe.lmDay)         ja.lmGot     = Array.from(new Set([...asArray(ja.lmGot),     ...asArray(cloudMe.lmGot)]));
-      if(ja.encDay === cloudMe.encDay)       ja.encDone   = Array.from(new Set([...asArray(ja.encDone),   ...asArray(cloudMe.encDone)]));
+      if(ja.pickupDay === druhy.pickupDay) ja.pickupGot = Array.from(new Set([...asArray(ja.pickupGot), ...asArray(druhy.pickupGot)]));
+      if(ja.lmDay === druhy.lmDay)         ja.lmGot     = Array.from(new Set([...asArray(ja.lmGot),     ...asArray(druhy.lmGot)]));
+      if(ja.encDay === druhy.encDay)       ja.encDone   = Array.from(new Set([...asArray(ja.encDone),   ...asArray(druhy.encDone)]));
     }
 
     // I na VLASTNÍM zařízení hráče musí platit admin reset vzdálenosti — jinak by si
@@ -6531,7 +6599,9 @@ function nocniIncident(u){
   if(Math.random() > NOCNI_SANCE * rizikoDomu(p) / 1.6) return;
 
   // Provozovna: vykradené zásoby místo poškození bytu.
-  if(maProvoz(p)){
+  // U obchodu v přízemí může v noci dopadnout na obchod, ale i na byty nahoře —
+  // dřív se vždycky jen vykradl obchod a byty nad ním byly nezranitelné.
+  if(maProvoz(p) && (!p.provoz.prizemi || !asArray(p.units).length || Math.random() < 0.5)){
     const ubylo = Math.round(20 + Math.random() * 30);
     p.provoz.zasoby = Math.max(0, (p.provoz.zasoby ?? 100) - ubylo);
     stampHouse(p);
@@ -6624,6 +6694,8 @@ function onNewDay(catchUp){
         u.missedInRow = 0;
         return true;
       }
+      // Den dovolené je omluvená absence — nepočítá se jako vynechaná směna.
+      if(asArray(u.dovolenaDny).includes(prevCalDay)) return true;
       u.missedInRow = (u.missedInRow || 0) + 1;
       if(u.missedInRow > JOB_SICK_DAYS_ALLOWED){
         u.jobBanUntil = world.day + JOB_BAN_DAYS;
@@ -7987,7 +8059,18 @@ function renderSelected(id){
 
   let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>`;
   html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
-  html += `<p style="font-size:0.92em;color:var(--muted)">${p.levels||1} ${(p.levels||1)===1?'patro':'patra/pater'} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(housePricePerPercent(p))} Kč</p>`;
+  html += `<p style="font-size:0.92em;color:var(--muted)">${p.levels||1} ${(p.levels||1)===1?'patro':'patra/pater'}${
+    pristavebNavic(p) ? ` + ${pristavebNavic(p)} ${pristavebNavic(p)===1?'přístavba':'přístavby'}` : ''} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(housePricePerPercent(p))} Kč</p>`;
+  // Kolik z hodnoty dělají úpravy — hráčka se ptala, proč se hodnota po investicích nehne.
+  {
+    const sm = stavebniMult(p);
+    if(sm > 1.001){
+      const casti = Object.keys(VYLEPSENI_HODNOTA).filter(k => hasUpgrade(p, k)).map(k => `${HOUSE_UPGRADES[k].icon} +${Math.round(VYLEPSENI_HODNOTA[k]*100)} %`);
+      const pr = Math.min(PRISTAVBA_MAX, pristavebNavic(p));
+      if(pr) casti.push(`🏗️ přístavby +${Math.round(pr * PRISTAVBA_HODNOTA * 100)} %`);
+      html += `<p style="font-size:0.86em;color:var(--accent2);margin:2px 0;">🔨 Úpravy zvedají hodnotu o <b>${Math.round((sm-1)*100)} %</b> (≈ ${Math.round(effectiveHousePrice(p) * (1 - 1/sm)).toLocaleString('cs-CZ')} Kč): ${casti.join(' · ')}</p>`;
+    }
+  }
   const popInfo = popularityInfo(p);
   html += `<p style="font-size:0.92em;"><span style="color:${popInfo.color}">${popInfo.stars} ${popInfo.label}</span> <span style="color:var(--muted)">— historie zájmu o tuhle lokalitu (trvalé, neodeznívá)</span></p>`;
   const cyc = marketCycleLabel();
@@ -8293,11 +8376,13 @@ function renderSelected(id){
         if(k === 'insulation') efekt = `Nižší účty za energie — ušetříš <b>${Math.round(INSULATION_LIVING_SAVE*100)} %</b> životních nákladů.`;
         else if(k === 'ac') efekt = `Komfort navíc — ušetříš <b>${Math.round(AC_LIVING_SAVE*100)} %</b> životních nákladů.${p.useType === 'rental' ? ' U pronajímaných bytů zvedne snesitelný nájem.' : ''}`;
         else if(k === 'solar') efekt = `Vlastní elektřina — ušetříš <b>${Math.round(SOLAR_LIVING_SAVE*100)} %</b> životních nákladů a dům ti navíc <b>vydělává každý den</b>.`;
-        else if(k === 'renovation') efekt = p.useType === 'rental' ? up.desc : 'Kvalitní materiály — dům chátrá pomaleji a má vyšší hodnotu.';
+        else if(k === 'renovation') efekt = p.useType === 'rental' ? up.desc : 'Kvalitní materiály — dům chátrá pomaleji.';
       }
       html += `<div style="border:1px solid ${has?'var(--accent)':'var(--border)'};border-radius:8px;padding:8px;margin-top:6px;">
         <p style="margin:0;font-weight:600;color:${has?'var(--accent)':'var(--text)'}">${up.icon} ${up.name} ${has?'✓ máš':''}</p>
         <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${efekt}</p>
+        ${VYLEPSENI_HODNOTA[k] ? `<p style="margin:2px 0;font-size:0.84em;color:var(--accent2)">🏷️ ${has ? 'Zvedlo' : 'Zvedne'} hodnotu domu o <b>${Math.round(VYLEPSENI_HODNOTA[k]*100)} %</b>${
+          has ? '' : ` (≈ ${Math.round(effectiveHousePrice(p) / stavebniMult(p) * VYLEPSENI_HODNOTA[k]).toLocaleString('cs-CZ')} Kč)`}${p.useType === 'rental' ? ' — o tolik vzroste i férový nájem' : ''}.</p>` : ''}
         ${(() => {
           // Konkrétní čísla pro TENHLE dům. Bez nich hráč nepozná, jestli se 912 Kč
           // vrátí za měsíc, nebo za rok — a radši nekoupí nic.
@@ -8385,7 +8470,7 @@ function renderSelected(id){
         // Dřív tu stálo „platí spolehlivě plný nájem" — od 9.9 to u přemrštěného nájmu neplatí.
         const unese = Math.round(npcMaxNajem(p, u));
         const plati = Math.round(vybranyNajem(p, u));
-        occupantLine = `Bydlí zde: <b>${escapeHtml(u.npc.avatar||'🧑')} ${escapeHtml(u.npc.name)}</b> ` + (plati < (u.rentPrice || 0)
+        occupantLine = `Bydlí zde: <b>${escapeHtml(bezpecnaIkona(u.npc.avatar))} ${escapeHtml(u.npc.name)}</b> ` + (plati < (u.rentPrice || 0)
           ? `<br><span style="font-size:0.88em;color:var(--danger)">Platí jen <b>${plati} Kč</b> — víc neunese a rozdíl nezaplatí. Když nesleviš, odstěhuje se.</span>`
           : `<span style="font-size:0.85em;color:var(--muted)">(platí celý nájem, unese zhruba do ${unese} Kč)</span>`);
       }
@@ -8480,7 +8565,8 @@ function renderSelected(id){
     <p><b>📊 Trh (${cyc.label})</b> — nálada v celém městě. Střídá se sama a hýbe cenami všech domů (teď ×${marketMultiplier().toFixed(2)}). V recesi se levněji nakupuje, v konjunktuře dráž prodává.</p>
     <p><b>🔥 Zvýšený zájem</b> — když někdo koupí podíl poblíž, okolní domy krátce podraží. Bez dalších nákupů to samo odezní.</p>
     <p><b>🚧 Lokální událost</b> — rekonstrukce, nový park nebo havárie. Platí jen dnes a jen v okruhu, který je vyznačený na mapě.</p>
-    <div class="ex">Trvalý základ ceny mění jen <b>skutečné prodeje</b>: co se za dům reálně zaplatí, posune jeho hodnotu. Zbytek jsou dočasné vlivy.</div>
+    <p><b>🔨 Vylepšení a přístavby</b> — zvedají hodnotu natrvalo: zateplení +4 %, klimatizace +3 %, rekonstrukce +7 %, solár +4 %, každý byt přistavěný do podkroví +25 % (nejvýš dva). Hodnota vzroste vždycky o něco méně, než úprava stála — jako ve skutečnosti. S hodnotou roste i férový nájem.</p>
+    <div class="ex">Trvalý základ ceny mění <b>skutečné prodeje</b> a <b>stavební úpravy</b>. Zbytek jsou dočasné vlivy — hlavně tržní cyklus: v recesi (×0,75) je dům levnější i po investicích, v konjunktuře zase dražší.</div>
   `);
 
   html += infoBox('Jak funguje pronájem a čekání na nájemníka?', `
@@ -8539,6 +8625,12 @@ function renderSelected(id){
     <p><b>Prodej.</b> Podíl můžeš prodat zpátky městu (hned, ale za nižší cenu) nebo nabídnout na tržišti ostatním hráčům (za víc, ale musíš počkat).</p>
   `);
   setHtml(el, html);
+}
+
+const mineOtevrene = new Set();
+function mineToggle(el){
+  if(!el || !el.dataset) return;
+  if(el.open) mineOtevrene.add(el.dataset.id); else mineOtevrene.delete(el.dataset.id);
 }
 
 function renderMine(){
@@ -8772,7 +8864,9 @@ function renderMine(){
       <button class="secondary" onclick="flyToParcel('${p.id}')">Na mapě</button></div>`;
 
     // --- sbalený řádek ---
-    return `<details class="mineDum"${d.problemy.length ? ' data-problem="1"' : ''}>
+    // Pamatujeme si, které domy má hráč rozbalené. Přehled se každých pár vteřin překresluje
+    // a dřív se při tom všechny řádky zase zavřely — nešlo nic v klidu přečíst.
+    return `<details class="mineDum" data-id="${p.id}"${mineOtevrene.has(p.id) ? ' open' : ''} ontoggle="mineToggle(this)"${d.problemy.length ? ' data-problem="1"' : ''}>
       <summary>
         <span class="mineIko">${ikona}</span>
         <span class="mineJm"><b>${domLabel(p)}</b><br>
@@ -8949,8 +9043,9 @@ function renderJobs(){
     let attendanceNote;
     if(weekend) attendanceNote = `<p style="font-size:0.92em;color:var(--accent2)">🌴 Víkend — volno. Do práce se dá zase v pondělí.</p>`;
     else if(workedToday) attendanceNote = `<p style="font-size:0.92em;color:var(--accent)">✅ Dnes odpracováno</p>`;
+    else if(asArray(me.dovolenaDny).includes(calendarDay())) attendanceNote = `<p style="font-size:0.92em;color:var(--accent2)">🏖️ Dnes máš dovolenou — místo ti zůstává.</p>`;
     else if(missed > 0) attendanceNote = `<p style="font-size:0.92em;color:var(--danger)">⚠️ Vynechal jsi ${missed}/${JOB_SICK_DAYS_ALLOWED} omluvených směn v řadě — další vynechání = vyhazov!</p>`;
-    else attendanceNote = `<p style="font-size:0.92em;color:var(--gold)">⚠️ Dnes ještě musíš odpracovat směnu (toleruje se ${JOB_SICK_DAYS_ALLOWED} vynechání v řadě, pak vyhazov).</p>`;
+    else attendanceNote = `<p style="font-size:0.92em;color:var(--gold)">⚠️ Dnes ještě musíš odpracovat směnu (toleruje se ${JOB_SICK_DAYS_ALLOWED} vynechání v řadě, pak vyhazov). Když nemůžeš, vezmi si dovolenou.</p>`;
     const canWorkNow = !workedToday && !weekend && nearCityHall;
     // Dnešní mzdový násobek musí být vidět PŘED směnou, ne až v hlášení po ní.
     const mzdaMult = eventMult('wageMult');
@@ -8959,6 +9054,16 @@ function renderJobs(){
       <p>Plat: <b style="color:var(--gold)">${Math.round(j.salary*inflationMult()*mzdaMult)} Kč</b> / směna${seniorityBonus>=1?` + <span style="color:var(--accent)">${Math.round(seniorityBonus*inflationMult()*mzdaMult)} Kč stáž</span>`:''}</p>
       ${mzdaEv ? `<p style="font-size:0.92em;color:var(--gold);margin:2px 0;">${mzdaEv.emoji} ${mzdaEv.name}: dnes ${mzdaMult > 1 ? '+' : ''}${Math.round((mzdaMult-1)*100)} % ke mzdě (běžně ${Math.round(j.salary*inflationMult())} Kč)</p>` : ''}
       <p style="font-size:0.92em;color:var(--muted)">Odsloužené směny na téhle pozici: ${seniorityShifts} (příplatek roste, max ${SENIORITY_BONUS_CAP} Kč) · šance na spropitné ${Math.round((j.tipChance || TIP_CHANCE)*100)} %</p>
+      ${(() => {
+        const h = asArray(me.tipyHistorie);
+        if(!h.length) return '';
+        const kolikrat = h.filter(x => x > 0).length;
+        const soucet = h.reduce((a, x) => a + x, 0);
+        return `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🎉 Spropitné za posledních ${h.length} ${h.length === 1 ? 'směnu' : (h.length < 5 ? 'směny' : 'směn')}:
+          <b style="color:var(--gold)">${kolikrat}×</b>${soucet ? `, dohromady <b>${soucet} Kč</b>` : ''}
+          <span style="letter-spacing:1px;">${h.slice(-10).map(x => x > 0 ? '🎉' : '·').join('')}</span></p>
+          <p style="font-size:0.82em;color:var(--muted);margin:0 0 2px;">Je to náhoda — při ${Math.round((j.tipChance || TIP_CHANCE)*100)} % šanci klidně přijde pár směn za sebou bez spropitného a pak zase víc najednou.</p>`;
+      })()}
       ${attendanceNote}
       <div class="row">
         <button ${canWorkNow || (workedToday && !weekend && me.prescasDen !== calendarDay() && ban===0) ?'':'disabled'} onclick="workShift('${j.id}')">${
@@ -8967,8 +9072,11 @@ function renderJobs(){
               ? (me.prescasDen === calendarDay() ? '✅ Hotovo i s přesčasem' : `⏰ Vzít přesčas (+${Math.round((PRESCAS_BONUS-1)*100)} %)`)
               : `Odpracovat směnu (u ${mojeMisto.nazev})`)}</button>
         ${j.soukrome ? `<button class="secondary" onclick="flyToBusiness('${j.bizId}')">Kde to je</button>` : ''}
+        ${!weekend && !workedToday && !asArray(me.dovolenaDny).includes(calendarDay())
+          ? `<button class="secondary" ${dovolenaZbyva(me) > 0 ? '' : 'disabled'} onclick="vzitDovolenou('${j.id}')">🏖️ Dovolená / nemoc (${dovolenaZbyva(me)}/${DOVOLENA_DNU})</button>` : ''}
         <button class="danger" onclick="quitJob('${j.id}')">Dát výpověď</button>
       </div>
+      ${!weekend && !workedToday ? `<p style="font-size:0.82em;color:var(--muted);margin:4px 0 0;">🏖️ Dovolenou si vezmeš odkudkoliv, nemusíš k práci. Místo si udržíš a dostaneš ${Math.round(DOVOLENA_NAHRADA*100)} % základní mzdy. ${DOVOLENA_DNU} dní za ${DOVOLENA_OKNO} dní.</p>` : ''}
     </div>`;
   }
 
@@ -9312,7 +9420,9 @@ function recordSale(p, totalPrice, pct, od, komu, hybeCenou = true){
   // zapsala do `basePrice` NATRVALO a dům by po skončení události zůstal levnější.
   const lokU = localEventFor(p);
   const lokMult = lokU ? (lokU.ev.localPriceMult || 1) : 1;
-  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult() * lokMult);
+  // Dělíme i stavebními úpravami: ty se do ceny přidávají zvlášť, takže kdyby zůstaly
+  // v basePrice, započítaly by se po prodeji dvakrát.
+  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult() * lokMult * stavebniMult(p));
   const structuralBase = structuralPerPct * 100; // odpovídající basePrice
   // posun basePrice o 30 % k realizované ceně (zbytek setrvačnost — jeden prodej cenu neurčí úplně)
   if(hybeCenou) p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
@@ -10097,7 +10207,7 @@ function lockAdmin(){
 const PROJECT_DEFS = {
   podkrovi: {
     name:'Vestavba podkroví', icon:'🏗️', days:5, costRatio:0.30,
-    desc:'Přidá domu další byt k pronájmu.',
+    desc:'Přidá domu další byt k pronájmu a zvedne jeho hodnotu o 25 % (a s ní i nájem). Nejvýš 2 přístavby na dům.',
     apply:(p) => {
       if(!p.units) p.units = [];
       p.units.push({ uid: newUnitId(), rentPrice: fairRentForHouse(p), condition: 100 });
@@ -10137,6 +10247,9 @@ async function startProject(houseId, key){
   if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
   if(!iHaveMajority(p)){ showAlert('Projekt může spustit jen většinový vlastník (přes 50 %).'); return; }
   if(p.project){ showAlert('Na tomhle domě už jeden projekt běží.'); return; }
+  if(key === 'podkrovi' && pristavebNavic(p) >= PRISTAVBA_MAX){
+    showAlert(`Víc bytů se do domu nevejde — už má ${PRISTAVBA_MAX} přístavby navíc.`); return;
+  }
   const me = world.users[currentUser.name];
   const cost = projectCost(p, key);
   if(me.balance < cost){ showAlert(`Na projekt potřebuješ ${cost.toLocaleString('cs-CZ')} Kč.`); return; }
@@ -11966,29 +12079,47 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
-  { verze:'10.4', datum:'2026-09-16', body:[
+  { verze:'10.7', datum:'2026-09-22', body:[
+    ['oprava','Při hraní na dvou zařízeních se mohla ztratit odpracovaná směna — a druhý den se pak počítala absence, i když jsi v práci byl. Stejně mizely zápisy v deníku, vyzvednuté dárky i vzatá dovolená. Když vyhrála verze z druhého zařízení, slučovala se sama se sebou. Teď se vždycky slučují obě.'],
+    ['oprava','Po vzaté dovolené šlo ještě týž den jít do práce a dostat náhradu i plnou mzdu. Teď den dovolené znamená volno.'],
+    ['oprava','Nejvyšší dosažená hodnost se po přepnutí zařízení mohla snížit a povýšení se pak ohlásilo znovu. Setkání s Evou šlo přepnutím zařízení vybrat dvakrát.'],
+    ['oprava','V domě s obchodem v přízemí noční události vždycky jen vykradly obchod — byty nahoře nemohly utrpět škodu. Teď to padne na jedno, nebo na druhé.'],
+  ]},
+  { verze:'10.6', datum:'2026-09-22', body:[
+    ['oprava','Vestavba podkroví za 30 % ceny domu přidala byt, ale dům pak vydělával jen o pár korun víc — nájem celého domu se jen rozdělil mezi víc bytů — a hodnota se nezměnila. Teď každý přistavěný byt zvedne hodnotu domu o 25 % a s ní i nájem. Na dům se vejdou nejvýš dvě přístavby.'],
+    ['oprava','Vylepšení nezvedala hodnotu domu, i když to rekonstrukce slibovala. Teď zateplení +4 %, klimatizace +3 %, rekonstrukce +7 %, solár +4 %. Hodnota vždycky vzroste o něco méně, než úprava stála, a s ní roste i férový nájem.'],
+    ['info','V detailu domu je vidět, o kolik úpravy zvedají jeho hodnotu. Pozor na tržní cyklus: v recesi (×0,75) je dům levnější i po investicích.'],
+    ['oprava','Rozbalené domy v „Moje nemovitosti“ se po pár vteřinách samy zavíraly. Teď zůstanou otevřené, dokud je nezavřeš.'],
+    ['oprava','Některé ikony nájemníků (student, rodina, grafik…) se na starších telefonech ukazovaly jako „◆◆◆◆". Nahrazeny ikonami, které umí každý telefon.'],
+  ]},
+  { verze:'10.5', datum:'2026-09-22', body:[
+    ['novinka','🏖️ DOVOLENÁ / NEMOC (nápad Evy). Když se do práce nedostaneš, vezmi si volno tlačítkem v kartě práce — odkudkoliv, nemusíš k práci. Místo si udržíš a dostaneš náhradu 50 % základní mzdy. 5 dní za 30 dní, stáž během volna neroste.'],
+    ['oprava','Spropitné chodilo správně (kolem 35 % směn), ale nebylo vidět — ukázalo se jen ve zprávě po směně. Teď je v deníku u každé směny a v kartě práce je přehled za posledních 20 směn.'],
+    ['oprava','Poslední verze měly v přehledu novinek špatné datum (16. září místo 22.).'],
+  ]},
+  { verze:'10.4', datum:'2026-09-22', body:[
     ['oprava','U domu, ve kterém bydlíš, se vůbec neukazovalo tlačítko „Otevřít provozovnu“ — bylo schované v části, která se u bydlení nezobrazuje. Hráči tak často ani nevěděli, že provozovna existuje. Teď je vidět u každého domu, kde máš většinu.'],
   ]},
-  { verze:'10.3', datum:'2026-09-16', body:[
+  { verze:'10.3', datum:'2026-09-22', body:[
     ['novinka','🏘️ PROVOZOVNA V PŘÍZEMÍ. Ve vícepatrovém domě si při otevírání vybereš, jestli provozovna zabere celý dům, nebo jen přízemí. Nahoře pak zůstanou byty — můžeš v nich dál bydlet nebo je pronajímat.'],
     ['info','Přízemí je komerčně nejcennější patro (vstup z ulice, výloha), proto vydělá víc než jeho poměrná část: ve dvoupatrovém domě 67 % toho, co celá provozovna, ve třípatrovém 50 %, ve čtyřpatrovém 40 %. Zařízení i zásoby stojí úměrně méně a k tomu máš nájem z bytů nahoře.'],
     ['info','Obchod v přízemí se dá kdykoliv zavřít — přízemí se zase stane bytem.'],
   ]},
-  { verze:'10.2', datum:'2026-09-16', body:[
+  { verze:'10.2', datum:'2026-09-22', body:[
     ['oprava','Když sis otevřel provozovnu v domě, kde bydlíš, přišel jsi o bydlení a životní náklady ti skočily na dvojnásobek — a hra tě varovala jen před vystěhováním nájemníků. Teď předem napíše, že bydlení ztratíš a kolik budeš platit.'],
   ]},
-  { verze:'10.1', datum:'2026-09-16', body:[
+  { verze:'10.1', datum:'2026-09-22', body:[
     ['oprava','Nápověda k pronájmu radila, že se vyplatí nájem i výrazně nad férovou cenou — to po změně ve 9.9 už neplatí. Přepsáno: nájemník unese zhruba o čtvrtinu víc, víc nezaplatí, a plný dům dostává bonus.'],
     ['oprava','U nájemníka v detailu domu stálo „platí spolehlivě plný nájem“, i když u přemrštěného nájmu platí jen část. Teď je napsané, kolik doopravdy platí a kolik unese.'],
     ['novinka','Dialog na nastavení nájmu říká, kolik nájemníci unesou. Když zdražuješ obsazený byt nad tuhle hranici, hra se ještě zeptá s konkrétními čísly, kolik ti nájemník opravdu zaplatí.'],
     ['oprava','Výhled „při plném obsazení“ sčítal požadovanou cenu, i když by ji nikdo nezaplatil. Teď počítá s tím, kolik nájemníci unesou.'],
     ['info','V Průvodci je u nájmu vysvětlené, kolik nájemníci unesou, že víc nezaplatí, a jak funguje bonus za plný dům.'],
   ]},
-  { verze:'10.0', datum:'2026-09-16', body:[
+  { verze:'10.0', datum:'2026-09-22', body:[
     ['novinka','🎖️ HODNOSTI. Podle čistého jmění teď máš hodnost: 🎒 Nováček → 🪙 Střadatel → 🏠 Majitel → 🏘️ Pronajímatel → 📊 Investor → 💼 Manažer → 🏢 Podnikatel → 🎩 Magnát → 👑 Tycoon Bučovic.'],
     ['info','Hodnost je vidět u tvého jména nahoře, v profilu (i s tím, kolik ti chybí do další), v žebříčku a v chatu. Když postoupíš, napíšou o tom noviny. Starší hodnosti z profilu (Střádal, Podnikavec, Realitní král) nahradil tenhle nový seznam.'],
   ]},
-  { verze:'9.9', datum:'2026-09-16', body:[
+  { verze:'9.9', datum:'2026-09-22', body:[
     ['oprava','Přemrštěný nájem se dal pořád obejít: po nastěhování zdražit na trojnásobek, pár dní vybírat, po odchodu zlevnit a nastěhovat dalšího. Simulace ukázala, že to vynášelo 2,1× víc než férová cena. Teď nájemník víc, než unese, prostě nezaplatí — rozdíl odmítne a jen se rozhlíží jinde. Zdražení nad hranici tak nic nepřinese, jen riziko odchodu. Férová cena s bonusem za plný dům teď vydělá nejvíc.'],
     ['oprava','Nájemníci ze stejně očíslovaných bytů v různých domech odcházeli ve stejný den — los o odchodu bral jen délku čísla domu. Teď každý dům hází vlastní kostkou.'],
   ]},
@@ -12529,6 +12660,8 @@ function renderGuide(){
     <p><b>Povýšení.</b> Na vyšší městskou pozici přejdeš rovnou, bez výpovědi — a <b>polovinu odsloužené praxe si neseš s sebou</b>. Když dáš výpověď a nastoupíš jinam, praxe se ztratí celá.</p>
     <p><b>Přesčas.</b> Když už máš směnu za sebou, můžeš vzít druhou za <b>+${Math.round((PRESCAS_BONUS-1)*100)} %</b> mzdy. Zítra ale budeš unavený a z první směny dostaneš jen ${Math.round(PRESCAS_UNAVA*100)} %.</p>
     <p><b>Docházka.</b> Když ${JOB_SICK_DAYS_ALLOWED}× po sobě nepřijdeš do práce v pracovní den, dostaneš výpověď a ${JOB_BAN_DAYS} dní si nemůžeš najít novou.</p>
+    <p><b>🏖️ Dovolená / nemoc.</b> Když se do práce nedostaneš, vezmi si volno — tlačítkem v kartě práce, odkudkoliv. Místo si udržíš a dostaneš náhradu ${Math.round(DOVOLENA_NAHRADA*100)} % základní mzdy (bez příplatku za stáž a spropitného). Můžeš si vzít ${DOVOLENA_DNU} dní za ${DOVOLENA_OKNO} dní; stáž během volna neroste.</p>
+    <p><b>🎉 Spropitné.</b> Každá směna má šanci na spropitné (podle práce 25–55 %). Je to náhoda, takže klidně přijde pár směn za sebou bez něj a pak zase víc najednou. Kolik jsi ho dostal za poslední směny, vidíš v kartě práce.</p>
   `);
 
   html += guideSection('🏠','Bydlení — proč se vyplatí mít domov', `
@@ -14013,6 +14146,48 @@ async function quitJob(jobId){
   saveWorld(); renderJobs();
 }
 
+function dovolenaZbyva(u){
+  const dnes = calendarDay();
+  const vyuzito = asArray(u && u.dovolenaDny).filter(d => d > dnes - DOVOLENA_OKNO).length;
+  return Math.max(0, DOVOLENA_DNU - vyuzito);
+}
+
+async function vzitDovolenou(jobId){
+  const me = world.users[currentUser.name];
+  if(!me) return;
+  const pjob = String(jobId).startsWith('pj_') ? privateJobById(jobId) : null;
+  const job = pjob || world.jobs[jobId];
+  if(!job || me.currentJobId !== jobId){ showAlert('Dovolenou si můžeš vzít jen v práci, kterou máš.'); return; }
+  const dnes = calendarDay();
+  if(isWeekend()){ showAlert('O víkendu je volno i bez dovolené.'); return; }
+  if(me.lastWorkedCalDay === dnes){ showAlert('Dnes už máš odpracováno — dovolená nedává smysl.'); return; }
+  if(asArray(me.dovolenaDny).includes(dnes)){ showAlert('Na dnešek už dovolenou máš.'); return; }
+  const zbyva = dovolenaZbyva(me);
+  if(zbyva <= 0){
+    showAlert(`Dovolenou už máš vyčerpanou — ${DOVOLENA_DNU} dní za posledních ${DOVOLENA_OKNO} dní. Další den volna se uvolní, až uplyne měsíc od toho nejstaršího.`);
+    return;
+  }
+  const nahrada = Math.round(job.salary * DOVOLENA_NAHRADA * inflationMult());
+  if(!(await showConfirm(
+    `🏖️ Vzít si dnes dovolenou?
+
+` +
+    `Místo si udržíš a dostaneš náhradu ${nahrada} Kč (polovina základní mzdy — bez příplatku za stáž a bez spropitného).
+` +
+    `Stáž během volna neroste.
+
+` +
+    `Zbývá ti ${zbyva} z ${DOVOLENA_DNU} dní za posledních ${DOVOLENA_OKNO} dní.`))) return;
+  me.dovolenaDny = asArray(me.dovolenaDny).filter(d => d > dnes - DOVOLENA_OKNO).concat([dnes]);
+  me.balance += nahrada;
+  pricti(me, 'mzdy', nahrada);
+  zapisDoDeniku('work', `🏖️ Dovolená — ${job.name} (náhrada mzdy)`, nahrada);
+  saveWorld(); refreshAll();
+  showAlert(`🏖️ Užij si volno! Náhrada ${nahrada} Kč je na účtu.
+
+Zbývá ti ${zbyva - 1} ${zbyva - 1 === 1 ? 'den' : (zbyva - 1 >= 2 && zbyva - 1 <= 4 ? 'dny' : 'dní')} dovolené.`);
+}
+
 async function workShift(jobId){
   const pjob = String(jobId).startsWith('pj_') ? privateJobById(jobId) : null;
   const misto = jobPlace(pjob || world.jobs[jobId]);
@@ -14024,6 +14199,8 @@ async function workShift(jobId){
   const job = pjob || world.jobs[jobId];
   const me = world.users[currentUser.name];
   const today = calendarDay();
+  // Kdo si vzal dovolenou, ten dnes nepracuje — jinak by dostal náhradu I plnou mzdu.
+  if(asArray(me.dovolenaDny).includes(today)){ showAlert('🏖️ Dnes máš dovolenou — náhradu mzdy už máš. Do práce zase zítra.'); return; }
   // PŘESČAS: druhá směna v jednom dni. Vyšší sazba, ale druhý den jsi unavený
   // a vyděláš míň — takže se nedá jet přesčas každý den donekonečna.
   let jePrescas = false;
@@ -14093,7 +14270,11 @@ async function workShift(jobId){
     me.unavaDen = today + 1;   // zítra nižší mzda
   }
   pricti(me, 'mzdy', total);
-  zapisDoDeniku('work', jePrescas ? `Vzal jsem přesčas — ${job.name}` : `Odpracoval jsem směnu — ${job.name}`, total);
+  // Spropitné bylo vidět jen ve vyskakovací zprávě po směně — v deníku ani v práci po něm
+  // nezůstala stopa, a když pár směn za sebou nepřišlo, vypadalo to, že vůbec nechodí.
+  zapisDoDeniku('work', (jePrescas ? `Vzal jsem přesčas — ${job.name}` : `Odpracoval jsem směnu — ${job.name}`) +
+    (gotTip && spropKc >= 1 ? ` (🎉 spropitné +${spropKc} Kč)` : ''), total);
+  me.tipyHistorie = asArray(me.tipyHistorie).concat([gotTip && spropKc >= 1 ? spropKc : 0]).slice(-20);
   playSound(gotTip ? 'coin' : 'work');
   showAlert(msg);
 }
