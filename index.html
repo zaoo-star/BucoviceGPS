@@ -695,7 +695,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '11.5';
+const APP_VERSION = '11.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -9287,6 +9287,32 @@ function ukazZakazku(id){
 }
 
 // Skok na místo ze zprávy v novinách — buď dům, nebo bod na mapě (park, zakázka, firma).
+// Adresy domů → id. Postaví se jednou a přestaví, až když adres přibude.
+let _adresyRejstrik = null, _adresyPocet = -1;
+function adresyRejstrik(){
+  const pocet = Object.keys(ADRESY || {}).length;
+  if(_adresyRejstrik && _adresyPocet === pocet) return _adresyRejstrik;
+  const m = [];
+  for(const id in (ADRESY || {})){
+    const a = ADRESY[id];
+    if(a && a.length >= 4) m.push([a, id]);
+  }
+  m.sort((x, y) => y[0].length - x[0].length);   // delší adresa má přednost (Krátká 259 před Krátká 25)
+  _adresyRejstrik = m; _adresyPocet = pocet;
+  return m;
+}
+
+// Najde v textu zprávy dům — buď podle adresy, nebo podle zápisu „#1234".
+function domZeZpravy(text){
+  if(!text) return '';
+  const cislo = String(text).match(/#(\d+)/);
+  if(cislo && world.parcels['h_' + cislo[1]]) return 'h_' + cislo[1];
+  for(const [adresa, id] of adresyRejstrik()){
+    if(world.parcels[id] && text.includes(adresa)) return id;
+  }
+  return '';
+}
+
 function ukazMistoZpravy(el){
   if(!el || !el.dataset) return;
   const dum = el.dataset.dum;
@@ -12481,6 +12507,9 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'11.6', datum:'2026-09-22', body:[
+    ['oprava','Odkaz na místo se přidával jen zprávám, které vznikly po aktualizaci — všechny starší zůstaly nerozklikávací. Teď hra dům dohledá z adresy přímo v textu zprávy, takže fungují i staré zprávy v novinách.'],
+  ]},
   { verze:'11.5', datum:'2026-09-22', body:[
     ['novinka','🎨 BARVY HRÁČŮ. Domy na mapě jsou obarvené podle toho, kdo v nich rozhoduje — svoje i cizí. Na první pohled je vidět, kdo drží kterou část města. Svoje domy poznáš dál podle zlatého rámečku.'],
     ['info','Barvu si vybereš v profilu (klepni na své jméno nahoře) z deseti odstínů. Kdo si žádnou nevybral, dostane ji podle jména, takže mapa je barevná hned. Barevná tečka je i u jmen v žebříčku a v chatu, ať je poznat, komu barva patří.'],
@@ -12821,7 +12850,10 @@ function renderNews(){
     const st = NEWS_STYLE[n.type] || {color:'var(--text)'};
     // Zprávu s místem jde rozkliknout — mapa na něj skočí a označí ho. Cíl dáváme do
     // data-atributů a obsluha má pevné jméno, ať je v souboru dohledatelná.
-    const dum = (typeof n.kde === 'string' && world.parcels[n.kde]) ? n.kde : '';
+    // Starší zprávy (a zprávy z jiných verzí) odkaz na místo uložený nemají — dům se dá
+    // dohledat z adresy v textu. Bez toho by se to, co se změnilo, projevilo až u zpráv,
+    // které teprve vzniknou.
+    const dum = (typeof n.kde === 'string' && world.parcels[n.kde]) ? n.kde : (safeCall(() => domZeZpravy(n.text)) || '');
     const bod = (n.kde && typeof n.kde === 'object' && isFinite(n.kde.lat)) ? n.kde : null;
     const klik = !!(dum || bod);
     html += `<div class="card" style="border-left:3px solid ${st.color};padding:8px 10px;margin-bottom:6px;${klik ? 'cursor:pointer;' : ''}"${
