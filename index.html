@@ -738,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.0';
+const APP_VERSION = '12.1';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -9250,6 +9250,11 @@ function renderMine(){
     const zasoby = provoz ? Math.round(p.provoz.zasoby ?? 100) : null;
     // Hypotéka na tenhle dům. Splátka se počítá stejně jako v ticku: 0,8 % jistiny denně,
     // nejvýš zbytek dluhu. Dřív tady chyběla úplně, takže přehled sliboval víc, než přišlo.
+    // Kolik denně „projí" chátrání bytů. Neodečítá se o půlnoci (opravy platíš, až je uděláš),
+    // ale bez téhle informace hráč nevidí, že mu údržba ukrajuje zhruba třetinu nájmu.
+    const obydlenych = byty.filter(u => u && (u.tenant || u.npc || u.ownerOccupied)).length;
+    const udrzba = obydlenych * RENT_DECAY * REPAIR_COST_PER_POINT
+                   * (hasUpgrade(p, 'renovation') ? RENOVATION_DECAY_MULT : 1) * dil;
     const hypo = mortgageForHouse(world.users[ja], p.id);
     const hypoSplatka = hypo ? Math.min(hypo.principal * MORTGAGE_MIN_PAYMENT_RATIO, hypo.balance) : 0;
     const hypoUrok = hypo ? hypo.balance * (hypo.dailyRate || 0) : 0;
@@ -9262,7 +9267,7 @@ function renderMine(){
     if(!p.useType && pct > 50) problemy.push('bez využití');
     return { p, pct, dil, byty, obsazene, mojeByty, prazdne, rozbite, najemCelkem, najemPlne,
              provoz, provozCisty, provozDnesKc, solar, hodnota, dan, prijem, zasoby, problemy,
-             hypo, hypoSplatka, hypoUrok, bonusMult };
+             hypo, hypoSplatka, hypoUrok, bonusMult, udrzba };
   }).sort((a, b) => b.prijem - a.prijem);
 
   const sum = k => data.reduce((a, d) => a + d[k], 0);
@@ -9291,6 +9296,7 @@ function renderMine(){
   // životní náklady. Na účet nic nepřijde, ale o tolik míň odejde — a to je taky zásluha domů.
   const bydleniTed = dailyHousingCost(ja);
   const usporaBydleni = Math.max(0, LIVING_COST - bydleniTed);
+  const udrzbaCelkem = sum('udrzba');
   const hodnotaPodilu = data.reduce((a, d) => a + d.hodnota * d.dil, 0);
   const bytuCelkem = data.reduce((a, d) => a + d.byty.length, 0);
   const obsazenoCelkem = data.reduce((a, d) => a + d.obsazene.length + d.mojeByty.length, 0);
@@ -9311,6 +9317,8 @@ function renderMine(){
       <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
         ${radek('<b>Čistě za den</b>', cisty, cisty >= 0 ? 'var(--gold)' : 'var(--danger)')}</div>
     </div>
+    ${udrzbaCelkem > 0.5 ? `<p style="font-size:0.88em;margin:6px 0 0;">🔧 Na údržbu odlož <b style="color:var(--orange)">${kc(udrzbaCelkem)} Kč/den</b>
+      <span style="color:var(--muted);font-size:0.9em;">— tolik stojí opravy chátrajících bytů. V částce nahoře to není, opravy platíš, až je uděláš.</span></p>` : ''}
     ${hypoteky > 0.5 ? `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Ze splátek hypoték je jen ${kc(hypoUroky)} Kč úrok — zbytek ${kc(hypoteky - hypoUroky)} Kč snižuje dluh, takže to není ztráta, dům ti tím postupně patří.</p>` : ''}
     ${usporaBydleni > 0.5 ? `<p style="font-size:0.88em;margin:6px 0 0;">🏠 Navíc <b style="color:var(--accent)">šetříš ${kc(usporaBydleni)} Kč/den</b> na bydlení — platíš ${kc(bydleniTed)} místo ${LIVING_COST} Kč.
       <span style="color:var(--muted);font-size:0.9em;">Na účet to nepřijde, ale o tolik míň odejde.</span></p>` : ''}
@@ -12851,10 +12859,13 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'12.1', datum:'2026-09-22', body:[
+    ['info','Měřením se ukázalo, že náhodné události jsou vyrovnané (za 90 dní +754 Kč kladných proti −821 Kč záporným) a noční škody přijdou jednou za dva týdny. Skutečný odtok je obyčejné chátrání bytů — sebere zhruba třetinu nájmu. Proto je teď v „Moje nemovitosti" vidět, kolik si na údržbu denně odložit. Do částky, která přijde o půlnoci, se to nepočítá, opravy platíš, až je uděláš.'],
+  ]},
   { verze:'12.0', datum:'2026-09-22', body:[
     ['oprava','Náhodné události (rozbitá pračka, dědictví po tetě) měly pevné částky 40–100 Kč z doby, kdy se vydělávaly stovky denně. Pro hráče s příjmem v tisících to byl šum. Teď se řídí tvým denním příjmem: nováček platí za pračku dál kolem 40 Kč, hráč s deseti domy stovky. Smolná událost nikdy nevezme víc než pětinu hotovosti.'],
   ]},
-  { verze:'12.0', datum:'2026-09-22', body:[
+  { verze:'11.9.1', datum:'2026-09-22', body:[
     ['novinka','⚙️ Efekty nad mapou jdou vypnout. V Průvodci → Nastavení najdeš tři přepínače: denní doba na mapě, déšť a sníh, sezónní ozdoby. Nastavení platí jen pro tvoje zařízení — na starším telefonu se bez animací hra může chovat svižněji.'],
   ]},
   { verze:'11.9', datum:'2026-09-22', body:[
