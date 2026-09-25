@@ -182,6 +182,44 @@
   }
   .evaZnacka.hotovo{ background:#6b7280;opacity:0.6 !important;animation:none; }
 
+  /* ===== DENNÍ DOBA A POČASÍ NAD MAPOU ===== */
+  #vrstvaDenNoc, #vrstvaPocasi{
+    /* Nad mapou (z-index 1), ale POD hlavičkou (350) a bočními tlačítky (400) —
+       ať v noci neztmavnou i ovládací prvky a zůstanou čitelné. */
+    position:fixed; inset:0; pointer-events:none; z-index:300;
+  }
+  #vrstvaDenNoc{ transition:background 40s linear; }
+  #vrstvaPocasi{ overflow:hidden; }
+
+  /* Déšť a sníh: dva pruhy s opakujícím se vzorem, které sjíždějí dolů. Levné na výkon —
+     žádné jednotlivé kapky v DOM, jen posun pozadí. */
+  #vrstvaPocasi .srazky{
+    position:absolute; inset:-20% -10% -20% -10%;
+    background-repeat:repeat;
+    will-change:background-position;
+  }
+  #vrstvaPocasi .déšť1{
+    background-image:repeating-linear-gradient(105deg, rgba(190,220,255,0.55) 0 1px, transparent 1px 9px);
+    animation:padaDest 0.7s linear infinite; opacity:0.45;
+  }
+  #vrstvaPocasi .déšť2{
+    background-image:repeating-linear-gradient(101deg, rgba(210,235,255,0.4) 0 1px, transparent 1px 14px);
+    animation:padaDest 1.1s linear infinite; opacity:0.3;
+  }
+  #vrstvaPocasi .sníh1{
+    background-image:radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9) 0 1.6px, transparent 2px);
+    background-size:70px 70px; animation:padaSnih 7s linear infinite; opacity:0.75;
+  }
+  #vrstvaPocasi .sníh2{
+    background-image:radial-gradient(circle at 70% 60%, rgba(255,255,255,0.7) 0 2.4px, transparent 3px);
+    background-size:110px 110px; animation:padaSnih 11s linear infinite; opacity:0.6;
+  }
+  @keyframes padaDest{ from{ background-position:0 0; } to{ background-position:-60px 420px; } }
+  @keyframes padaSnih{ from{ background-position:0 0; } to{ background-position:40px 600px; } }
+  @media (prefers-reduced-motion: reduce){
+    #vrstvaPocasi .srazky{ animation:none; opacity:0.25; }
+  }
+
   /* Dialogy: víceřádkový text se dřív slil do jednoho bloku, protože textContent
      zalomení nezobrazuje. pre-line je nechá být a zároveň drží escapování textu. */
   #modalMessage{
@@ -448,6 +486,11 @@
 
 <div id="app" style="display:none;">
   <div id="map"></div>
+  <!-- Vrstvy nad mapou: denní doba a počasí. Nesahají na dlaždice mapy (filtr přes mapu
+       jsme zkoušeli ve verzích 7.4 a 8.4 a pokaždé rozmazal názvy ulic), jen přes ně leží
+       průhledná barva a animace. Klikání procházejí skrz. -->
+  <div id="vrstvaDenNoc"></div>
+  <div id="vrstvaPocasi"></div>
 
   <div id="topBar">
     <div id="gpsWarning">📍 GPS není dostupná — hra potřebuje tvou polohu. Povol prosím přístup k poloze pro tuto stránku.
@@ -695,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '11.6';
+const APP_VERSION = '12.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1525,10 +1568,25 @@ async function denniUvitani(){
   const krok = safeCall(() => dalsiKrok(u));
   if(krok) radky.push(`${krok.ikona} Další krok: ${krok.text}`);
 
-  const q = asArray(u.quests).filter(x => x && !x.done).length;
-  if(q) radky.push(`🎯 Čekají tě ${q} ${q === 1 ? 'denní úkol' : (q < 5 ? 'denní úkoly' : 'denních úkolů')}.`);
-  const zak = zakazkyDnes().filter(z => !zakazkySplnene(u).includes(z.id)).length;
-  if(zak) radky.push(`📋 Ve městě ${zak === 1 ? 'je 1 zakázka' : `jsou ${zak} zakázky`} k vyzvednutí.`);
+  // Úkoly a zakázky rovnou vypsané — samotný počet hráči neřekne, jestli se mu vyplatí
+  // vyrazit ven. U zakázek přidáme i směr, protože ty jsou na konkrétním místě.
+  ensureQuests(u);
+  const ukoly = asArray(u.quests).map(id => questById(typeof id === 'string' ? id : id && id.id))
+    .filter(qd => qd && !asArray(u.questDone).includes(qd.id));
+  if(ukoly.length){
+    radky.push(`🎯 Denní úkoly (${ukoly.length}):\n` + ukoly.map(qd => {
+      const mam = safeCall(() => qd.prog(u)) || 0;
+      const odmena = Math.round(qd.reward * inflationMult());
+      return `${qd.icon} ${qd.name} — ${Math.min(mam, qd.goal)}/${qd.goal} ${qd.unit}, +${odmena} Kč`;
+    }).join('\n'));
+  }
+  const zakazky = zakazkyDnes().filter(z => !zakazkySplnene(u).includes(z.id));
+  if(zakazky.length){
+    radky.push(`📋 Zakázky (${zakazky.length}):\n` + zakazky.map(z => {
+      const d = playerPos ? haversine(playerPos, { lat:z.lat, lng:z.lng }) : null;
+      return `${z.emoji} ${z.name} — ${Math.round(z.odmena)} Kč` + (d !== null ? `, ${kudyText(z, d)}` : '');
+    }).join('\n'));
+  }
 
   if(!radky.length) return;
   if(serie) playSound('coin');
@@ -4725,6 +4783,134 @@ async function adminNactiAdresy(){
               : 'Adresy se nepodařilo stáhnout. Zkus to za chvíli — server OpenStreetMap bývá občas přetížený.');
 }
 
+// ===== SBÍRKA MÍST =====
+// Skutečná místa z OpenStreetMap — kostely, památky, parky, školy, nádraží. Každé se dá
+// jednou navštívit (fyzicky k němu dojít), za návštěvu je odměna a za kompletní sadu bonus.
+// Funguje i pro hráče, který zrovna hraje sám, a vede ho jinam než na trasu domov–práce.
+const MISTO_RADIUS = 45;            // m — jak blízko musíš být
+const MISTO_ODMENA = 120;           // Kč za první návštěvu místa
+const MISTO_SADA_BONUS = 600;       // Kč za kompletní sadu
+
+const MISTO_SADY = [
+  { id:'vira',    emoji:'⛪', nazev:'Kostely a kapličky',
+    tagy:[['amenity','place_of_worship'],['historic','wayside_shrine'],['historic','wayside_cross'],['building','chapel']] },
+  { id:'pamatky', emoji:'🏰', nazev:'Památky a pamětihodnosti',
+    tagy:[['historic','*'],['tourism','attraction'],['tourism','museum'],['tourism','artwork'],['tourism','viewpoint']] },
+  { id:'zelen',   emoji:'🌳', nazev:'Parky a hřiště',
+    tagy:[['leisure','park'],['leisure','playground'],['leisure','pitch'],['leisure','sports_centre'],['leisure','garden'],['leisure','stadium']] },
+  { id:'verejne', emoji:'🏛️', nazev:'Školy a úřady',
+    tagy:[['amenity','school'],['amenity','kindergarten'],['amenity','library'],['amenity','townhall'],
+          ['amenity','post_office'],['amenity','police'],['amenity','fire_station'],['amenity','community_centre']] },
+  { id:'doprava', emoji:'🚉', nazev:'Doprava',
+    tagy:[['railway','station'],['railway','halt'],['amenity','bus_station'],['public_transport','station']] },
+  { id:'podniky', emoji:'☕', nazev:'Podniky a obchody',
+    tagy:[['amenity','cafe'],['amenity','restaurant'],['amenity','pub'],['amenity','bar'],
+          ['shop','supermarket'],['shop','bakery'],['shop','butcher'],['amenity','pharmacy']] }
+];
+
+let MISTA = {};          // id → {id, nazev, sada, lat, lng}
+let mistaStav = 'nic';   // nic | stahuji | hotovo | chyba
+
+function nactiMistaZPameti(){
+  try {
+    const ulozeno = JSON.parse(localStorage.getItem('bp_mista_' + (CITY?.id || 'buc')) || 'null');
+    if(ulozeno && ulozeno.mista && Object.keys(ulozeno.mista).length){ MISTA = ulozeno.mista; mistaStav = 'hotovo'; }
+  } catch(e){}
+}
+
+function sadaProTagy(t){
+  for(const sada of MISTO_SADY){
+    for(const [k, v] of sada.tagy){
+      if(t[k] && (v === '*' || t[k] === v)) return sada.id;
+    }
+  }
+  return null;
+}
+
+async function stahniMista(){
+  if(mistaStav === 'stahuji') return;
+  mistaStav = 'stahuji';
+  const stred = CITY_CENTER, r = CITY_FETCH_RADIUS || 3000;
+  const klice = ['amenity','historic','tourism','leisure','railway','shop','public_transport'];
+  const dotaz = `[out:json][timeout:60];(` +
+    klice.map(k => `node["${k}"]["name"](around:${r},${stred[0]},${stred[1]});way["${k}"]["name"](around:${r},${stred[0]},${stred[1]});`).join('') +
+    `);out center 2000;`;
+  const servery = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+  for(const server of servery){
+    try {
+      const res = await fetch(server, { method:'POST', body:'data=' + encodeURIComponent(dotaz),
+        headers:{ 'Content-Type':'application/x-www-form-urlencoded' } });
+      if(!res.ok) continue;
+      const data = await res.json();
+      const nova = {};
+      ((data && data.elements) || []).forEach(el => {
+        const c = el.center || el, t = el.tags || {};
+        if(typeof c.lat !== 'number' || typeof c.lon !== 'number' || !t.name) return;
+        const sada = sadaProTagy(t);
+        if(!sada) return;
+        const id = 'm_' + el.type + el.id;
+        // Dvě místa blíž než 30 m se stejným jménem jsou obvykle jeden objekt zapsaný dvakrát.
+        const dupl = Object.values(nova).some(m => m.nazev === t.name && haversine(m, { lat:c.lat, lng:c.lon }) < 30);
+        if(dupl) return;
+        nova[id] = { id, nazev: String(t.name).slice(0, 60), sada, lat: c.lat, lng: c.lon };
+      });
+      if(Object.keys(nova).length < 3) continue;
+      MISTA = nova; mistaStav = 'hotovo';
+      try { localStorage.setItem('bp_mista_' + (CITY?.id || 'buc'),
+        JSON.stringify({ kdy: Date.now(), mista: MISTA })); } catch(e){}
+      safeCall(() => renderDaily());
+      return;
+    } catch(e){ /* zkusíme druhý server */ }
+  }
+  mistaStav = 'chyba';
+}
+
+// Navštívená místa si hráč nese s sebou (jednou navždy, ne denně jako místa zájmu).
+function mojeMista(u){
+  if(!u) return {};
+  if(!u.mista || typeof u.mista !== 'object') u.mista = {};
+  return u.mista;
+}
+function sadaPostup(u, sadaId){
+  const vse = Object.values(MISTA).filter(m => m.sada === sadaId);
+  const mam = vse.filter(m => mojeMista(u)[m.id]).length;
+  return { celkem: vse.length, mam, hotovo: vse.length > 0 && mam >= vse.length };
+}
+
+function checkMista(){
+  if(!currentUser || !playerPos || mistaStav !== 'hotovo') return;
+  const u = world.users[currentUser.name];
+  if(!u) return;
+  const navstivena = mojeMista(u);
+  let zmena = false;
+  Object.values(MISTA).forEach(m => {
+    if(navstivena[m.id]) return;
+    if(haversine(playerPos, { lat:m.lat, lng:m.lng }) > MISTO_RADIUS) return;
+    navstivena[m.id] = world.day;
+    const sada = MISTO_SADY.find(s => s.id === m.sada);
+    const odmena = Math.round(MISTO_ODMENA * inflationMult());
+    u.balance += odmena;
+    pricti(u, 'akce', odmena);
+    zapisDoDeniku('landmark', `Navštívil jsem ${m.nazev}`, odmena);
+    playSound('coin');
+    const po = sadaPostup(u, m.sada);
+    showFlash(`${sada ? sada.emoji : '📍'} ${m.nazev} · +${odmena} Kč` +
+      (po.celkem ? `\n${sada ? sada.nazev : ''}: ${po.mam}/${po.celkem}` : ''));
+    // kompletní sada = bonus a zpráva do novin
+    if(po.hotovo && !asArray(u.sady).includes(m.sada)){
+      u.sady = asArray(u.sady).concat([m.sada]);
+      const bonus = Math.round(MISTO_SADA_BONUS * inflationMult());
+      u.balance += bonus;
+      pricti(u, 'akce', bonus);
+      zapisDoDeniku('landmark', `Dokončil jsem sbírku: ${sada ? sada.nazev : m.sada}`, bonus);
+      addNews('achievement', `${sada ? sada.emoji : '📍'} ${u.name} dokončil sbírku „${sada ? sada.nazev : m.sada}" — všech ${po.celkem} míst navštíveno!`);
+      showAlert(`${sada ? sada.emoji : '📍'} Sbírka hotová!\n\n${sada ? sada.nazev : ''} — navštívil jsi všech ${po.celkem} míst.\n\nOdměna ${bonus} Kč.`);
+    }
+    zmena = true;
+  });
+  if(zmena){ saveWorld(); updateHeaderStats(); safeCall(() => renderDaily()); }
+}
+
 async function stahniAdresy(){
   if(adresyStav === 'stahuji') return;
   adresyStav = 'stahuji';
@@ -6494,38 +6680,45 @@ function maybeRandomEvent(){
   if(!u) return;
   if(Math.random() > EVENT_CHANCE_PER_DAY) return;
 
-  const cash = u.balance;
+  // Částky se řídí tím, jak velkou ekonomiku hráč má. Byly pevné (40–100 Kč) z doby, kdy
+  // se vydělávaly stovky denně — pro hráče s příjmem v tisících to byl šum, který se ztratil
+  // v zaokrouhlení. Referencí je hrubý denní příjem začínajícího hráče (600 Kč).
+  const prijemDen = Math.max(200, safeCall(() => financeBreakdown(u.name).totalIncome + (u.currentJobId ? 250 : 0)) || 400);
+  const mira = Math.min(15, Math.max(1, prijemDen / 400));
+  // Ať ani smolná událost nevybílí účet — nejvýš pětina hotovosti.
+  const strop = Math.max(150, Math.round((u.balance || 0) * 0.2));
+  const K = (od, rozsah) => Math.round((od + Math.random() * rozsah) * mira * inflationMult());
   const events = [];
   // NEGATIVNÍ (nečekané výdaje) — částka podle stavu, ať to není likvidační
-  events.push({txt:'🔧 Rozbila se pračka, oprava tě stála', amount: -Math.round(40 + Math.random()*60), good:false});
-  events.push({txt:'🦷 Nečekaná návštěva zubaře', amount: -Math.round(30 + Math.random()*50), good:false});
-  events.push({txt:'📱 Rozbil se ti telefon', amount: -Math.round(50 + Math.random()*80), good:false});
+  events.push({txt:'🔧 Rozbila se pračka, oprava tě stála', amount: -Math.min(strop, K(40, 60)), good:false});
+  events.push({txt:'🦷 Nečekaná návštěva zubaře', amount: -Math.min(strop, K(30, 50)), good:false});
+  events.push({txt:'📱 Rozbil se ti telefon', amount: -Math.min(strop, K(50, 80)), good:false});
   if(Object.values(world.parcels).some(p=>p.useType==='rental'&&(p.owners?.[u.name]||0)>0))
-    events.push({txt:'🚰 Prasklá trubka v tvém pronájmu', amount: -Math.round(60 + Math.random()*90), good:false});
-  events.push({txt:'🚗 Pokuta za špatné parkování', amount: -Math.round(50 + Math.random()*70), good:false});
-  events.push({txt:'🧾 Doplatek za elektřinu', amount: -Math.round(45 + Math.random()*75), good:false});
+    events.push({txt:'🚰 Prasklá trubka v tvém pronájmu', amount: -Math.min(strop, K(60, 90)), good:false});
+  events.push({txt:'🚗 Pokuta za špatné parkování', amount: -Math.min(strop, K(50, 70)), good:false});
+  events.push({txt:'🧾 Doplatek za elektřinu', amount: -Math.min(strop, K(45, 75)), good:false});
   // Události vázané na to, co hráč doopravdy má — jinak přijdou nesmyslné.
   const mojeDomy = Object.values(world.parcels).filter(p => (p.owners?.[u.name]||0) > 0);
   if(mojeDomy.some(p => p.useType === 'rental'))
-    events.push({txt:'🐀 Deratizace v pronájmu', amount: -Math.round(70 + Math.random()*90), good:false});
+    events.push({txt:'🐀 Deratizace v pronájmu', amount: -Math.min(strop, K(70, 90)), good:false});
   if(mojeDomy.some(p => maProvoz(p)))
-    events.push({txt:'🧯 Revize hasicích přístrojů v provozovně', amount: -Math.round(60 + Math.random()*80), good:false});
+    events.push({txt:'🧯 Revize hasicích přístrojů v provozovně', amount: -Math.min(strop, K(60, 80)), good:false});
   if(asArray(u.loans).length)
-    events.push({txt:'🏦 Banka si naúčtovala poplatek za vedení úvěru', amount: -Math.round(25 + Math.random()*35), good:false});
+    events.push({txt:'🏦 Banka si naúčtovala poplatek za vedení úvěru', amount: -Math.min(strop, K(25, 35)), good:false});
 
   // POZITIVNÍ
-  events.push({txt:'🎁 Našel jsi peníze na ulici', amount: Math.round(20 + Math.random()*40), good:true});
-  events.push({txt:'💌 Malé dědictví od tety', amount: Math.round(80 + Math.random()*120), good:true});
-  events.push({txt:'🏆 Vyhrál jsi drobnou soutěž', amount: Math.round(40 + Math.random()*60), good:true});
-  events.push({txt:'♻️ Odevzdal jsi starý kov do sběrny', amount: Math.round(30 + Math.random()*50), good:true});
-  events.push({txt:'🧥 V kapse zimní bundy byla bankovka', amount: Math.round(25 + Math.random()*45), good:true});
-  events.push({txt:'📦 Vrácený přeplatek z e-shopu', amount: Math.round(35 + Math.random()*65), good:true});
+  events.push({txt:'🎁 Našel jsi peníze na ulici', amount: K(20, 40), good:true});
+  events.push({txt:'💌 Malé dědictví od tety', amount: K(80, 120), good:true});
+  events.push({txt:'🏆 Vyhrál jsi drobnou soutěž', amount: K(40, 60), good:true});
+  events.push({txt:'♻️ Odevzdal jsi starý kov do sběrny', amount: K(30, 50), good:true});
+  events.push({txt:'🧥 V kapse zimní bundy byla bankovka', amount: K(25, 45), good:true});
+  events.push({txt:'📦 Vrácený přeplatek z e-shopu', amount: K(35, 65), good:true});
   if(mojeDomy.some(p => p.useType === 'rental'))
-    events.push({txt:'🎉 Nájemník doporučil dům známému a dal ti spropitné', amount: Math.round(60 + Math.random()*100), good:true});
+    events.push({txt:'🎉 Nájemník doporučil dům známému a dal ti spropitné', amount: K(60, 100), good:true});
   if(mojeDomy.length)
-    events.push({txt:'🪙 Na půdě se našla stará sbírka mincí', amount: Math.round(90 + Math.random()*140), good:true});
+    events.push({txt:'🪙 Na půdě se našla stará sbírka mincí', amount: K(90, 140), good:true});
   if(Object.values(world.businesses).some(b => (b.owners?.[u.name]||0) > 0))
-    events.push({txt:'📈 Firma vyplatila mimořádný podíl na zisku', amount: Math.round(80 + Math.random()*130), good:true});
+    events.push({txt:'📈 Firma vyplatila mimořádný podíl na zisku', amount: K(80, 130), good:true});
 
   const ev = events[Math.floor(Math.random()*events.length)];
   u.balance += ev.amount;
@@ -7098,6 +7291,7 @@ function onPosition(pos){
   checkEncounters();      // potkal jsi někoho? → nabídka
   refreshRecommended();   // doporučené domy pro nováčka podle aktuální polohy
   checkLandmarks();   // došel jsi k místu zájmu? → odměna
+  safeCall(() => checkMista());   // a k některému místu ze sbírky?
   if(selectedParcelId) renderSelected(selectedParcelId);
   renderJobs();
 }
@@ -8197,7 +8391,105 @@ function refreshAll(){
   if(sheet && scrollPred > 0) sheet.scrollTop = scrollPred;
 }
 
+// ===== NASTAVENÍ VZHLEDU =====
+// Efekty nad mapou jdou vypnout. Ukládá se do telefonu (ne do světa), protože je to věc
+// zařízení — na starším telefonu můžou animace ubírat výkon a někomu prostě vadí.
+const VZHLED_VOLBY = [
+  { id:'denNoc',  nazev:'Denní doba na mapě', popis:'V noci ztmavne, za svítání a soumraku má teplý nádech.' },
+  { id:'pocasi',  nazev:'Déšť a sníh na mapě', popis:'Když v Bučovicích prší nebo sněží, je to vidět i ve hře.' },
+  { id:'sezony',  nazev:'Sezónní ozdoby',      popis:'Vločka v adventu, listí na podzim, stromeček o Vánocích.' }
+];
+let VZHLED = { denNoc:true, pocasi:true, sezony:true };
+
+function nactiVzhled(){
+  try {
+    const u = JSON.parse(localStorage.getItem('bp_vzhled') || 'null');
+    if(u && typeof u === 'object') VZHLED_VOLBY.forEach(v => { if(typeof u[v.id] === 'boolean') VZHLED[v.id] = u[v.id]; });
+  } catch(e){}
+}
+function prepniVzhled(id){
+  if(!VZHLED_VOLBY.some(v => v.id === id)) return;
+  VZHLED[id] = !VZHLED[id];
+  try { localStorage.setItem('bp_vzhled', JSON.stringify(VZHLED)); } catch(e){}
+  safeCall(() => prekresliVrstvy(true));
+  safeCall(() => renderGuide());
+}
+
+// ===== DENNÍ DOBA NAD MAPOU =====
+// Barva se řídí skutečným časem (hodiny ve hře jdou podle telefonu), takže ve čtyři ráno
+// vypadá mapa jinak než v poledne. Je to jen průhledná barva přes mapu — dlaždice zůstanou
+// ostré, na rozdíl od filtrů, které jsme zkoušeli ve verzích 7.4 a 8.4.
+const DENNI_DOBY = [
+  { do: 5,  barva:'rgba(10,20,60,0.42)',  nazev:'noc' },
+  { do: 7,  barva:'rgba(120,90,110,0.26)',nazev:'svítání' },
+  { do: 9,  barva:'rgba(255,190,120,0.14)',nazev:'ráno' },
+  { do: 17, barva:'rgba(0,0,0,0)',        nazev:'den' },
+  { do: 19, barva:'rgba(255,150,60,0.18)', nazev:'podvečer' },
+  { do: 21, barva:'rgba(90,70,140,0.30)',  nazev:'soumrak' },
+  { do: 24, barva:'rgba(10,20,60,0.42)',   nazev:'noc' }
+];
+function denniDoba(h){
+  const hod = (typeof h === 'number') ? h : new Date().getHours();
+  return DENNI_DOBY.find(d => hod < d.do) || DENNI_DOBY[DENNI_DOBY.length - 1];
+}
+
+function prekresliVrstvy(vynutit){
+  const dn = document.getElementById('vrstvaDenNoc');
+  if(dn) dn.style.background = VZHLED.denNoc ? denniDoba().barva : 'rgba(0,0,0,0)';
+
+  const p = document.getElementById('vrstvaPocasi');
+  if(!p) return;
+  if(vynutit) p.dataset.stav = 'prekreslit';   // po změně nastavení překreslit i beze změny počasí
+  if(!VZHLED.pocasi){
+    if(p.dataset.stav !== ''){ p.dataset.stav = ''; p.innerHTML = ''; }
+    return;
+  }
+  // Kódy počasí z Open-Meteo: 51–67 a 80–82 déšť, 71–77 a 85–86 sníh, 95+ bouřka.
+  const k = POCASI && typeof POCASI.kod === 'number' ? POCASI.kod : -1;
+  const snih  = (k >= 71 && k <= 77) || k === 85 || k === 86;
+  const dest  = (k >= 51 && k <= 67) || (k >= 80 && k <= 82) || k >= 95;
+  const chci = snih ? 'snih' : (dest ? 'dest' : '');
+  if(p.dataset.stav === chci) return;      // nepřekreslovat zbytečně
+  p.dataset.stav = chci;
+  p.innerHTML = chci === 'snih' ? '<div class="srazky sníh1"></div><div class="srazky sníh2"></div>'
+              : chci === 'dest' ? '<div class="srazky déšť1"></div><div class="srazky déšť2"></div>'
+              : '';
+}
+
+// Sezónní drobnost podle skutečného data — potvrdí hráči, že hra žije ve stejném čase
+// jako on. Nic neovlivňuje, je to jen ozdoba.
+function sezona(d){
+  const dnes = d || new Date();
+  const m = dnes.getMonth() + 1, den = dnes.getDate();
+  if(m === 12 && den >= 24 && den <= 26) return { id:'vanoce',   emoji:'🎄', popis:'Veselé Vánoce!' };
+  if(m === 12 || (m === 1 && den <= 6))  return { id:'advent',   emoji:'❄️', popis:'Adventní Bučovice' };
+  if(m === 1 && den === 1)               return { id:'novyrok',  emoji:'🎆', popis:'Šťastný nový rok!' };
+  if(m === 3 || m === 4)                 return { id:'jaro',     emoji:'🌸', popis:'Jaro v Bučovicích' };
+  if(m === 10 && den >= 25)              return { id:'dusicky',  emoji:'🎃', popis:'Dušičkový čas' };
+  if(m >= 9 && m <= 11)                  return { id:'podzim',   emoji:'🍂', popis:'Podzim v Bučovicích' };
+  if(m >= 6 && m <= 8)                   return { id:'leto',     emoji:'☀️', popis:'Léto v Bučovicích' };
+  return null;
+}
+
 function updateHeaderStats(){
+  safeCall(() => prekresliVrstvy());
+  safeCall(() => {
+    // ozdoba u čísla dne
+    const sez = VZHLED.sezony ? sezona() : null;
+    const el = document.getElementById('dayPill');
+    if(el && el.dataset.sezona !== (sez ? sez.id : '')){
+      el.dataset.sezona = sez ? sez.id : '';
+      el.title = sez ? sez.popis : '';
+      const stara = el.querySelector('.sezonaOzdoba');
+      if(stara) stara.remove();
+      if(sez){
+        const sp = document.createElement('span');
+        sp.className = 'sezonaOzdoba';
+        sp.textContent = ' ' + sez.emoji;
+        el.appendChild(sp);
+      }
+    }
+  });
   const clock = gameClock();
   document.getElementById('dayVal').textContent = clock.day;
   // Ukazujeme SKUTEČNÝ aktuální čas (shoduje se s hodinami na telefonu). Nový den je o půlnoci.
@@ -9311,6 +9603,15 @@ function domZeZpravy(text){
     if(world.parcels[id] && text.includes(adresa)) return id;
   }
   return '';
+}
+
+// Skok na místo ze sbírky (tlačítko „Ukázat na mapě").
+function ukazMisto(id){
+  const m = MISTA[id];
+  if(!m || !map) return;
+  closeSheet();
+  map.setView([m.lat, m.lng], 17);
+  oznacCil({ lat:m.lat, lng:m.lng });
 }
 
 function ukazMistoZpravy(el){
@@ -11057,6 +11358,47 @@ function renderDaily(){
   ensureWalkDay(u);
   const got = myLandmarksToday();
 
+  // --- sbírka míst ---
+  const sbirkaHtml = (() => {
+    if(mistaStav !== 'hotovo' || !Object.keys(MISTA).length){
+      return mistaStav === 'stahuji'
+        ? `<div class="card"><h3>🗺️ Sbírka míst</h3><p style="font-size:0.9em;color:var(--muted);">Načítám místa ve městě…</p></div>` : '';
+    }
+    const navstivena = mojeMista(u);
+    const celkem = Object.keys(MISTA).length;
+    const mam = Object.keys(navstivena).length;
+    // nejbližší nenavštívené — hráč hned ví, kam se vyplatí zajít
+    let nej = null;
+    if(playerPos) Object.values(MISTA).forEach(m => {
+      if(navstivena[m.id]) return;
+      const d = haversine(playerPos, { lat:m.lat, lng:m.lng });
+      if(!nej || d < nej.d) nej = { m, d };
+    });
+    const radky = MISTO_SADY.map(sada => {
+      const po = sadaPostup(u, sada.id);
+      if(!po.celkem) return '';
+      return `<div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+        <span style="font-size:1.1em;">${sada.emoji}</span>
+        <span style="flex:1;min-width:0;">
+          <span style="font-size:0.92em;">${sada.nazev}${po.hotovo ? ' <span style="color:var(--gold)">✓ hotovo</span>' : ''}</span>
+          <div style="background:var(--panel2);border-radius:4px;height:6px;overflow:hidden;margin-top:3px;">
+            <div style="width:${Math.round(po.mam / po.celkem * 100)}%;height:100%;background:${po.hotovo ? 'var(--gold)' : 'var(--accent)'};"></div>
+          </div>
+        </span>
+        <span style="font-size:0.85em;color:var(--muted);white-space:nowrap;">${po.mam}/${po.celkem}</span>
+      </div>`;
+    }).join('');
+    return `<div class="card" style="text-align:left;">
+      <h3 style="text-align:center;">🗺️ Sbírka míst — ${mam}/${celkem}</h3>
+      ${radky}
+      ${nej ? `<p style="font-size:0.9em;margin:8px 0 0;">📍 Nejblíž máš k <b>${escapeHtml(nej.m.nazev)}</b> — ${kudyText(nej.m, nej.d)}.
+        <span style="color:var(--muted)">Za návštěvu ${Math.round(MISTO_ODMENA * inflationMult())} Kč.</span></p>
+        <div class="row" style="margin-top:6px;"><button class="secondary" onclick="ukazMisto('${nej.m.id}')">Ukázat na mapě</button></div>`
+        : `<p style="font-size:0.9em;color:var(--gold);margin:8px 0 0;">🎉 Navštívil jsi všechna místa ve městě!</p>`}
+      <p style="font-size:0.8em;color:var(--muted);margin:6px 0 0;">Stačí k místu dojít na ${MISTO_RADIUS} metrů. Každé se počítá jednou, za celou sadu je bonus ${Math.round(MISTO_SADA_BONUS * inflationMult())} Kč.</p>
+    </div>`;
+  })();
+
   // --- první kroky (dokud hráč nemá práci, bydlení a příjem) ---
   const krok = safeCall(() => dalsiKrok(u));
 
@@ -11077,6 +11419,8 @@ function renderDaily(){
     <p style="font-size:0.9em;margin:2px 0;">${ev.desc}</p>
     ${lokStred ? `<p style="font-size:0.88em;margin:4px 0 0;color:var(--gold)">📍 Týká se okolí ${escapeHtml(lokStred.nazev || 'jednoho místa')}${lokD !== null ? ` — ${kudyText(lokStred, lokD)}` : ''}. Na mapě je to vyznačené kruhem.</p>` : ''}
   </div>`;
+
+  html += sbirkaHtml;
 
   // POČASÍ — skutečné, z Bučovic. Ovlivňuje výdělek z chůze.
   if(POCASI){
@@ -12507,6 +12851,25 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'12.0', datum:'2026-09-22', body:[
+    ['oprava','Náhodné události (rozbitá pračka, dědictví po tetě) měly pevné částky 40–100 Kč z doby, kdy se vydělávaly stovky denně. Pro hráče s příjmem v tisících to byl šum. Teď se řídí tvým denním příjmem: nováček platí za pračku dál kolem 40 Kč, hráč s deseti domy stovky. Smolná událost nikdy nevezme víc než pětinu hotovosti.'],
+  ]},
+  { verze:'12.0', datum:'2026-09-22', body:[
+    ['novinka','⚙️ Efekty nad mapou jdou vypnout. V Průvodci → Nastavení najdeš tři přepínače: denní doba na mapě, déšť a sníh, sezónní ozdoby. Nastavení platí jen pro tvoje zařízení — na starším telefonu se bez animací hra může chovat svižněji.'],
+  ]},
+  { verze:'11.9', datum:'2026-09-22', body:[
+    ['novinka','🌙 DENNÍ DOBA NA MAPĚ. Mapa se barví podle skutečného času — v noci ztmavne domodra, za svítání a při soumraku má teplý nádech, přes den je čistá. Je to jen průhledná barva přes mapu, takže názvy ulic zůstávají ostré (filtry přes mapu jsme zkoušeli ve verzích 7.4 a 8.4 a pokaždé je rozmazaly).'],
+    ['novinka','🌧️ POČASÍ JE VIDĚT. Když v Bučovicích prší, padají přes mapu kapky; když sněží, vločky. Řídí se to skutečným počasím, které hra stahuje. Kdo má v telefonu vypnuté animace, uvidí jen jemný závoj.'],
+    ['novinka','🗺️ KDO DRŽÍ MĚSTO. V žebříčku je pruh, kde je v barvách hráčů vidět, jakou část Bučovic kdo vlastní — a kolik ještě patří městu.'],
+    ['novinka','🍂 SEZÓNNÍ DROBNOSTI. Podle skutečného data přibude k číslu dne ozdoba — na podzim listí, v adventu vločka, o Vánocích stromeček, na jaře květ.'],
+  ]},
+  { verze:'11.8', datum:'2026-09-22', body:[
+    ['zmena','Uvítací okno na začátku dne vypisuje konkrétní denní úkoly (i s postupem a odměnou) a zakázky včetně odměny a toho, kudy k nim. Dřív tam byl jen počet, ze kterého se nedalo poznat, jestli se vyplatí vyrazit ven.'],
+  ]},
+  { verze:'11.7', datum:'2026-09-22', body:[
+    ['novinka','🗺️ SBÍRKA MÍST. Po městě jsou desítky skutečných míst z OpenStreetMap — kostely, památky, parky, školy, nádraží, podniky. Dojdi k nim na 45 metrů a započítají se. Za každé 120 Kč (jen jednou), za kompletní sadu bonus 600 Kč a zpráva v novinách.'],
+    ['info','Šest sad: ⛪ kostely a kapličky · 🏰 památky · 🌳 parky a hřiště · 🏛️ školy a úřady · 🚉 doprava · ☕ podniky a obchody. Postup a nejbližší nenavštívené místo (i s tím, kudy k němu) je v Denních výzvách.'],
+  ]},
   { verze:'11.6', datum:'2026-09-22', body:[
     ['oprava','Odkaz na místo se přidával jen zprávám, které vznikly po aktualizaci — všechny starší zůstaly nerozklikávací. Teď hra dům dohledá z adresy přímo v textu zprávy, takže fungují i staré zprávy v novinách.'],
   ]},
@@ -13070,6 +13433,13 @@ function renderGuide(){
     </div>
     <div class="row"><button class="secondary" onclick="closeSheet();startTutorial();">▶ Znovu spustit úvodní návod</button></div>
     <div class="row"><button class="secondary" onclick="toggleSound();renderGuide();">${soundEnabled?'🔊 Zvuky: zapnuté':'🔇 Zvuky: vypnuté'}</button></div>
+    <p style="margin-top:10px;"><b>Efekty nad mapou</b></p>
+    <p style="font-size:0.86em;color:var(--muted);margin:0 0 6px;">Na starším telefonu se bez nich hra může chovat svižněji. Nastavení platí jen pro tohle zařízení.</p>
+    ${VZHLED_VOLBY.map(v => `<div class="row" style="margin:4px 0;">
+      <button class="secondary" style="text-align:left;" onclick="prepniVzhled('${v.id}')">
+        ${VZHLED[v.id] ? '✅' : '⬜'} ${v.nazev}
+        <span style="display:block;font-size:0.8em;color:var(--muted);font-weight:400;">${v.popis}</span>
+      </button></div>`).join('')}
   </div>`;
   html += `<p style="font-size:0.92em;color:var(--muted);margin-bottom:8px;">Vysvětlení všech peněžních věcí ve hře — jednoduše, ať víš přesně, co se s tvými penězi děje.</p>`;
 
@@ -13317,6 +13687,13 @@ function renderGuide(){
     <p>Práce má úrovně — začínáš na nejnižší pozici a postupuješ <b>o jednu úroveň výš</b>, jak přibývá odpracovaných směn.</p>
     <p>Odpracovat můžeš <b>jednu směnu za den</b> (reset o půlnoci) a chodí se k radnici. <b>O víkendu je volno</b> — v sobotu a neděli se nepracuje, stejně jako ve skutečnosti.</p>
     <p>⚠️ Když máš práci a v pracovní den <b>nepřijdeš na směnu</b>, appka to toleruje ${JOB_SICK_DAYS_ALLOWED}×, pak přijde vyhazov a ${JOB_BAN_DAYS} dní nesmíš nikde pracovat. Víkendy se do docházky nepočítají.</p>
+  `);
+
+  html += guideSection('🗺️','Sbírka míst', `
+    <p>Po Bučovicích je rozeseto <b>${Object.keys(MISTA).length || 'několik desítek'}</b> skutečných míst — kostely, památky, parky, školy, nádraží, podniky. Stačí k místu dojít na ${MISTO_RADIUS} metrů a započítá se ti.</p>
+    <p>Za každé místo dostaneš <b>${MISTO_ODMENA} Kč</b>, a to jen jednou — opakovaná návštěva už nic nevynese. Za kompletní sadu je bonus <b>${MISTO_SADA_BONUS} Kč</b> a zprávu o tom napíšou městské noviny.</p>
+    ${MISTO_SADY.map(s2 => `<p style="margin:2px 0;">${s2.emoji} <b>${s2.nazev}</b></p>`).join('')}
+    <p style="color:var(--muted)">Postup i nejbližší nenavštívené místo najdeš v 🎯 Denních výzvách. Místa se stahují z OpenStreetMap, takže jsou to opravdové budovy a parky, ne vymyšlené body.</p>
   `);
 
   html += guideSection('🎨','Barvy na mapě', `
@@ -13612,6 +13989,41 @@ function renderLeaderboard(){
   html += `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">
     Ve městě je <b>${players.length}</b> ${players.length===1?'hráč':(players.length<5?'hráči':'hráčů')},
     dohromady vlastní majetek za <b>${Math.round(celkemJmeni).toLocaleString('cs-CZ')} Kč</b>.</p>`;
+
+  // Kdo drží jakou část Bučovic — jedním pohledem, v barvách hráčů.
+  html += (() => {
+    const mesto = Object.values(world.parcels || {});
+    let celkovaHodnota = 0;
+    const podily = {};
+    mesto.forEach(p => {
+      const cena = effectiveHousePrice(p);
+      celkovaHodnota += cena;
+      for(const jmeno in (p.owners || {})){
+        const pct = p.owners[jmeno] || 0;
+        if(pct > 0) podily[jmeno] = (podily[jmeno] || 0) + cena * pct / 100;
+      }
+    });
+    if(!celkovaHodnota) return '';
+    const serazene = Object.entries(podily).sort((a, b) => b[1] - a[1]);
+    const hraciCelkem = serazene.reduce((a, x) => a + x[1], 0);
+    const mestoZbytek = Math.max(0, celkovaHodnota - hraciCelkem);
+    const dil = (x) => (x / celkovaHodnota * 100);
+    return `<div class="card">
+      <h3>🗺️ Kdo drží město</h3>
+      <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
+        ${serazene.map(([jmeno, hod]) => `<div title="${escapeHtml(jmeno)}: ${dil(hod).toFixed(1)} %"
+          style="width:${dil(hod)}%;background:${barvaHrace(jmeno).hex};"></div>`).join('')}
+        <div style="flex:1;background:var(--panel2);" title="zbytek patří městu"></div>
+      </div>
+      <p style="font-size:0.86em;margin:6px 0 0;">
+        ${serazene.map(([jmeno, hod]) => `<span style="white-space:nowrap;margin-right:10px;">
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${barvaHrace(jmeno).hex};vertical-align:middle;"></span>
+          ${escapeHtml(jmeno)} ${dil(hod).toFixed(1)} %</span>`).join('')}
+        <span style="white-space:nowrap;color:var(--muted);">◻️ město ${dil(mestoZbytek).toFixed(1)} %</span>
+      </p>
+      <p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Počítá se z hodnoty podílů ve všech ${mesto.length} domech v Bučovicích.</p>
+    </div>`;
+  })();
 
   const medals = ['🥇','🥈','🥉'];
   html += players.map((pl, i) => {
@@ -15319,6 +15731,10 @@ window.onload = async () => {
   nastavOchranuProtiObnoveni();
   safeCall(() => oznacNoveZmeny());
   safeCall(() => nactiAdresy());
+  // Místa do sbírky: z paměti hned, z OpenStreetMap až po chvíli, ať start appky nezdržuje.
+  safeCall(() => nactiVzhled());
+  safeCall(() => nactiMistaZPameti());
+  setTimeout(() => safeCall(() => { if(mistaStav !== 'hotovo') stahniMista(); }), 6000);
   setInterval(() => safeCall(() => hlidejRank()), 15000);   // povýšení stačí zkontrolovat občas
   safeCall(() => nactiPocasi());
   // Kontrolujeme častěji, než je platnost uložených dat. Když se obojí rovnalo, interval
