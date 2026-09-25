@@ -738,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.7';
+const APP_VERSION = '12.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -12432,6 +12432,15 @@ function renderStatDetail(which){
       <p>Do půlnoci zbývá <b>${hrsLeft} h ${minLeft} min</b>.</p>
       <p style="font-size:0.9em;">${denniDoba().nazev === 'den' ? '☀️ Je den' : '🌙 Denní doba: ' + denniDoba().nazev}${
         VZHLED.denNoc ? '' : ' <span style="color:var(--orange)">(ztmavování mapy máš vypnuté v Průvodci → Nastavení)</span>'}</p>
+      ${(() => {
+        // Dočasná diagnostika vrstvy denní doby: u jednoho hráče se mapa v noci netmavla,
+        // i když výpočet i nastavení byly v pořádku. Tohle ukáže, co s vrstvou dělá prohlížeč.
+        const el = document.getElementById('vrstvaDenNoc');
+        if(!el) return `<p style="font-size:0.8em;color:var(--danger)">⚠️ Vrstva denní doby v stránce chybí (stará verze v mezipaměti).</p>`;
+        const cs = (window.getComputedStyle ? getComputedStyle(el) : {}) || {};
+        return `<p style="font-size:0.75em;color:var(--muted)">Vrstva: ${el.offsetWidth}×${el.offsetHeight} px ·
+          ${cs.position || '?'} · z ${cs.zIndex || '?'} · ${cs.backgroundColor || '?'} · nastaveno „${el.style.background || 'nic'}"</p>`;
+      })()}
       <p style="font-size:0.8em;color:var(--muted)">Hraješ verzi <b>${APP_VERSION}</b>${
         VZHLED.denNoc ? '' : ' · ztmavování mapy vypnuté'} — podle tohohle řádku poznáš, jestli máš nejnovější hru.</p>
       <p style="font-size:0.9em;color:var(--muted)">Herní den je skutečný kalendářní den — čas v liště sedí s hodinami na telefonu.</p>
@@ -12920,6 +12929,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'12.8', datum:'2026-09-25', body:[
+    ['info','V detailu dne je dočasný diagnostický řádek o vrstvě denní doby — u jednoho hráče se mapa v noci netmavla, i když výpočet i nastavení byly v pořádku. Řádek ukáže, jestli vrstva v stránce existuje, jak je velká a jakou barvu jí prohlížeč dal. Až se to vyřeší, zmizí.'],
+  ]},
   { verze:'12.7', datum:'2026-09-25', body:[
     ['info','V detailu dne je vidět číslo verze, kterou právě hraješ. Když něco nefunguje, je hned poznat, jestli máš nejnovější hru, nebo drží prohlížeč starou v mezipaměti.'],
   ]},
