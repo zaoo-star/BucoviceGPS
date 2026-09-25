@@ -738,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.6';
+const APP_VERSION = '12.7';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -12432,6 +12432,8 @@ function renderStatDetail(which){
       <p>Do půlnoci zbývá <b>${hrsLeft} h ${minLeft} min</b>.</p>
       <p style="font-size:0.9em;">${denniDoba().nazev === 'den' ? '☀️ Je den' : '🌙 Denní doba: ' + denniDoba().nazev}${
         VZHLED.denNoc ? '' : ' <span style="color:var(--orange)">(ztmavování mapy máš vypnuté v Průvodci → Nastavení)</span>'}</p>
+      <p style="font-size:0.8em;color:var(--muted)">Hraješ verzi <b>${APP_VERSION}</b>${
+        VZHLED.denNoc ? '' : ' · ztmavování mapy vypnuté'} — podle tohohle řádku poznáš, jestli máš nejnovější hru.</p>
       <p style="font-size:0.9em;color:var(--muted)">Herní den je skutečný kalendářní den — čas v liště sedí s hodinami na telefonu.</p>
     </div>`;
 
@@ -12918,6 +12920,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'12.7', datum:'2026-09-25', body:[
+    ['info','V detailu dne je vidět číslo verze, kterou právě hraješ. Když něco nefunguje, je hned poznat, jestli máš nejnovější hru, nebo drží prohlížeč starou v mezipaměti.'],
+  ]},
   { verze:'12.6', datum:'2026-09-25', body:[
     ['info','V detailu dne (klepni na 📅 nahoře) je teď vidět aktuální denní doba — noc, svítání, den, podvečer, soumrak — a upozornění, když máš ztmavování mapy vypnuté v nastavení. Dřív nešlo poznat, jestli efekt nefunguje, nebo je jen vypnutý.'],
   ]},
