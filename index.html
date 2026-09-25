@@ -738,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.3';
+const APP_VERSION = '12.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -903,23 +903,36 @@ function hasUpgrade(p, key){ return !!(p.upgrades && p.upgrades[key]); }
 // a zůstává TRVALE, dokud je spokojený (dokud byt nespadne pod jeho požadovaný stav).
 // Typy zájemců. Konkrétní jméno se skládá z "names" (různé varianty), takže se generují
 // unikátní jména jako "Student Tomáš" / "Studentka Petra" — ne pořád jeden a týž člověk.
+// `ochota` = kolikrát férový nájem DANÉHO domu je zájemce ochotný zaplatit. Dřív tu byly
+// pevné částky v korunách (40–95 Kč) z doby, kdy byly nájmy nízké. Jenže férový nájem dnes
+// sahá ke dvěma stovkám, takže do dražších domů nemohl nikdo — i když hráč udělal všechna
+// vylepšení, která zájemci požadovali. Hráči to hlásili jako „mají požadavky, i když je
+// na bytě splním" (Jerry).
 const NPC_TENANT_TYPES = [
-  {avatar:'👵', maxRent:50, minCondition:40, needs:[],                    names:['Paní Nováková','Paní Svobodová','Paní Horáková','Paní Marková','Paní Kučerová']},
-  {avatar:'🎓', maxRent:40, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam']},
-  {avatar:'👪', maxRent:80, minCondition:70, needs:['insulation'],         names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových']},
-  {avatar:'💼', maxRent:95, minCondition:75, needs:['insulation','ac'],    names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban']},
-  {avatar:'👴', maxRent:45, minCondition:50, needs:['insulation'],        names:['Důchodce Karel','Důchodkyně Marie','Pan Jaroslav','Paní Věra','Pan Bohumil']},
-  {avatar:'💑', maxRent:70, minCondition:60, needs:['renovation'],        names:['Novomanželé Malí','Mladý pár Novákovi','Snoubenci Veselí','Pár Dvořákovi']},
-  {avatar:'💻', maxRent:90, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza']},
-  {avatar:'🎨', maxRent:60, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela']},
+  {avatar:'👵', ochota:0.95, minCondition:40, needs:[],                    names:['Paní Nováková','Paní Svobodová','Paní Horáková','Paní Marková','Paní Kučerová']},
+  {avatar:'🎓', ochota:0.80, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam']},
+  {avatar:'👪', ochota:1.10, minCondition:70, needs:['insulation'],        names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových']},
+  {avatar:'💼', ochota:1.25, minCondition:75, needs:['insulation','ac'],   names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban']},
+  {avatar:'👴', ochota:0.85, minCondition:50, needs:['insulation'],        names:['Důchodce Karel','Důchodkyně Marie','Pan Jaroslav','Paní Věra','Pan Bohumil']},
+  {avatar:'💑', ochota:1.05, minCondition:60, needs:['renovation'],        names:['Novomanželé Malí','Mladý pár Novákovi','Snoubenci Veselí','Pár Dvořákovi']},
+  {avatar:'💻', ochota:1.20, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza']},
+  {avatar:'🎨', ochota:1.00, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela']},
 ];
+
+// Kolik zájemce v TOMHLE domě nejvíc zaplatí. Staré uložené profily měly `maxRent`
+// v korunách — ty bereme jako dřív, ať se nikomu nezmění nájemník pod rukama.
+function npcStrop(p, npc){
+  if(!npc) return 0;
+  if(typeof npc.ochota !== 'number') return npc.maxRent || 0;
+  return Math.round(fairRentForHouse(p) * npc.ochota);
+}
 const NPC_REFRESH_HOURS = 12; // nabídka zájemců se obměňuje
 
 // Splňuje byt (v domě p, byt u) požadavky NPC zájemce?
 function unitMeetsNpc(p, u, npc){
   if(!u || u.tenant) return false;
   if(u.condition < npc.minCondition) return false;
-  if(u.rentPrice > npc.maxRent) return false;
+  if(u.rentPrice > npcStrop(p, npc)) return false;
   for(const need of (npc.needs||[])){ if(!hasUpgrade(p, need)) return false; }
   return true;
 }
@@ -951,7 +964,7 @@ function refreshNpcTenants(force){
     if(!free.length){ types.splice(ti,1); continue; }   // z tohoto typu došla jména
     const name = free[Math.floor(Math.random()*free.length)];
     usedNames.add(name);
-    pick.push({ id:'npc_'+now+'_'+pick.length, name, avatar:t.avatar, maxRent:t.maxRent, minCondition:t.minCondition, needs:t.needs });
+    pick.push({ id:'npc_'+now+'_'+pick.length, name, avatar:t.avatar, ochota:t.ochota, minCondition:t.minCondition, needs:t.needs });
   }
   world.npcTenants = { list: pick, refreshedTs: now };
 }
@@ -980,6 +993,7 @@ async function moveInNpc(npcId, houseId, unitIdx){
   if(!ok) return;
 
   u.npc = { name: npc.name, avatar: npc.avatar, minCondition: npc.minCondition };
+  stampUnit(u);
   npcZapamatujNajem(p, u);
   u.tenant = null;
   stampHouse(p);
@@ -1001,6 +1015,9 @@ async function evictNpc(houseId, unitIdx){
     `Přijdeš o jistý příjem ${najem} Kč/den. Byt se pak pronajímá jen podle poptávky, ` +
     `což bývá míň spolehlivé.\n\nNového nájemníka si musíš najít sám.`))) return;
   p.units[unitIdx].npc = null;
+  // BEZ tohohle se vystěhování při příštím sloučení s cloudem vrátilo zpátky — byt neměl
+  // novější otisk než verze z druhého zařízení. Hráči hlásili, že „nájemníci nejdou vystěhovat".
+  stampUnit(p.units[unitIdx]);
   stampHouse(p);
   addNews('rental', `📤 ${name} byl vystěhován z domu ${domKratce(p)}.`, p.id);
   saveWorld(); refreshAll();
@@ -1021,21 +1038,22 @@ function npcApplicantsHtml(p, unitIdx){
   matching.forEach(npc => {
     html += `<div style="background:var(--panel2);border-radius:8px;padding:6px 8px;margin-top:4px;">
       <p style="margin:0;font-weight:600;">${escapeHtml(npc.avatar)} ${escapeHtml(npc.name)} <span style="color:var(--accent);font-size:0.8em;">✓ vyhovuje</span></p>
-      <p style="margin:2px 0;font-size:0.8em;color:var(--muted)">${npcNeedsText(npc)}</p>
+      <p style="margin:2px 0;font-size:0.8em;color:var(--muted)">${npcNeedsText(npc, p)}</p>
       <button onclick="moveInNpc('${npc.id}','${p.id}',${unitIdx})">Nastěhovat (${u.rentPrice} Kč/den)</button>
     </div>`;
   });
   notMatching.forEach(npc => {
     html += `<div style="background:var(--panel2);border-radius:8px;padding:6px 8px;margin-top:4px;opacity:0.6;">
       <p style="margin:0;font-weight:600;">${escapeHtml(npc.avatar)} ${escapeHtml(npc.name)} <span style="color:var(--danger);font-size:0.8em;">nevyhovuje</span></p>
-      <p style="margin:2px 0;font-size:0.8em;color:var(--muted)">${npcNeedsText(npc)}</p>
+      <p style="margin:2px 0;font-size:0.8em;color:var(--muted)">${npcNeedsText(npc, p)}</p>
     </div>`;
   });
   html += `</div>`;
   return html;
 }
-function npcNeedsText(npc){
-  const parts = [`max nájem ${npc.maxRent} Kč`, `stav ≥ ${npc.minCondition} %`];
+function npcNeedsText(npc, p){
+  const strop = p ? npcStrop(p, npc) : (npc.maxRent || 0);
+  const parts = [`zaplatí až ${strop} Kč/den`, `stav ≥ ${npc.minCondition} %`];
   (npc.needs||[]).forEach(n => { if(HOUSE_UPGRADES[n]) parts.push(HOUSE_UPGRADES[n].icon + ' ' + HOUSE_UPGRADES[n].name); });
   return 'Požaduje: ' + parts.join(', ');
 }
@@ -4295,9 +4313,13 @@ function mergeUnits(zalohaUnits, cloudUnits){
       condition: Math.max(mujU.condition || 0, cloudU.condition || 0),   // opravu nikdy nezahodíme
       umod: Math.max(mujU.umod || 0, cloudU.umod || 0)
     });
-    // Obsazenost: nájemník (nebo NPC) přebíjí bydlícího majitele.
-    const najemnik = cloudU.tenant || mujU.tenant || null;
-    const npc = cloudU.npc || mujU.npc || null;
+    // Obsazenost rozhoduje NOVĚJŠÍ zápis. Dřív platilo „nájemník z kterékoliv strany vyhrává",
+    // takže vystěhování se při sloučení vždycky vrátilo zpátky a hráči hlásili, že nájemníci
+    // nejdou vystěhovat. Když mají oba stejné razítko (nejde rozhodnout), držíme se staršího
+    // pravidla, ať se naopak neztratí někdo, kdo se právě nastěhoval.
+    const rozhoduje = (mujU.umod || 0) === (cloudU.umod || 0) ? null : vyhrava;
+    const najemnik = rozhoduje ? (rozhoduje.tenant || null) : (cloudU.tenant || mujU.tenant || null);
+    const npc = rozhoduje ? (rozhoduje.npc || null) : (cloudU.npc || mujU.npc || null);
     if(najemnik || npc){
       vysledek.tenant = najemnik;
       vysledek.npc = npc;
@@ -6530,6 +6552,7 @@ function tickVnitrni(){
                 `📤 Z domu ${domKratce(p)} se stěhuje ${u.npc.name}. Ve stavu, v jakém byt je, se bydlet nedá.`
               ]), p.id);
               u.npc = null;
+              stampUnit(u); stampHouse(p);   // ať se odchod neztratí při sloučení
             } else {
               collected = vybranyNajem(p, u);
             }
@@ -6862,6 +6885,7 @@ function tryFillVacantUnits(){
       if(!volnaJmena.length) return;
       const jmeno = volnaJmena[Math.abs(seed >> 3) % volnaJmena.length];
       un.npc = { name: jmeno, avatar: typ.avatar, minCondition: typ.minCondition };
+      stampUnit(un);
       npcZapamatujNajem(p, un);
       stampHouse(p);
       if(currentUser && (p.owners?.[currentUser.name] || 0) > 50){
@@ -8433,8 +8457,15 @@ function denniDoba(h){
   return DENNI_DOBY.find(d => hod < d.do) || DENNI_DOBY[DENNI_DOBY.length - 1];
 }
 
+let vrstvyNahlaseno = false;
 function prekresliVrstvy(vynutit){
   const dn = document.getElementById('vrstvaDenNoc');
+  // Kdyby vrstva v dokumentu chyběla (stará verze v mezipaměti prohlížeče), ať se to
+  // objeví v záznamu chyb v admin panelu, a ne aby to jen tiše nefungovalo.
+  if(!dn && !vrstvyNahlaseno){
+    vrstvyNahlaseno = true;
+    safeCall(() => zapisChybu('Vrstva denní doby v dokumentu chybí — pravděpodobně stará verze v mezipaměti (verze ' + APP_VERSION + ')'));
+  }
   if(dn) dn.style.background = VZHLED.denNoc ? denniDoba().barva : 'rgba(0,0,0,0)';
 
   const p = document.getElementById('vrstvaPocasi');
@@ -8951,12 +8982,17 @@ function renderSelected(id){
       const cost = houseUpgradeCost(p, k);
       // co konkrétně to udělá v tomhle domě
       let efekt = up.desc;
+      // U domu bez bytů (provozovna, dům bez využití) nemá smysl psát o nájemnících.
+      const bezBytu = p.useType === 'provozovna' || (!p.useType && !asArray(p.units).length);
       if(bydlimTu){
         if(k === 'insulation') efekt = `Nižší účty za energie — ušetříš <b>${Math.round(INSULATION_LIVING_SAVE*100)} %</b> životních nákladů.`;
         else if(k === 'ac') efekt = `Komfort navíc — ušetříš <b>${Math.round(AC_LIVING_SAVE*100)} %</b> životních nákladů.${p.useType === 'rental' ? ' U pronajímaných bytů zvedne snesitelný nájem.' : ''}`;
         else if(k === 'solar') efekt = `Vlastní elektřina — ušetříš <b>${Math.round(SOLAR_LIVING_SAVE*100)} %</b> životních nákladů a dům ti navíc <b>vydělává každý den</b>.`;
         else if(k === 'renovation') efekt = p.useType === 'rental' ? up.desc : 'Kvalitní materiály — dům chátrá pomaleji.';
       }
+      // Tohle platí bez ohledu na to, jestli v domě bydlíš — proto až za podmínkou výš.
+      if(bezBytu && (k === 'insulation' || k === 'ac')) efekt += ' V tomhle domě nikdo nebydlí, takže na účtech nic neušetří — zůstává jen vyšší hodnota domu.';
+      if(bezBytu && k === 'solar') efekt = 'Vlastní elektřina — vydělává každý den bez ohledu na to, co v domě je.';
       html += `<div style="border:1px solid ${has?'var(--accent)':'var(--border)'};border-radius:8px;padding:8px;margin-top:6px;">
         <p style="margin:0;font-weight:600;color:${has?'var(--accent)':'var(--text)'}">${up.icon} ${up.name} ${has?'✓ máš':''}</p>
         <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${efekt}</p>
@@ -12394,6 +12430,8 @@ function renderStatDetail(which){
 
     html += `<div class="card"><h3>📅 Den ${clock.day}</h3>
       <p>Do půlnoci zbývá <b>${hrsLeft} h ${minLeft} min</b>.</p>
+      <p style="font-size:0.9em;">${denniDoba().nazev === 'den' ? '☀️ Je den' : '🌙 Denní doba: ' + denniDoba().nazev}${
+        VZHLED.denNoc ? '' : ' <span style="color:var(--orange)">(ztmavování mapy máš vypnuté v Průvodci → Nastavení)</span>'}</p>
       <p style="font-size:0.9em;color:var(--muted)">Herní den je skutečný kalendářní den — čas v liště sedí s hodinami na telefonu.</p>
     </div>`;
 
@@ -12880,6 +12918,18 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'12.6', datum:'2026-09-25', body:[
+    ['info','V detailu dne (klepni na 📅 nahoře) je teď vidět aktuální denní doba — noc, svítání, den, podvečer, soumrak — a upozornění, když máš ztmavování mapy vypnuté v nastavení. Dřív nešlo poznat, jestli efekt nefunguje, nebo je jen vypnutý.'],
+  ]},
+  { verze:'12.5', datum:'2026-09-25', body:[
+    ['oprava','Vylepšení šlo nainstalovat jen do domu s určeným využitím — u provozovny a u domu bez využití hra odmítla hláškou „nejdřív urči, k čemu dům bude". Týkalo se to i solárních panelů, které vydělávají bez ohledu na to, co v domě je. Teď jde vylepšit každý dům, o kterém rozhoduješ.'],
+    ['info','U domu, kde nikdo nebydlí, je u zateplení a klimatizace napsané, že na účtech nic neušetří a zůstane jen vyšší hodnota domu. U soláru je vidět, že vydělává vždycky.'],
+  ]},
+  { verze:'12.4', datum:'2026-09-25', body:[
+    ['oprava','Vystěhování nájemníka se při sloučení s cloudem vracelo zpátky — byt se neoznačil jako změněný, takže vyhrála verze z druhého zařízení. Nájemníci tak „nešli vystěhovat". Stejná chyba byla i u odchodu ze zanedbaného bytu.'],
+    ['oprava','Zájemci o bydlení měli pevné stropy nájmu (40–95 Kč) z doby, kdy byly nájmy nízké. Férový nájem dnes sahá ke dvěma stovkám, takže do lepších domů se nemohl nastěhovat nikdo, ať jsi udělal jakákoliv vylepšení. Teď je strop poměrem k férové ceně DANÉHO domu: student zaplatí 80 % férové ceny, inženýr 125 %.'],
+    ['info','U každého zájemce je vidět, kolik v tomhle konkrétním domě nejvíc zaplatí, místo obecné částky.'],
+  ]},
   { verze:'12.3', datum:'2026-09-25', body:[
     ['oprava','U bytu, ve kterém bydlíš, hra psala nesmysly — že je prázdný, že se za tu cenu nikdo nenastěhuje a co ti vynese, až se někdo nastěhuje. Teď je tam napsané, že nájem neplatíš, protože tam bydlíš, o kolik máš nižší životní náklady a kolik by byt vynesl, kdybys ho pronajal.'],
     ['oprava','Data u verzí v přehledu novinek byla znovu špatně (22. září místo 25.). Opraveno a doplněná kontrola, která nesmyslné datum odhalí sama.'],
@@ -14289,6 +14339,7 @@ async function occupyOwnUnit(id, idx){
   }
   jinyByt.forEach(({ q, i }) => { if(q.units[i]) q.units[i].ownerOccupied = false; stampHouse(q); });
   cil.ownerOccupied = true;
+  stampUnit(cil);
   stampHouse(p2 || p);
   saveWorld(); refreshAll();
   showAlert(`Nastěhoval ses do ${idx+1}. bytu. Ostatní byty vyděláváš dál — a klesly ti náklady na bydlení.`);
@@ -14884,10 +14935,9 @@ async function installUpgrade(id, key){
   // náklady (viz livingCostDiscountFromUpgrades). Ta podmínka na 'rental' tu zbyla z doby,
   // kdy vylepšení sloužila jen k lákání nájemníků, a odporovala i vlastnímu popisku panelu
   // ("V domě, kde bydlíš, ti sníží účty za energie").
-  if(p.useType !== 'rental' && p.useType !== 'residence'){
-    showAlert('Nejdřív urči, k čemu dům bude — jestli v něm budeš bydlet, nebo ho pronajímat.');
-    return;
-  }
+  // Vylepšit jde KAŽDÝ dům, o kterém rozhoduješ. Dřív to šlo jen u bydlení a pronájmu,
+  // takže u provozovny nebo u domu bez využití hra odmítla a napsala „nejdřív urči, k čemu
+  // dům bude" — i u soláru, který vydělává bez ohledu na to, co v domě je (hlásila Eva).
   if(hasUpgrade(p, key)){ showAlert('Tohle vylepšení už dům má.'); return; }
   const cost = houseUpgradeCost(p, key);
   if(!(await showConfirm(`${up.icon} ${up.name} za ${cost.toLocaleString('cs-CZ')} Kč?\n\n${up.desc}`))) return;
