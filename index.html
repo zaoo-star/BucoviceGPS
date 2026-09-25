@@ -738,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.2';
+const APP_VERSION = '12.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -9056,7 +9056,9 @@ function renderSelected(id){
       else if(u.ownerOccupied) occupantLine = `<b style="color:var(--accent)">🏠 Bydlíš tu ty</b> <span style="font-size:0.85em;color:var(--muted)">(nevydělává, ale máš nižší náklady)</span>`;
       else if(sanceNaNajemnika > 0) occupantLine = `<span style="color:var(--muted)">Zatím prázdný</span> — každý den je <b>${sanceNaNajemnika}% šance</b>, že se někdo nastěhuje`;
       else occupantLine = '<span style="color:var(--danger)">Prázdný — za tuhle cenu se nikdo nenastěhuje</span>';
-      // srovnání s tržním nájmem
+      // Byt, ve kterém bydlí majitel, se nikomu nepronajímá — rady o tržní ceně a čekání
+      // na nájemníka u něj nedávají smysl (hlásila Eva: „mám tam být psaná já").
+      const bydlimTady = !!u.ownerOccupied;
       const ratio = u.rentPrice / fair;
       let priceNote;
       if(ratio <= 0.85) priceNote = '<span style="color:var(--accent)">pod tržní cenou — plno, ale necháváš peníze ležet</span>';
@@ -9068,9 +9070,12 @@ function renderSelected(id){
       html += `<div class="card">
         <h3>Byt ${idx+1}. patro <span class="badge" style="background:transparent;color:${occColor};border:1px solid ${occColor}">${occLabel}</span></h3>
         <p style="font-size:1em;">${occupantLine}</p>
-        <p>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(férová cena ${fair} Kč)</span></p>
-        <p style="font-size:0.92em;">${priceNote}</p>
-        ${myPct > 0 ? `<div style="background:var(--panel);border-left:3px solid ${occColor};border-radius:6px;padding:7px 9px;margin:6px 0;">
+        <p${bydlimTady ? ' style="display:none"' : ''}>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(férová cena ${fair} Kč)</span></p>
+        ${bydlimTady
+          ? `<p style="font-size:0.93em;">Nájem se tu neplatí — byt obýváš ty. Díky tomu máš <b style="color:var(--accent)">nižší životní náklady</b> (${Math.round(dailyHousingCost(currentUser.name))} Kč místo ${LIVING_COST} Kč denně).</p>
+             <p style="font-size:0.88em;color:var(--muted);">Kdybys ho pronajal, vynesl by kolem <b>${Math.round(fair)} Kč/den</b> — ale přišel bys o bydlení, pokud nemáš jiné.</p>`
+          : `<p style="font-size:0.92em;">${priceNote}</p>`}
+        ${myPct > 0 && !bydlimTady ? `<div style="background:var(--panel);border-left:3px solid ${occColor};border-radius:6px;padding:7px 9px;margin:6px 0;">
           ${(u.tenant || u.npc)
             ? `<p style="margin:0;font-size:0.9em;">Nájemník platí <b style="color:var(--gold)">${u.rentPrice} Kč/den</b></p>`
             : `<p style="margin:0;font-size:0.9em;">Teď vydělává <b style="color:var(--danger)">0 Kč/den</b> — je prázdný.</p>
@@ -12858,58 +12863,78 @@ function renderDenik(el){
 // Typy: 'oprava' 🔧 · 'novinka' ✨ · 'zmena' ⚖️ (úprava pravidel) · 'info' ℹ️
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
+// Kontrola dat: záznam nesmí mít datum v budoucnu ani starší než záznam pod ním.
+// Datum se píše ručně a už dvakrát se stalo, že u nových verzí zůstalo staré (hlásila Eva).
+function zkontrolujDataZmen(){
+  const dnes = new Date(); dnes.setHours(23,59,59,999);
+  const spatne = [];
+  ZMENY.forEach((z, i) => {
+    const d = new Date(z.datum + 'T12:00:00');
+    if(isNaN(d)) { spatne.push(`${z.verze}: neplatné datum`); return; }
+    if(d > dnes) spatne.push(`${z.verze}: datum v budoucnu (${z.datum})`);
+    const dalsi = ZMENY[i + 1];
+    if(dalsi && new Date(dalsi.datum + 'T12:00:00') > d) spatne.push(`${z.verze}: starší datum než ${dalsi.verze}`);
+  });
+  if(spatne.length) console.warn('Změny — špatná data:', spatne.join(' · '));
+  return spatne;
+}
+
 const ZMENY = [
-  { verze:'12.2', datum:'2026-09-22', body:[
+  { verze:'12.3', datum:'2026-09-25', body:[
+    ['oprava','U bytu, ve kterém bydlíš, hra psala nesmysly — že je prázdný, že se za tu cenu nikdo nenastěhuje a co ti vynese, až se někdo nastěhuje. Teď je tam napsané, že nájem neplatíš, protože tam bydlíš, o kolik máš nižší životní náklady a kolik by byt vynesl, kdybys ho pronajal.'],
+    ['oprava','Data u verzí v přehledu novinek byla znovu špatně (22. září místo 25.). Opraveno a doplněná kontrola, která nesmyslné datum odhalí sama.'],
+  ]},
+  { verze:'12.2', datum:'2026-09-25', body:[
     ['oprava','Pruh „Kdo drží město" se s padesáti hráči roztáhl mimo obrazovku a šoupal celým žebříčkem do stran. Teď se legenda zalamuje, ukazuje prvních šest hráčů a zbytek shrne. Přibyl i souhrn, kolik procent města drží hráči dohromady.'],
     ['zmena','Žebříček ukazuje prvních 15 hráčů místo všech. Když jsi níž, tvoje karta se přidá zvlášť i s pořadím — dřív bylo potřeba projet desítky karet hráčů, kteří hru jednou otevřeli.'],
     ['oprava','Velmi malé podíly (pod 0,1 %) se v pruhu ztrácely úplně — teď má každý hráč aspoň tenký proužek a procenta se u malých podílů píšou na dvě desetinná místa.'],
   ]},
-  { verze:'12.1', datum:'2026-09-22', body:[
+  { verze:'12.1', datum:'2026-09-25', body:[
     ['info','Měřením se ukázalo, že náhodné události jsou vyrovnané (za 90 dní +754 Kč kladných proti −821 Kč záporným) a noční škody přijdou jednou za dva týdny. Skutečný odtok je obyčejné chátrání bytů — sebere zhruba třetinu nájmu. Proto je teď v „Moje nemovitosti" vidět, kolik si na údržbu denně odložit. Do částky, která přijde o půlnoci, se to nepočítá, opravy platíš, až je uděláš.'],
   ]},
-  { verze:'12.0', datum:'2026-09-22', body:[
+  { verze:'12.0', datum:'2026-09-25', body:[
     ['oprava','Náhodné události (rozbitá pračka, dědictví po tetě) měly pevné částky 40–100 Kč z doby, kdy se vydělávaly stovky denně. Pro hráče s příjmem v tisících to byl šum. Teď se řídí tvým denním příjmem: nováček platí za pračku dál kolem 40 Kč, hráč s deseti domy stovky. Smolná událost nikdy nevezme víc než pětinu hotovosti.'],
   ]},
-  { verze:'11.9.1', datum:'2026-09-22', body:[
+  { verze:'11.9.1', datum:'2026-09-25', body:[
     ['novinka','⚙️ Efekty nad mapou jdou vypnout. V Průvodci → Nastavení najdeš tři přepínače: denní doba na mapě, déšť a sníh, sezónní ozdoby. Nastavení platí jen pro tvoje zařízení — na starším telefonu se bez animací hra může chovat svižněji.'],
   ]},
-  { verze:'11.9', datum:'2026-09-22', body:[
+  { verze:'11.9', datum:'2026-09-25', body:[
     ['novinka','🌙 DENNÍ DOBA NA MAPĚ. Mapa se barví podle skutečného času — v noci ztmavne domodra, za svítání a při soumraku má teplý nádech, přes den je čistá. Je to jen průhledná barva přes mapu, takže názvy ulic zůstávají ostré (filtry přes mapu jsme zkoušeli ve verzích 7.4 a 8.4 a pokaždé je rozmazaly).'],
     ['novinka','🌧️ POČASÍ JE VIDĚT. Když v Bučovicích prší, padají přes mapu kapky; když sněží, vločky. Řídí se to skutečným počasím, které hra stahuje. Kdo má v telefonu vypnuté animace, uvidí jen jemný závoj.'],
     ['novinka','🗺️ KDO DRŽÍ MĚSTO. V žebříčku je pruh, kde je v barvách hráčů vidět, jakou část Bučovic kdo vlastní — a kolik ještě patří městu.'],
     ['novinka','🍂 SEZÓNNÍ DROBNOSTI. Podle skutečného data přibude k číslu dne ozdoba — na podzim listí, v adventu vločka, o Vánocích stromeček, na jaře květ.'],
   ]},
-  { verze:'11.8', datum:'2026-09-22', body:[
+  { verze:'11.8', datum:'2026-09-25', body:[
     ['zmena','Uvítací okno na začátku dne vypisuje konkrétní denní úkoly (i s postupem a odměnou) a zakázky včetně odměny a toho, kudy k nim. Dřív tam byl jen počet, ze kterého se nedalo poznat, jestli se vyplatí vyrazit ven.'],
   ]},
-  { verze:'11.7', datum:'2026-09-22', body:[
+  { verze:'11.7', datum:'2026-09-25', body:[
     ['novinka','🗺️ SBÍRKA MÍST. Po městě jsou desítky skutečných míst z OpenStreetMap — kostely, památky, parky, školy, nádraží, podniky. Dojdi k nim na 45 metrů a započítají se. Za každé 120 Kč (jen jednou), za kompletní sadu bonus 600 Kč a zpráva v novinách.'],
     ['info','Šest sad: ⛪ kostely a kapličky · 🏰 památky · 🌳 parky a hřiště · 🏛️ školy a úřady · 🚉 doprava · ☕ podniky a obchody. Postup a nejbližší nenavštívené místo (i s tím, kudy k němu) je v Denních výzvách.'],
   ]},
-  { verze:'11.6', datum:'2026-09-22', body:[
+  { verze:'11.6', datum:'2026-09-25', body:[
     ['oprava','Odkaz na místo se přidával jen zprávám, které vznikly po aktualizaci — všechny starší zůstaly nerozklikávací. Teď hra dům dohledá z adresy přímo v textu zprávy, takže fungují i staré zprávy v novinách.'],
   ]},
-  { verze:'11.5', datum:'2026-09-22', body:[
+  { verze:'11.5', datum:'2026-09-25', body:[
     ['novinka','🎨 BARVY HRÁČŮ. Domy na mapě jsou obarvené podle toho, kdo v nich rozhoduje — svoje i cizí. Na první pohled je vidět, kdo drží kterou část města. Svoje domy poznáš dál podle zlatého rámečku.'],
     ['info','Barvu si vybereš v profilu (klepni na své jméno nahoře) z deseti odstínů. Kdo si žádnou nevybral, dostane ji podle jména, takže mapa je barevná hned. Barevná tečka je i u jmen v žebříčku a v chatu, ať je poznat, komu barva patří.'],
   ]},
-  { verze:'11.4', datum:'2026-09-22', body:[
+  { verze:'11.4', datum:'2026-09-25', body:[
     ['oprava','Text v dialozích se slil do jednoho odstavce — zalomení řádků se nezobrazovala. Týkalo se to uvítacího okna, výběru provozovny, nastavení nájmu i všech potvrzení. Teď mají odstavce, delší texty jsou zarovnané doleva a když se zpráva nevejde, dá se v ní posouvat.'],
   ]},
-  { verze:'11.3', datum:'2026-09-22', body:[
+  { verze:'11.3', datum:'2026-09-25', body:[
     ['zmena','Odkaz na místo má teď 40 z 51 druhů zpráv. Nově i výpověď a nástup do práce (skočí k radnici nebo k podniku), náhodné nálezy na ulici, vrácená peněženka a ztráta zástavy k hypotéce (skočí k zastavenému domu, jehož adresa je teď ve zprávě vidět).'],
     ['info','Místo nemají jen zprávy, které se nikde nestaly — hodnosti, odznaky, dárky, půjčky, souhrn dne a oznámení vedení města.'],
   ]},
-  { verze:'11.2', datum:'2026-09-22', body:[
+  { verze:'11.2', datum:'2026-09-25', body:[
     ['oprava','Zprávy se v novinách objevovaly dvakrát (například „hotovo: Vestavba podkroví" nebo „Otevřel nový park"). Tatáž událost zapsaná na dvou zařízeních měla jiný časový otisk a hra ji brala jako dvě. Teď se slučují podle dne a textu.'],
     ['novinka','📰 SOUHRN DNE. Po půlnoci přibude do novin zpráva, která shrne celý předchozí den: kolik se obchodovalo s podíly, kolik nájemníků se přistěhovalo a odstěhovalo, co se dostavělo, kolik bylo škod — a komu majetek vydělal nejvíc.'],
     ['zmena','Zprávy jsou konkrétnější. U nastěhování je vidět, jestli je nájem nad nebo pod tržní cenou, u koupě podílu o kolik procent se lišila od tržní ceny, u dokončené stavby nová hodnota domu a u povýšení pozice v žebříčku.'],
     ['zmena','Stejné události se píšou pokaždé trochu jinak, takže noviny nezní pořád stejně.'],
   ]},
-  { verze:'11.1', datum:'2026-09-22', body:[
+  { verze:'11.1', datum:'2026-09-25', body:[
     ['oprava','Při prvním spuštění se hláška o sérii přihlášení překryla uvítacím oknem. Teď je série první řádek toho okna, i s tím, kolik dostaneš zítra.'],
   ]},
-  { verze:'11.0', datum:'2026-09-22', body:[
+  { verze:'11.0', datum:'2026-09-25', body:[
     ['zmena','🏛️ DAŇ Z PŘÍJMU. Z výnosů majetku (nájem, provozovny, firmy, solár) se nově platí progresivní daň: do 300 Kč denně nic, pak 15 %, nad 1000 Kč 25 % a nad 3000 Kč 35 %. Vyšší sazba se vždycky týká jen části nad hranicí. Měření ukázalo, že výdaje spolkly jen pětinu příjmů a peníze ve hře jen přibývaly — po pár měsících by nákup domu přestal být rozhodnutí.'],
     ['zmena','Daň z nemovitosti je progresivní: 4 % ročně do 300 000 Kč majetku, 5,5 % z části do milionu, 7 % z toho nad. A kdo je bohatý, žije dráž — z čistého jmění nad 150 000 Kč platíš denně 0,015 % navíc k životním nákladům.'],
     ['info','Malých hráčů se to nedotkne: při jmění do 150 000 Kč a příjmu do 300 Kč denně neplatíš ani korunu navíc. U velkých portfolií odejde zhruba třetina výnosů. Všechno je vidět v Financích a v denním souhrnu jako samostatné řádky.'],
@@ -15766,6 +15791,7 @@ window.onload = async () => {
   safeCall(() => nactiAdresy());
   // Místa do sbírky: z paměti hned, z OpenStreetMap až po chvíli, ať start appky nezdržuje.
   safeCall(() => nactiVzhled());
+  safeCall(() => zkontrolujDataZmen());   // upozorní v konzoli, když u verze zůstalo staré datum
   safeCall(() => nactiMistaZPameti());
   setTimeout(() => safeCall(() => { if(mistaStav !== 'hotovo') stahniMista(); }), 6000);
   setInterval(() => safeCall(() => hlidejRank()), 15000);   // povýšení stačí zkontrolovat občas
