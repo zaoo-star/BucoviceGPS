@@ -182,13 +182,37 @@
   }
   .evaZnacka.hotovo{ background:#6b7280;opacity:0.6 !important;animation:none; }
 
+  /* Rozsvícené domy: za tmy dostanou značky teplou záři a plnou sytost, aby přes tmavou
+     vrstvu vystoupily — jako okna, ve kterých se svítí. */
+  body.jeNoc .parcelMarker{
+    opacity:1;
+    box-shadow:0 0 10px 3px rgba(255,205,110,0.55), 0 2px 5px rgba(0,0,0,0.45);
+    border-color:rgba(255,235,190,0.95);
+  }
+  body.jeNoc .parcelMarker.p-mine{
+    box-shadow:0 0 13px 4px rgba(255,215,130,0.75), 0 2px 5px rgba(0,0,0,0.45);
+  }
+  /* balíky a setkání za tmy taky posvítí, ať je po městě co hledat */
+  body.jeNoc .pickupMarker, body.jeNoc .encounterMarker{
+    box-shadow:0 0 12px 4px rgba(180,220,255,0.6);
+  }
+  body.jeNoc .otherPlayerMarker{
+    box-shadow:0 0 12px 4px rgba(160,255,190,0.6);
+  }
+  @media (prefers-reduced-motion: reduce){
+    body.jeNoc .parcelMarker{ box-shadow:0 2px 5px rgba(0,0,0,0.45); }
+  }
+
   /* ===== DENNÍ DOBA A POČASÍ NAD MAPOU ===== */
   #vrstvaDenNoc, #vrstvaPocasi{
     /* Nad mapou (z-index 1), ale POD hlavičkou (350) a bočními tlačítky (400) —
        ať v noci neztmavnou i ovládací prvky a zůstanou čitelné. */
     position:fixed; inset:0; pointer-events:none; z-index:300;
   }
-  #vrstvaDenNoc{ transition:background 40s linear; }
+  /* Přechod jen 3 s. Se čtyřiceti vteřinami se barva nikdy nedokreslila: hra vrstvu
+     překresluje každou vteřinu a přechod se pokaždé rozeběhl znovu, takže v noci zůstávala
+     průhlednost kolem 3 % místo 42 % a mapa vypadala nedotčeně. */
+  #vrstvaDenNoc{ transition:background-color 3s linear; }
   #vrstvaPocasi{ overflow:hidden; }
 
   /* Déšť a sníh: dva pruhy s opakujícím se vzorem, které sjíždějí dolů. Levné na výkon —
@@ -738,7 +762,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.8';
+const APP_VERSION = '13.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8443,14 +8467,15 @@ function prepniVzhled(id){
 // Barva se řídí skutečným časem (hodiny ve hře jdou podle telefonu), takže ve čtyři ráno
 // vypadá mapa jinak než v poledne. Je to jen průhledná barva přes mapu — dlaždice zůstanou
 // ostré, na rozdíl od filtrů, které jsme zkoušeli ve verzích 7.4 a 8.4.
+// `tma` říká, jestli se v tuhle dobu rozsvěcí domy.
 const DENNI_DOBY = [
-  { do: 5,  barva:'rgba(10,20,60,0.42)',  nazev:'noc' },
-  { do: 7,  barva:'rgba(120,90,110,0.26)',nazev:'svítání' },
+  { do: 5,  barva:'rgba(8,14,44,0.62)',    nazev:'noc',      tma:true },
+  { do: 7,  barva:'rgba(120,90,110,0.34)', nazev:'svítání',  tma:true },
   { do: 9,  barva:'rgba(255,190,120,0.14)',nazev:'ráno' },
-  { do: 17, barva:'rgba(0,0,0,0)',        nazev:'den' },
-  { do: 19, barva:'rgba(255,150,60,0.18)', nazev:'podvečer' },
-  { do: 21, barva:'rgba(90,70,140,0.30)',  nazev:'soumrak' },
-  { do: 24, barva:'rgba(10,20,60,0.42)',   nazev:'noc' }
+  { do: 17, barva:'rgba(0,0,0,0)',         nazev:'den' },
+  { do: 19, barva:'rgba(255,150,60,0.20)', nazev:'podvečer' },
+  { do: 21, barva:'rgba(70,55,125,0.42)',  nazev:'soumrak',  tma:true },
+  { do: 24, barva:'rgba(8,14,44,0.62)',    nazev:'noc',      tma:true }
 ];
 function denniDoba(h){
   const hod = (typeof h === 'number') ? h : new Date().getHours();
@@ -8460,13 +8485,27 @@ function denniDoba(h){
 let vrstvyNahlaseno = false;
 function prekresliVrstvy(vynutit){
   const dn = document.getElementById('vrstvaDenNoc');
+  // Nastavit barvu JEN při skutečné změně — opakované nastavení té samé hodnoty
+  // rozbíhá přechod znovu a nikdy se nedokreslí.
   // Kdyby vrstva v dokumentu chyběla (stará verze v mezipaměti prohlížeče), ať se to
   // objeví v záznamu chyb v admin panelu, a ne aby to jen tiše nefungovalo.
   if(!dn && !vrstvyNahlaseno){
     vrstvyNahlaseno = true;
     safeCall(() => zapisChybu('Vrstva denní doby v dokumentu chybí — pravděpodobně stará verze v mezipaměti (verze ' + APP_VERSION + ')'));
   }
-  if(dn) dn.style.background = VZHLED.denNoc ? denniDoba().barva : 'rgba(0,0,0,0)';
+  if(dn){
+    const doba = denniDoba();
+    const chci = VZHLED.denNoc ? doba.barva : 'rgba(0,0,0,0)';
+    if(dn.dataset.barva !== chci){
+      dn.dataset.barva = chci;
+      dn.style.backgroundColor = chci;
+    }
+    // Za tmy se domy rozsvítí — přes tmavou vrstvu by jinak zanikly.
+    const sviti = !!(VZHLED.denNoc && doba.tma);
+    if(document.body && document.body.classList.contains('jeNoc') !== sviti){
+      document.body.classList.toggle('jeNoc', sviti);
+    }
+  }
 
   const p = document.getElementById('vrstvaPocasi');
   if(!p) return;
@@ -12929,6 +12968,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'13.0', datum:'2026-09-25', body:[
+    ['zmena','Noc na mapě je výraznější — ztmavení vzrostlo ze 42 na 62 %, soumrak a svítání taky o kus. A za tmy se domy rozsvítí: značky dostanou teplou záři a plnou sytost, aby přes tmavou vrstvu vystoupily. Tvoje domy svítí o něco víc než cizí.'],
+  ]},
+  { verze:'12.9', datum:'2026-09-25', body:[
+    ['oprava','Mapa se v noci netmavla. Vrstva dostávala správnou barvu, ale měla čtyřicetivteřinový plynulý přechod — a protože ji hra překresluje každou vteřinu, přechod se pokaždé rozeběhl znovu a zůstal na třech procentech místo dvaačtyřiceti. Teď se barva nastavuje jen při skutečné změně a přechod trvá 3 vteřiny.'],
+  ]},
   { verze:'12.8', datum:'2026-09-25', body:[
     ['info','V detailu dne je dočasný diagnostický řádek o vrstvě denní doby — u jednoho hráče se mapa v noci netmavla, i když výpočet i nastavení byly v pořádku. Řádek ukáže, jestli vrstva v stránce existuje, jak je velká a jakou barvu jí prohlížeč dal. Až se to vyřeší, zmizí.'],
   ]},
