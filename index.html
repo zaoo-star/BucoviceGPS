@@ -738,7 +738,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '12.1';
+const APP_VERSION = '12.2';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -12859,6 +12859,11 @@ function renderDenik(el){
 // Datum piš jako 'RRRR-MM-DD'. Verze musí odpovídat APP_VERSION, ať se pozná,
 // jestli hráč běží na aktuální verzi.
 const ZMENY = [
+  { verze:'12.2', datum:'2026-09-22', body:[
+    ['oprava','Pruh „Kdo drží město" se s padesáti hráči roztáhl mimo obrazovku a šoupal celým žebříčkem do stran. Teď se legenda zalamuje, ukazuje prvních šest hráčů a zbytek shrne. Přibyl i souhrn, kolik procent města drží hráči dohromady.'],
+    ['zmena','Žebříček ukazuje prvních 15 hráčů místo všech. Když jsi níž, tvoje karta se přidá zvlášť i s pořadím — dřív bylo potřeba projet desítky karet hráčů, kteří hru jednou otevřeli.'],
+    ['oprava','Velmi malé podíly (pod 0,1 %) se v pruhu ztrácely úplně — teď má každý hráč aspoň tenký proužek a procenta se u malých podílů píšou na dvě desetinná místa.'],
+  ]},
   { verze:'12.1', datum:'2026-09-22', body:[
     ['info','Měřením se ukázalo, že náhodné události jsou vyrovnané (za 90 dní +754 Kč kladných proti −821 Kč záporným) a noční škody přijdou jednou za dva týdny. Skutečný odtok je obyčejné chátrání bytů — sebere zhruba třetinu nájmu. Proto je teď v „Moje nemovitosti" vidět, kolik si na údržbu denně odložit. Do částky, která přijde o půlnoci, se to nepočítá, opravy platíš, až je uděláš.'],
   ]},
@@ -14019,25 +14024,42 @@ function renderLeaderboard(){
     const hraciCelkem = serazene.reduce((a, x) => a + x[1], 0);
     const mestoZbytek = Math.max(0, celkovaHodnota - hraciCelkem);
     const dil = (x) => (x / celkovaHodnota * 100);
-    return `<div class="card">
+    // max-width + wrap: se sedmdesáti hráči se legenda dřív roztáhla mimo obrazovku
+    // a šoupala celým panelem do stran.
+    return `<div class="card" style="overflow:hidden;">
       <h3>🗺️ Kdo drží město</h3>
       <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
-        ${serazene.map(([jmeno, hod]) => `<div title="${escapeHtml(jmeno)}: ${dil(hod).toFixed(1)} %"
-          style="width:${dil(hod)}%;background:${barvaHrace(jmeno).hex};"></div>`).join('')}
+        ${serazene.map(([jmeno, hod]) => `<div title="${escapeHtml(jmeno)}: ${dil(hod).toFixed(2)} %"
+          style="width:${dil(hod)}%;min-width:3px;background:${barvaHrace(jmeno).hex};"></div>`).join('')}
         <div style="flex:1;background:var(--panel2);" title="zbytek patří městu"></div>
       </div>
-      <p style="font-size:0.86em;margin:6px 0 0;">
-        ${serazene.map(([jmeno, hod]) => `<span style="white-space:nowrap;margin-right:10px;">
+      <p style="font-size:0.84em;color:var(--muted);margin:4px 0 0;">
+        Hráči drží dohromady <b style="color:var(--gold)">${dil(hraciCelkem).toFixed(1)} %</b> města, zbytek je pořád volný.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.86em;margin:6px 0 0;">
+        ${serazene.slice(0, 6).map(([jmeno, hod]) => `<span style="white-space:nowrap;">
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${barvaHrace(jmeno).hex};vertical-align:middle;"></span>
-          ${escapeHtml(jmeno)} ${dil(hod).toFixed(1)} %</span>`).join('')}
-        <span style="white-space:nowrap;color:var(--muted);">◻️ město ${dil(mestoZbytek).toFixed(1)} %</span>
-      </p>
+          ${escapeHtml(jmeno)} ${dil(hod).toFixed(dil(hod) < 0.1 ? 2 : 1)} %</span>`).join('')}
+        ${serazene.length > 6 ? `<span style="white-space:nowrap;color:var(--muted);">+ ${serazene.length - 6} ${serazene.length - 6 === 1 ? 'další hráč' : (serazene.length - 6 < 5 ? 'další hráči' : 'dalších hráčů')}</span>` : ''}
+        <span style="white-space:nowrap;color:var(--muted);">◻️ volné ${dil(mestoZbytek).toFixed(1)} %</span>
+      </div>
       <p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Počítá se z hodnoty podílů ve všech ${mesto.length} domech v Bučovicích.</p>
     </div>`;
   })();
 
   const medals = ['🥇','🥈','🥉'];
-  html += players.map((pl, i) => {
+  // Se čtyřiapadesáti hráči byl žebříček nekonečný a většina karet patřila lidem, kteří hru
+  // jednou otevřeli. Ukazujeme první patnáctku a tvoje místo, i když jsi níž.
+  const LIMIT_ZEBRICEK = 15;
+  const mojeMisto = players.findIndex(pl => pl.name === currentUser?.name);
+  const zobrazit = players.slice(0, LIMIT_ZEBRICEK);
+  const jaMimo = mojeMisto >= LIMIT_ZEBRICEK;
+  if(jaMimo) zobrazit.push(players[mojeMisto]);
+  if(players.length > LIMIT_ZEBRICEK){
+    html += `<p style="font-size:0.85em;color:var(--muted);text-align:center;margin:6px 0;">
+      Zobrazeno prvních ${LIMIT_ZEBRICEK} z ${players.length} hráčů${jaMimo ? ` — a tvoje ${mojeMisto + 1}. místo` : ''}.</p>`;
+  }
+  html += zobrazit.map((pl) => {
+    const i = players.indexOf(pl);
     const isMe = pl.name === currentUser?.name;
     const rank = medals[i] || `${i+1}.`;
     // Pruh ukazuje poměr k vedoucímu hráči — z čísel samotných se odstup pozná hůř.
