@@ -762,7 +762,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '13.0';
+const APP_VERSION = '13.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1048,6 +1048,21 @@ async function evictNpc(houseId, unitIdx){
 }
 
 // HTML se zájemci, kteří by šli nastěhovat do daného bytu (v detailu domu).
+// Proč zrovna tenhle zájemce nevyhovuje. Dřív byl u něj jen výčet požadavků a hráč si
+// musel sám dopočítat, co vadí — a když to byl nájem, vypadalo to, že vadí vylepšení.
+function duvodyNevyhovuje(p, u, npc){
+  const duvody = [];
+  const strop = npcStrop(p, npc);
+  if((u.rentPrice || 0) > strop)
+    duvody.push(`nájem je o ${Math.round(u.rentPrice - strop)} Kč vyšší, než zaplatí (unese ${strop} Kč)`);
+  if((u.condition || 0) < (npc.minCondition || 0))
+    duvody.push(`byt je ve stavu ${Math.round(u.condition || 0)} %, chce aspoň ${npc.minCondition} %`);
+  asArray(npc.needs).forEach(k => {
+    if(!hasUpgrade(p, k) && HOUSE_UPGRADES[k]) duvody.push(`v domě chybí ${HOUSE_UPGRADES[k].icon} ${HOUSE_UPGRADES[k].name.toLowerCase()}`);
+  });
+  return duvody;
+}
+
 function npcApplicantsHtml(p, unitIdx){
   refreshNpcTenants();
   const u = p.units[unitIdx];
@@ -1058,18 +1073,27 @@ function npcApplicantsHtml(p, unitIdx){
     <p style="font-size:0.9em;font-weight:600;">🏠 Zájemci o bydlení</p>`;
   if(!matching.length && !notMatching.length){
     html += `<p style="font-size:0.85em;color:var(--muted)">Zrovna nikdo nehledá byt. Zkus to za chvíli.</p>`;
+  } else if(!matching.length){
+    // Nejčastější důvod pojmenujeme rovnou — ať hráč nemusí procházet všechny zájemce.
+    const kvuliNajmu = notMatching.filter(n => (u.rentPrice || 0) > npcStrop(p, n)).length;
+    const fer = Math.round(fairRentForHouse(p));
+    html += `<p style="font-size:0.85em;color:var(--orange);margin:2px 0;">Nikomu z nich byt nesedí${
+      kvuliNajmu === notMatching.length ? ` — všem je na něj drahý. Férová cena tady je ${fer} Kč/den.` : '.'}</p>`;
   }
   matching.forEach(npc => {
     html += `<div style="background:var(--panel2);border-radius:8px;padding:6px 8px;margin-top:4px;">
       <p style="margin:0;font-weight:600;">${escapeHtml(npc.avatar)} ${escapeHtml(npc.name)} <span style="color:var(--accent);font-size:0.8em;">✓ vyhovuje</span></p>
-      <p style="margin:2px 0;font-size:0.8em;color:var(--muted)">${npcNeedsText(npc, p)}</p>
+      <p style="margin:2px 0;font-size:0.82em;">Zaplatí <b>${u.rentPrice} Kč/den</b>${
+        npcStrop(p, npc) > (u.rentPrice || 0) ? ` <span style="color:var(--muted)">— snesl by až ${npcStrop(p, npc)} Kč</span>` : ''}</p>
+      <p style="margin:2px 0;font-size:0.78em;color:var(--muted)">${npcNeedsText(npc, p)}</p>
       <button onclick="moveInNpc('${npc.id}','${p.id}',${unitIdx})">Nastěhovat (${u.rentPrice} Kč/den)</button>
     </div>`;
   });
   notMatching.forEach(npc => {
     html += `<div style="background:var(--panel2);border-radius:8px;padding:6px 8px;margin-top:4px;opacity:0.6;">
       <p style="margin:0;font-weight:600;">${escapeHtml(npc.avatar)} ${escapeHtml(npc.name)} <span style="color:var(--danger);font-size:0.8em;">nevyhovuje</span></p>
-      <p style="margin:2px 0;font-size:0.8em;color:var(--muted)">${npcNeedsText(npc, p)}</p>
+      ${duvodyNevyhovuje(p, u, npc).map(d => `<p style="margin:2px 0;font-size:0.82em;color:var(--danger)">✗ ${d}</p>`).join('')}
+      <p style="margin:2px 0;font-size:0.78em;color:var(--muted)">${npcNeedsText(npc, p)}</p>
     </div>`;
   });
   html += `</div>`;
@@ -1094,13 +1118,13 @@ function upgradePrinos(p, key){
     const usporа = bydlimTu ? LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) * SOLAR_LIVING_SAVE : 0;
     const celkem = denne + usporа;
     return { denne: celkem, dni: celkem > 0 ? Math.round(cena / celkem) : null,
-      popis: `vydělá ${denne.toFixed(1)} Kč/den${usporа > 0 ? ` a ušetří ${usporа.toFixed(1)} Kč/den na účtech` : ''}` };
+      popis: `vydělá ${des(denne, 1)} Kč/den${usporа > 0 ? ` a ušetří ${des(usporа, 1)} Kč/den na účtech` : ''}` };
   }
   if(key === 'insulation' || key === 'ac'){
     const podil = key === 'insulation' ? INSULATION_LIVING_SAVE : AC_LIVING_SAVE;
     const usporа = bydlimTu ? LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) * podil : 0;
     return { denne: usporа, dni: usporа > 0 ? Math.round(cena / usporа) : null,
-      popis: usporа > 0 ? `ušetří ${usporа.toFixed(1)} Kč/den na účtech` : 'sníží účty, až v domě budeš bydlet' };
+      popis: usporа > 0 ? `ušetří ${des(usporа, 1)} Kč/den na účtech` : 'sníží účty, až v domě budeš bydlet' };
   }
   return { denne: 0, dni: null, popis: '' };
 }
@@ -4506,7 +4530,7 @@ function poptavkaVypocet(p, typId){
     faktory: [
       `${obyvatel} bytů v okolí`,
       ruch > 0 ? `ruch ${ruch} (místa zájmu a firmy)` : 'žádný ruch v okolí',
-      konkurence > 0 ? `konkurence ${konkurence.toFixed(1)}` : 'bez konkurence',
+      konkurence > 0 ? `konkurence ${des(konkurence, 1)}` : 'bez konkurence',
       lok ? `${lok.ev.emoji} ${lok.ev.name}` : null
     ].filter(Boolean)
   };
@@ -4686,12 +4710,12 @@ function housingHint(name){
     const mam = (best.owners[name] || 0);
     const chybi = Math.max(0, 50.1 - mam);
     const cena = Math.round(housePricePerPercent(best) * chybi);
-    return `Podíl v domě <b>máš</b> (${mam.toFixed(0)} % v domě ${domKratce(best)}), ale na bydlení je potřeba <b>víc než 50 %</b>. ` +
-           `Chybí ti ${chybi.toFixed(0)} % (~${Math.round(cena).toLocaleString('cs-CZ')} Kč) — dokup je u toho domu. Nebo si zatím <b>najmi byt</b>, i to je levnější než být bez bydlení.`;
+    return `Podíl v domě <b>máš</b> (${des(mam, 0)} % v domě ${domKratce(best)}), ale na bydlení je potřeba <b>víc než 50 %</b>. ` +
+           `Chybí ti ${des(chybi, 0)} % (~${Math.round(cena).toLocaleString('cs-CZ')} Kč) — dokup je u toho domu. Nebo si zatím <b>najmi byt</b>, i to je levnější než být bez bydlení.`;
   }
   // většinu má, ale dům není určený k bydlení
   if(majority.useType !== 'residence'){
-    return `V domě ${domKratce(majority)} máš většinu (${(majority.owners[name]||0).toFixed(0)} %), ale dům zatím <b>není určený k bydlení</b>. ` +
+    return `V domě ${domKratce(majority)} máš většinu (${des((majority.owners[name]||0), 0)} %), ale dům zatím <b>není určený k bydlení</b>. ` +
            `Dojdi k němu a v jeho detailu ho přepni na <b>bydlení</b> — hned ti klesnou náklady.`;
   }
   return '';
@@ -6462,6 +6486,14 @@ const SOUNDS = {
 function playSound(name){ if(SOUNDS[name]) playTones(SOUNDS[name]); }
 
 // Escapuje text před vložením do HTML (obrana proti XSS z přezdívek/avatarů)
+// České desetinné číslo — s čárkou, ne s tečkou. Verze hry a technické hodnoty
+// se tímhle záměrně neformátují (13.2 musí zůstat 13.2).
+function des(x, mist){
+  const n = Number(x);
+  if(!isFinite(n)) return '0';
+  return n.toFixed(mist === undefined ? 1 : mist).replace('.', ',');
+}
+
 function escapeHtml(s){
   return String(s == null ? '' : s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
@@ -6964,7 +6996,7 @@ function listDormantPlayersHouses(){
       const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'');
       world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct, mod: Date.now(),
         type: 'fixed', price: cena, dormant: true };
-      addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${pct.toFixed(0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`, p.id);
+      addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${des(pct, 0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`, p.id);
     });
   });
 }
@@ -7640,23 +7672,23 @@ async function encounterKupec(enc, u){
 
   // Co prodej udělá. Nejdůležitější je ztráta rozhodovacího práva — o tu se Eva bála
   // a hra jí to neřekla.
-  let dusledky = `\n\nCo se stane:\n• Zbude ti ${zbude.toFixed(0)} % domu\n• Nájem ti bude chodit dál, ale jen z těch ${zbude.toFixed(0)} %`;
+  let dusledky = `\n\nCo se stane:\n• Zbude ti ${des(zbude, 0)} % domu\n• Nájem ti bude chodit dál, ale jen z těch ${des(zbude, 0)} %`;
   if(mam > 50 && zbude <= 50){
     dusledky += `\n⚠️ PŘIJDEŠ O ROZHODOVÁNÍ o domě (teď ho máš). Kupec pak sám určuje nájem, opravy i přestavbu — a ty s tím nic nenaděláš.`;
   }
   if(vylepseni) dusledky += `\n• Vylepšení zůstávají domu, nevrátí se ti`;
 
   const ok = await showConfirm(
-    `🧳 Kupec z okolí\n\n„Zajímá mě tenhle dům. Prodáš mi ${pct.toFixed(0)} %? Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — o ${enc.bonus} % víc, než je běžná cena."\n\n` +
+    `🧳 Kupec z okolí\n\n„Zajímá mě tenhle dům. Prodáš mi ${des(pct, 0)} %? Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — o ${enc.bonus} % víc, než je běžná cena."\n\n` +
     popis +
-    `\n\nNabídka: ${nabidka.toLocaleString('cs-CZ')} Kč za ${pct.toFixed(0)} % (tržní cena ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)` +
+    `\n\nNabídka: ${nabidka.toLocaleString('cs-CZ')} Kč za ${des(pct, 0)} % (tržní cena ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)` +
     dusledky +
     `\n\nProdat?`);
   if(!ok){ showToast('Nabídku jsi odmítl.'); return; }
 
   const kontrola = muzuProdat(u.name, p.id, pct);
   if(!kontrola.ok){
-    await showAlert(`Tenhle podíl ručí za hypotéku, prodat ho nejde. Volně máš jen ${kontrola.volne.toFixed(1)} %.`);
+    await showAlert(`Tenhle podíl ručí za hypotéku, prodat ho nejde. Volně máš jen ${des(kontrola.volne, 1)} %.`);
     return;
   }
 
@@ -7668,13 +7700,13 @@ async function encounterKupec(enc, u){
   // a hráč mohl skončit s penězi i podílem, nebo naopak přijít o obojí.
   stampOwners(p, u.name);
   pricti(u, 'akce', nabidka);
-  zapisDoDeniku('sell', `Prodal jsem kupci ${pct.toFixed(0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
+  zapisDoDeniku('sell', `Prodal jsem kupci ${des(pct, 0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
   recordSale(p, nabidka, pct, u.name, 'kupec z okolí');
-  addNews('sale', `🧳 ${u.name} prodal ${pct.toFixed(0)} % domu ${domKratce(p)} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`, p.id);
+  addNews('sale', `🧳 ${u.name} prodal ${des(pct, 0)} % domu ${domKratce(p)} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`, p.id);
   // Hráči po prodeji nevěděli, KTERÝ dům to byl, a museli to dohledávat podle podílů.
   await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.\n\n` +
     `🏠 ${domLabel(p)}${kde ? ' (' + kde + ')' : ''}\n` +
-    `Prodal jsi ${pct.toFixed(0)} %, zbývá ti ${zbude.toFixed(0)} %` +
+    `Prodal jsi ${des(pct, 0)} %, zbývá ti ${des(zbude, 0)} %` +
     `${zbude > 50 ? ' — pořád o něm rozhoduješ ty.' : (zbude > 0 ? ' — nájem ti chodí dál, ale o domě už rozhoduje někdo jiný.' : '.')}\n\n` +
     `Záznam najdeš v deníku (📔).`);
   saveWorld();
@@ -8721,9 +8753,9 @@ function renderSelected(id){
   const popInfo = popularityInfo(p);
   html += `<p style="font-size:0.92em;"><span style="color:${popInfo.color}">${popInfo.stars} ${popInfo.label}</span> <span style="color:var(--muted)">— historie zájmu o tuhle lokalitu (trvalé, neodeznívá)</span></p>`;
   const cyc = marketCycleLabel();
-  html += `<p style="font-size:0.92em;"><span style="color:${cyc.color}">${cyc.label}</span> <span style="color:var(--muted)">— celoměstský trh teď ceny ${marketMultiplier()>=1?'zvedá':'stahuje dolů'} (×${marketMultiplier().toFixed(2)})</span></p>`;
+  html += `<p style="font-size:0.92em;"><span style="color:${cyc.color}">${cyc.label}</span> <span style="color:var(--muted)">— celoměstský trh teď ceny ${marketMultiplier()>=1?'zvedá':'stahuje dolů'} (×${des(marketMultiplier(), 2)})</span></p>`;
   if(gentrify(p) > 1.01){
-    html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${gentrify(p).toFixed(2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
+    html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${des(gentrify(p), 2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
   }
   // Lokální událost u tohohle konkrétního domu — ať hráč ví, proč jsou dnes čísla jiná.
   const lokU = localEventFor(p);
@@ -8767,7 +8799,7 @@ function renderSelected(id){
       <p style="margin:4px 0;">Tržby <b>${plne} Kč/den</b> − zásoby <b style="color:var(--danger)">${zasobyDenne} Kč/den</b>
         = čistě <b style="color:var(--gold)">${cisteDenne} Kč/den</b></p>
       ${zas < 99 ? `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">Dnes kvůli nižším zásobám vydělává ${denne} Kč hrubě.</p>` : ''}
-      ${myPct > 0 ? `<p style="font-size:0.9em;margin:2px 0;">Tvůj podíl ${myPct.toFixed(0)} % → čistě <b style="color:var(--accent)">${Math.round(cisteDenne*myPct/100)} Kč/den pro tebe</b></p>` : ''}
+      ${myPct > 0 ? `<p style="font-size:0.9em;margin:2px 0;">Tvůj podíl ${des(myPct, 0)} % → čistě <b style="color:var(--accent)">${Math.round(cisteDenne*myPct/100)} Kč/den pro tebe</b></p>` : ''}
       ${iDecide ? `<div class="row">
         <button ${near?'':'disabled'} onclick="doplnitZasoby('${p.id}')">Doplnit zásoby${zas<99?` (${doplneniCena(p).toLocaleString('cs-CZ')} Kč)`:' — plné'}</button>
         ${p.provoz.prizemi ? `<button class="secondary" onclick="zavritProvozovnuPrizemi('${p.id}')">Zavřít provozovnu</button>` : ''}
@@ -8821,13 +8853,13 @@ function renderSelected(id){
     Object.entries(p.owners).sort((a,b)=>b[1]-a[1]).forEach(([name, pct]) => {
       const isDec = name === decider;
       const isMeOwner = name===currentUser?.name;
-      html += `<p style="font-size:1em;margin:2px 0;">${isDec ? '👑 ' : '• '}<b ${isMeOwner?'':'style="cursor:pointer;text-decoration:underline;"'} ${isMeOwner?'':profileAttr(name)}>${escapeHtml(name)}</b>: ${pct.toFixed(1)} %${isDec ? ' <span style="color:var(--muted)">(rozhoduje)</span>' : ''}${isMeOwner ? ' <span style="color:var(--accent)">(ty)</span>' : ''}</p>`;
+      html += `<p style="font-size:1em;margin:2px 0;">${isDec ? '👑 ' : '• '}<b ${isMeOwner?'':'style="cursor:pointer;text-decoration:underline;"'} ${isMeOwner?'':profileAttr(name)}>${escapeHtml(name)}</b>: ${des(pct, 1)} %${isDec ? ' <span style="color:var(--muted)">(rozhoduje)</span>' : ''}${isMeOwner ? ' <span style="color:var(--accent)">(ty)</span>' : ''}</p>`;
     });
-    if(free > 0) html += `<p style="font-size:1em;color:var(--muted);margin:2px 0;">Volných ${free.toFixed(1)} % k odkupu</p>`;
+    if(free > 0) html += `<p style="font-size:1em;color:var(--muted);margin:2px 0;">Volných ${des(free, 1)} % k odkupu</p>`;
     if(myPct > 0){
       const sazba = danSazba(currentUser.name);
       const myTaxDaily = effectiveHousePrice(p) * (myPct/100) * sazba.prumer / 365;
-      html += `<p style="font-size:0.92em;color:var(--orange);margin:2px 0;">🏛️ Daň z nemovitosti za tvůj podíl: ${myTaxDaily.toFixed(1)} Kč/den (${(sazba.prumer*100).toFixed(1)} % hodnoty ročně${
+      html += `<p style="font-size:0.92em;color:var(--orange);margin:2px 0;">🏛️ Daň z nemovitosti za tvůj podíl: ${des(myTaxDaily, 1)} Kč/den (${des((sazba.prumer*100), 1)} % hodnoty ročně${
         sazba.prumer > PROPERTY_TAX_RATE + 0.001 ? ' — vyšší sazba za velký majetek' : ''})</p>`;
     }
   }
@@ -8837,22 +8869,22 @@ function renderSelected(id){
   html += `<p style="font-size:0.92em;color:var(--muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">`;
   if(myPct > 0){
     if(iMajority){
-      html += `Vlastníš ${myPct.toFixed(1)} % (většina) — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájmu i opravách. Výnos se dělí všem podle podílů.`;
+      html += `Vlastníš ${des(myPct, 1)} % (většina) — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájmu i opravách. Výnos se dělí všem podle podílů.`;
     } else if(decider){
       const chybi = Math.max(0, 50.1 - myPct);
-      html += `Vlastníš ${myPct.toFixed(1)} %, ale rozhoduje <b>${decider}</b> (má přes polovinu). Bereš svůj podíl z nájmu, ale o domě nerozhoduješ.`;
-      if(free > chybi) html += ` Kdybys dokoupil ${chybi.toFixed(1)} %, převzal bys rozhodování ty.`;
+      html += `Vlastníš ${des(myPct, 1)} %, ale rozhoduje <b>${decider}</b> (má přes polovinu). Bereš svůj podíl z nájmu, ale o domě nerozhoduješ.`;
+      if(free > chybi) html += ` Kdybys dokoupil ${des(chybi, 1)} %, převzal bys rozhodování ty.`;
     } else {
       // nikdo nemá většinu — dům je zablokovaný, dokud ji někdo nezíská
       const chybi = Math.max(0, 50.1 - myPct);
-      html += `Vlastníš ${myPct.toFixed(1)} %, ale <b style="color:var(--orange)">nikdo tu nemá většinu</b>, takže o domě zatím nikdo nerozhoduje — nedá se přestavět ani nastavit nájem.`;
-      if(free >= chybi) html += ` Dokup ${chybi.toFixed(1)} % z volných ${free.toFixed(1)} % a rozhodování převezmeš ty.`;
+      html += `Vlastníš ${des(myPct, 1)} %, ale <b style="color:var(--orange)">nikdo tu nemá většinu</b>, takže o domě zatím nikdo nerozhoduje — nedá se přestavět ani nastavit nájem.`;
+      if(free >= chybi) html += ` Dokup ${des(chybi, 1)} % z volných ${des(free, 1)} % a rozhodování převezmeš ty.`;
       else html += ` Musel bys odkoupit podíl od někoho dalšího.`;
     }
   } else if(owned){
     html += decider
-      ? `Dům spravuje <b>${decider}</b>. ${free>0 ? `Můžeš odkoupit část z volných ${free.toFixed(1)} % a stát se spoluvlastníkem.` : 'Všechny podíly jsou rozebrané.'}`
-      : `Dům má víc menšinových vlastníků a <b style="color:var(--orange)">nikdo nemá většinu</b> — nikdo o něm nerozhoduje. ${free>0 ? `Kdo dokoupí přes 50 %, převezme rozhodování. Volných je ${free.toFixed(1)} %.` : 'Všechny podíly jsou rozebrané.'}`;
+      ? `Dům spravuje <b>${decider}</b>. ${free>0 ? `Můžeš odkoupit část z volných ${des(free, 1)} % a stát se spoluvlastníkem.` : 'Všechny podíly jsou rozebrané.'}`
+      : `Dům má víc menšinových vlastníků a <b style="color:var(--orange)">nikdo nemá většinu</b> — nikdo o něm nerozhoduje. ${free>0 ? `Kdo dokoupí přes 50 %, převezme rozhodování. Volných je ${des(free, 1)} %.` : 'Všechny podíly jsou rozebrané.'}`;
   } else {
     html += `Volný dům. Kup si podíl — kdo získá <b>víc než 50 %</b>, rozhoduje o využití, nájmu i opravách.`;
   }
@@ -8866,12 +8898,12 @@ function renderSelected(id){
     // Předem spočítáme, kolik % dostane — ať hráč vidí, jestli mu to stačí na bydlení (>50 %).
     const freePct = Math.min(free, Math.min(100, STARTER_HOME_VALUE / housePricePerPercent(p)));
     const staciNaBydleni = freePct > 50;
-    html += `<button ${near?'':'disabled'} style="background:var(--gold);color:#1a1a1a;" onclick="claimStarterHome('${p.id}')">🎁 Vzít zdarma — ${freePct.toFixed(0)} %${near?'':' (musíš být u domu)'}</button>`;
+    html += `<button ${near?'':'disabled'} style="background:var(--gold);color:#1a1a1a;" onclick="claimStarterHome('${p.id}')">🎁 Vzít zdarma — ${des(freePct, 0)} %${near?'':' (musíš být u domu)'}</button>`;
     // Nováček musí vidět, s jakým rozpočtem pracuje, jinak nemá jak poznat, proč zrovna
     // z tohohle domu dostane jen kus. Dřív se dozvěděl až výsledek.
     html += `<p style="font-size:0.85em;margin:4px 0;color:var(--muted)">
       Tvůj nárok má hodnotu <b>${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč</b>.
-      Tenhle dům stojí ${Math.round(effectiveHousePrice(p)).toLocaleString('cs-CZ')} Kč, proto z něj dostaneš ${freePct.toFixed(0)} %.
+      Tenhle dům stojí ${Math.round(effectiveHousePrice(p)).toLocaleString('cs-CZ')} Kč, proto z něj dostaneš ${des(freePct, 0)} %.
       ${freePct < 50 ? `Na celý dům by stačil takový do ${(STARTER_HOME_VALUE*2).toLocaleString('cs-CZ')} Kč.` : ''}</p>`;
     html += `<p style="font-size:0.85em;margin:4px 0;color:${staciNaBydleni?'var(--accent)':'var(--orange)'}">${
       staciNaBydleni
@@ -8892,9 +8924,9 @@ function renderSelected(id){
     const uver = Math.round(cenaUkazka - akontace);
     const splatka = Math.round(uver * MORTGAGE_MIN_PAYMENT_RATIO);
     html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
-      🏦 <b>Hypotéka</b> = zaplatíš jen ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny, zbytek půjčí banka za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně
+      🏦 <b>Hypotéka</b> = zaplatíš jen ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny, zbytek půjčí banka za ${des((MORTGAGE_ANNUAL_RATE*100), 0)} % ročně
       (běžná půjčka stojí ${Math.round(LOAN_ANNUAL_RATE*100)} %). Dům jí ručí, proto je levnější.<br>
-      Třeba ${ukazkaPct.toFixed(0)} % tohoto domu: dáš <b>${akontace.toLocaleString('cs-CZ')} Kč</b> hned,
+      Třeba ${des(ukazkaPct, 0)} % tohoto domu: dáš <b>${akontace.toLocaleString('cs-CZ')} Kč</b> hned,
       banka půjčí ${uver.toLocaleString('cs-CZ')} Kč a strhává si ~${splatka} Kč denně.
       Když přestaneš splácet, vezme si zpátky <b>právě tenhle podíl</b>.</p>`;
   }
@@ -8935,10 +8967,10 @@ function renderSelected(id){
       html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
         📈 Při plném obsazení: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
         ${mujTok !== null
-          ? `Při tvých <b>${myPct.toFixed(1)} %</b> by to bylo <b>${Math.round(mujTok)} Kč/den</b>${
+          ? `Při tvých <b>${des(myPct, 1)} %</b> by to bylo <b>${Math.round(mujTok)} Kč/den</b>${
               realne !== null && obsazene.length < byty.length ? ' — až se obsadí i volné byty' : ''}.`
           : (free > 0
-              ? `Za ${Math.min(10, free).toFixed(0)} % by ti chodilo <b style="color:var(--accent)">${Math.round(cisty * Math.min(10, free))} Kč/den</b>.`
+              ? `Za ${des(Math.min(10, free), 0)} % by ti chodilo <b style="color:var(--accent)">${Math.round(cisty * Math.min(10, free))} Kč/den</b>.`
               : 'Dům je celý rozebraný — volné podíly tu nejsou.')}
         Podíl se zaplatí za <b>${dni} dní</b> — to je ${rocne} % ročně.
         ${p.useType !== 'rental' ? ' <i>Platí, až dům předěláš na pronájem.</i>' : ''}</p>
@@ -8951,14 +8983,14 @@ function renderSelected(id){
   if(myPct > 0) html += `<button class="danger" onclick="sellHouseStake('${p.id}')">Prodat městu (${Math.round(HOUSE_SELL_RATIO*100)} %)</button>`;
   // Zástava musí být vidět dřív, než hráč zkusí prodávat.
   const hypo = currentUser && mortgageForHouse(world.users[currentUser.name], p.id);
-  if(hypo) html += `<p style="font-size:0.88em;color:var(--gold);margin:4px 0;">🏦 ${hypo.pct.toFixed(1)} % tohoto domu ručí za hypotéku (zbývá ${Math.round(hypo.balance).toLocaleString('cs-CZ')} Kč) — tuhle část nejde prodat, dokud ji nedoplatíš.</p>`;
+  if(hypo) html += `<p style="font-size:0.88em;color:var(--gold);margin:4px 0;">🏦 ${des(hypo.pct, 1)} % tohoto domu ručí za hypotéku (zbývá ${Math.round(hypo.balance).toLocaleString('cs-CZ')} Kč) — tuhle část nejde prodat, dokud ji nedoplatíš.</p>`;
   html += `</div>`;
   if(myPct > 0){
     const activeListing = myActiveListingFor(p.id);
     if(activeListing){
       const desc = activeListing.type==='auction'
-        ? `aukce ${activeListing.pct.toFixed(1)} % · nabídka ${activeListing.currentBid} Kč · končí den ${activeListing.endsAtDay}`
-        : `pevná cena ${activeListing.price} Kč za ${activeListing.pct.toFixed(1)} %`;
+        ? `aukce ${des(activeListing.pct, 1)} % · nabídka ${activeListing.currentBid} Kč · končí den ${activeListing.endsAtDay}`
+        : `pevná cena ${activeListing.price} Kč za ${des(activeListing.pct, 1)} %`;
       html += `<p style="font-size:0.92em;color:var(--accent2);margin-top:6px;">🏷️ Na tržišti: ${desc}</p>
         <div class="row"><button class="secondary" onclick="cancelListing('${activeListing.id}')">Zrušit nabídku z tržiště</button></div>`;
     } else {
@@ -9045,7 +9077,7 @@ function renderSelected(id){
           if(!pr || pr.denne <= 0.05) return pr && pr.popis
             ? `<p style="margin:2px 0;font-size:0.85em;color:var(--muted)">U tohohle domu ${pr.popis}.</p>` : '';
           return `<p style="margin:2px 0;font-size:0.85em;color:var(--accent);">
-            💡 U tohohle domu ${pr.popis} — dohromady <b>${pr.denne.toFixed(1)} Kč/den</b>${
+            💡 U tohohle domu ${pr.popis} — dohromady <b>${des(pr.denne, 1)} Kč/den</b>${
             pr.dni ? `, takže se vrátí za <b>${pr.dni} dní</b>` : ''}.</p>`;
         })()}
         ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
@@ -9066,7 +9098,7 @@ function renderSelected(id){
     const collectedTotal = p.units.reduce((s,u) => s + vybranyNajem(p, u), 0);
     const myShare = collectedTotal * (myPct/100);
     html += `<div class="card"><h3>🏘️ Pronájem — ${p.units.length} ${p.units.length===1?'byt':'bytů'}</h3>
-      <p>Reálný výběr: <b style="color:var(--gold)">${collectedTotal.toFixed(0)} Kč/den</b>${myPct>0?` · tvůj podíl (${myPct.toFixed(1)} %): <b style="color:var(--gold)">${myShare.toFixed(0)} Kč/den</b>`:''}</p>
+      <p>Reálný výběr: <b style="color:var(--gold)">${des(collectedTotal, 0)} Kč/den</b>${myPct>0?` · tvůj podíl (${des(myPct, 1)} %): <b style="color:var(--gold)">${des(myShare, 0)} Kč/den</b>`:''}</p>
       <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
       ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
     </div>`;
@@ -9161,23 +9193,23 @@ function renderSelected(id){
             // je správně ukázat, kolik to VYNESE, až se někdo nastěhuje.
             if(myPct >= 100){
               return realCollected
-                ? `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům, takže máš <b style="color:var(--gold)">${realCollected.toFixed(0)} Kč/den</b>.</p>`
+                ? `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům, takže máš <b style="color:var(--gold)">${des(realCollected, 0)} Kč/den</b>.</p>`
                 : `<p style="margin:3px 0 0 0;font-size:0.9em;">Vlastníš celý dům — až se někdo nastěhuje, půjde ti <b style="color:var(--gold)">${u.rentPrice} Kč/den</b>.</p>`;
             }
             return realCollected
               ? `<p style="margin:3px 0 0 0;font-size:0.9em;">
-                   Rozpad: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${myPct.toFixed(0)} %</b> =
-                   <b style="color:var(--gold)">${(realCollected*myPct/100).toFixed(0)} Kč/den pro tebe</b></p>`
+                   Rozpad: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${des(myPct, 0)} %</b> =
+                   <b style="color:var(--gold)">${des((realCollected*myPct/100), 0)} Kč/den pro tebe</b></p>`
               : `<p style="margin:3px 0 0 0;font-size:0.9em;">
-                   Až se někdo nastěhuje: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${myPct.toFixed(0)} %</b> =
-                   <b style="color:var(--gold)">${(u.rentPrice*myPct/100).toFixed(0)} Kč/den pro tebe</b></p>`;
+                   Až se někdo nastěhuje: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${des(myPct, 0)} %</b> =
+                   <b style="color:var(--gold)">${des((u.rentPrice*myPct/100), 0)} Kč/den pro tebe</b></p>`;
           })()}
           ${(() => {
             // Nájemník platí VŽDY celý nájem, ale rozdělí se jen mezi vlastníky podílů.
             // Neprodaná část domu patří městu a jeho díl nájmu propadne — hráče to mátlo.
             const volne = houseFreePct(p);
             if(volne < 1 || !realCollected) return '';
-            return `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Zbylých ${volne.toFixed(0)} % domu patří městu, takže ${(realCollected*volne/100).toFixed(0)} Kč/den jde jemu. Když podíl dokoupíš, poputují tobě.</p>`;
+            return `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Zbylých ${des(volne, 0)} % domu patří městu, takže ${des((realCollected*volne/100), 0)} Kč/den jde jemu. Když podíl dokoupíš, poputují tobě.</p>`;
           })()}
           ${(u.tenant || u.npc) && iDecide ? `<p style="margin:2px 0 0 0;font-size:0.85em;color:var(--accent)">Nájemník platí každý den, dokud mu byt udržuješ.</p>` : ''}
         </div>` : ''}
@@ -9221,7 +9253,7 @@ function renderSelected(id){
 
   html += infoBox('Co ovlivňuje cenu domu?', `
     <p><b>${popInfo.stars} Lokalita</b> — kolik podílů se v tomhle okolí za celou dobu koupilo. Je to jen <b>ukazatel zájmu ostatních</b>, na cenu vliv nemá. Hvězdičky přibývají a nikdy neubývají.</p>
-    <p><b>📊 Trh (${cyc.label})</b> — nálada v celém městě. Střídá se sama a hýbe cenami všech domů (teď ×${marketMultiplier().toFixed(2)}). V recesi se levněji nakupuje, v konjunktuře dráž prodává.</p>
+    <p><b>📊 Trh (${cyc.label})</b> — nálada v celém městě. Střídá se sama a hýbe cenami všech domů (teď ×${des(marketMultiplier(), 2)}). V recesi se levněji nakupuje, v konjunktuře dráž prodává.</p>
     <p><b>🔥 Zvýšený zájem</b> — když někdo koupí podíl poblíž, okolní domy krátce podraží. Bez dalších nákupů to samo odezní.</p>
     <p><b>🚧 Lokální událost</b> — rekonstrukce, nový park nebo havárie. Platí jen dnes a jen v okruhu, který je vyznačený na mapě.</p>
     <p><b>🔨 Vylepšení a přístavby</b> — zvedají hodnotu natrvalo: zateplení +4 %, klimatizace +3 %, rekonstrukce +7 %, solár +4 %, každý byt přistavěný do podkroví +25 % (nejvýš dva). Hodnota vzroste vždycky o něco méně, než úprava stála — jako ve skutečnosti. S hodnotou roste i férový nájem.</p>
@@ -9391,7 +9423,7 @@ function renderMine(){
       ${najem > 0.5 ? radek('🏘️ Nájem z obsazených bytů', najem, 'var(--accent)') : ''}
       ${provozy > 0.5 ? radek('🏪 Provozovny (dnešní tržby)', provozy, 'var(--accent)') : ''}
       ${solary > 0.5 ? radek('☀️ Solární panely', solary, 'var(--accent)') : ''}
-      ${radek(`🏛️ Daň z nemovitostí (${(danSazba(ja).prumer*100).toFixed(1)} % ročně)`, -dane, 'var(--orange)')}
+      ${radek(`🏛️ Daň z nemovitostí (${des((danSazba(ja).prumer*100), 1)} % ročně)`, -dane, 'var(--orange)')}
       ${danPrijem > 0.5 ? radek(`🏛️ Daň z příjmu (${Math.round(danPrijemCelkem / Math.max(1, hrubyMajetek) * 100)} % z výnosů)`, -danPrijem, 'var(--orange)') : ''}
       ${hypoteky > 0.5 ? radek('🏦 Splátky hypoték', -hypoteky, 'var(--orange)') : ''}
       <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
@@ -9427,15 +9459,15 @@ function renderMine(){
     // vlastnictví
     const spolu = Object.entries(p.owners || {}).filter(([n]) => n !== ja).sort((a, b) => b[1] - a[1]);
     detail += `<p class="mineSek">👑 Vlastnictví</p>
-      <p>Tvůj podíl <b>${d.pct.toFixed(1)} %</b>${iDecide ? ' — <span style="color:var(--accent)">rozhoduješ</span>'
+      <p>Tvůj podíl <b>${des(d.pct, 1)} %</b>${iDecide ? ' — <span style="color:var(--accent)">rozhoduješ</span>'
         : (rozhoduje ? ` · rozhoduje <span style="cursor:pointer;text-decoration:underline;" ${profileAttr(rozhoduje)}>${escapeHtml(rozhoduje)}</span>`
           : ' · <span style="color:var(--orange)">nikdo nemá většinu</span>')}</p>
-      ${spolu.length ? `<p style="font-size:0.88em;color:var(--muted);">Spolu s tebou: ${spolu.map(([n, v]) => `${escapeHtml(n)} ${v.toFixed(1)} %`).join(' · ')}</p>` : ''}`;
+      ${spolu.length ? `<p style="font-size:0.88em;color:var(--muted);">Spolu s tebou: ${spolu.map(([n, v]) => `${escapeHtml(n)} ${des(v, 1)} %`).join(' · ')}</p>` : ''}`;
 
     // hodnota
     detail += `<p class="mineSek">💎 Hodnota</p>
       <p>Celý dům ${kc(d.hodnota)} Kč · tvůj podíl <b>${kc(d.hodnota * d.dil)} Kč</b></p>
-      <p style="font-size:0.88em;color:var(--muted);">Daň z tvého podílu ${d.dan.toFixed(1)} Kč/den (${(danSazba(ja).prumer*100).toFixed(1)} % hodnoty ročně)</p>`;
+      <p style="font-size:0.88em;color:var(--muted);">Daň z tvého podílu ${des(d.dan, 1)} Kč/den (${des((danSazba(ja).prumer*100), 1)} % hodnoty ročně)</p>`;
 
     // byty
     if(p.useType === 'rental' && d.byty.length){
@@ -9475,8 +9507,8 @@ function renderMine(){
         const oprava = tydne * REPAIR_COST_PER_POINT * obydlenych;
         const bezRek = RENT_DECAY * 7 * REPAIR_COST_PER_POINT * obydlenych;
         detail += mRek
-          ? `<p style="font-size:0.86em;margin-top:4px;">🔧 Díky rekonstrukci chátrají byty o <b>${tydne.toFixed(1)} % týdně</b> (bez ní ${(RENT_DECAY*7).toFixed(1)} %). Opravy tě stojí asi <b>${kc(oprava)} Kč týdně</b> místo ${kc(bezRek)} Kč.</p>`
-          : `<p style="font-size:0.86em;color:var(--muted);margin-top:4px;">🔧 Byty chátrají asi o ${tydne.toFixed(1)} % týdně, opravy vyjdou zhruba na ${kc(oprava)} Kč týdně. S rekonstrukcí by to bylo 4× méně (${kc(oprava * RENOVATION_DECAY_MULT)} Kč) a noční škody by byly poloviční.</p>`;
+          ? `<p style="font-size:0.86em;margin-top:4px;">🔧 Díky rekonstrukci chátrají byty o <b>${des(tydne, 1)} % týdně</b> (bez ní ${des((RENT_DECAY*7), 1)} %). Opravy tě stojí asi <b>${kc(oprava)} Kč týdně</b> místo ${kc(bezRek)} Kč.</p>`
+          : `<p style="font-size:0.86em;color:var(--muted);margin-top:4px;">🔧 Byty chátrají asi o ${des(tydne, 1)} % týdně, opravy vyjdou zhruba na ${kc(oprava)} Kč týdně. S rekonstrukcí by to bylo 4× méně (${kc(oprava * RENOVATION_DECAY_MULT)} Kč) a noční škody by byly poloviční.</p>`;
       }
       if(d.mojeByty.length){
         const usetri = Math.round(LIVING_COST - dailyHousingCost(ja));
@@ -9552,7 +9584,7 @@ function renderMine(){
       <summary>
         <span class="mineIko">${ikona}</span>
         <span class="mineJm"><b>${domLabel(p)}</b><br>
-          <span style="font-size:0.82em;color:var(--muted);">${d.pct.toFixed(0)} %${iDecide ? ' 👑' : ''}${
+          <span style="font-size:0.82em;color:var(--muted);">${des(d.pct, 0)} %${iDecide ? ' 👑' : ''}${
             p.useType === 'rental' && d.byty.length ? ` · obsazeno ${d.obsazene.length + d.mojeByty.length}/${d.byty.length}` : ''}${
             d.provoz ? ` · zásoby ${d.zasoby} %` : ''}${d.problemy.length ? ' · <span style="color:var(--orange)">⚠️</span>' : ''}</span></span>
         <span class="mineKc" style="color:${d.prijem > 0.5 ? 'var(--gold)' : 'var(--muted)'}">${d.prijem > 0.5 ? '+' + kc(d.prijem) : '0'}<small> Kč</small></span>
@@ -9930,18 +9962,18 @@ async function buyHouseStake(id){
   const free = houseFreePct(p);
   if(free <= 0){ showAlert('Všechny podíly domu jsou rozebrané.'); return; }
   const pricePer = housePricePerPercent(p);
-  const pct = parseFloat(await showPrompt(`Kolik % domu koupit? (volných ${free.toFixed(1)} %, cena ${Math.round(pricePer)} Kč/1 %)`, Math.min(100, free)));
+  const pct = parseFloat(await showPrompt(`Kolik % domu koupit? (volných ${des(free, 1)} %, cena ${Math.round(pricePer)} Kč/1 %)`, Math.min(100, free)));
   if(isNaN(pct) || pct <= 0) return;
-  if(pct > free + 0.001){ showAlert(`Tolik volných % není — max ${free.toFixed(1)} %.`); return; }
+  if(pct > free + 0.001){ showAlert(`Tolik volných % není — max ${des(free, 1)} %.`); return; }
   const cost = Math.round(pricePer * pct);
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert(`Nemáš dost peněz (potřeba ${cost} Kč).`); return; }
   const budeMit = (p.owners?.[currentUser.name] || 0) + pct;
   if(!(await showConfirm(
-    `Koupit ${pct.toFixed(1)} % domu ${domKratce(p)}?\n\n` +
+    `Koupit ${des(pct, 1)} % domu ${domKratce(p)}?\n\n` +
     `Zaplatíš: ${cost.toLocaleString('cs-CZ')} Kč\n` +
     `Zůstane ti: ${Math.round(me.balance - cost).toLocaleString('cs-CZ')} Kč\n` +
-    `Budeš vlastnit: ${budeMit.toFixed(1)} %` +
+    `Budeš vlastnit: ${des(budeMit, 1)} %` +
     (budeMit > 50 ? ' — o domě budeš rozhodovat 👑' : ' (na rozhodování je potřeba přes 50 %)')))) return;
 
   // DRUHÁ POJISTKA k odkládání sloučení: dům si vyzvedneme ZNOVU, až když hráč potvrdil.
@@ -9951,7 +9983,7 @@ async function buyHouseStake(id){
   if(!p){ showAlert('Dům se mezitím ztratil ze světa, nákup se neprovedl. Zkus to prosím znovu.'); return; }
   const volneTeq = houseFreePct(p);
   if(pct > volneTeq + 0.001){
-    showAlert(`Někdo byl rychlejší — volných už je jen ${volneTeq.toFixed(1)} %. Nákup se neprovedl, peníze ti zůstaly.`);
+    showAlert(`Někdo byl rychlejší — volných už je jen ${des(volneTeq, 1)} %. Nákup se neprovedl, peníze ti zůstaly.`);
     return;
   }
   me.balance -= cost;
@@ -9975,20 +10007,20 @@ async function buyHouseStake(id){
   });
   p.popularity = (p.popularity || 0) + pct/100;
 
-  zapisDoDeniku('buy', `Koupil jsem ${pct.toFixed(0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
+  zapisDoDeniku('buy', `Koupil jsem ${des(pct, 0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
   {
     const trzni = houseMarketPricePerPercent(p) * pct;
     const rozdil = trzni > 0 ? (cost / trzni - 1) * 100 : 0;
     const dodatek = Math.abs(rozdil) < 6 ? '' : (rozdil > 0 ? ` — o ${Math.round(rozdil)} % nad tržní cenou` : ` — o ${Math.round(-rozdil)} % pod tržní cenou`);
     addNews('buy', znění(`koupe|${p.id}|${currentUser.name}`, [
-      `🏠 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${domKratce(p)} za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
-      `🏠 Dům ${domKratce(p)} má nového spolumajitele: ${currentUser.name} bere ${pct.toFixed(0)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
-      `🏠 V domě ${domKratce(p)} se obchodovalo — ${currentUser.name} koupil ${pct.toFixed(0)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`
+      `🏠 ${currentUser.name} koupil ${des(pct, 0)} % domu ${domKratce(p)} za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
+      `🏠 Dům ${domKratce(p)} má nového spolumajitele: ${currentUser.name} bere ${des(pct, 0)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
+      `🏠 V domě ${domKratce(p)} se obchodovalo — ${currentUser.name} koupil ${des(pct, 0)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`
     ]), p.id);
   }
   saveWorld(); refreshAll();
   playSound('buy');
-  showAlert(`Koupeno ${pct.toFixed(1)} % domu za ${cost} Kč.${bump>1.001?' Zájem zvedl ceny i oblíbenost okolí.':''}`);
+  showAlert(`Koupeno ${des(pct, 1)} % domu za ${cost} Kč.${bump>1.001?' Zájem zvedl ceny i oblíbenost okolí.':''}`);
 }
 
 async function claimStarterHome(id){
@@ -10009,7 +10041,7 @@ async function claimStarterHome(id){
   // a pořád platil plné náklady bez bydlení — nabídneme mu vycouvat.
   if(pct <= 50){
     const ok = await showConfirm(
-      `Pozor: tenhle dům je drahý, zdarma z něj dostaneš jen ${pct.toFixed(0)} %.\n\n` +
+      `Pozor: tenhle dům je drahý, zdarma z něj dostaneš jen ${des(pct, 0)} %.\n\n` +
       `Na vlastní bydlení potřebuješ VÍC než 50 % domu. S menšinovým podílem budeš dál platit ` +
       `${LIVING_COST} Kč/den jako bez bydlení.\n\n` +
       `Doporučuju vybrat levnější dům (nárok máš jen jednou). Chceš přesto tenhle?`);
@@ -10020,12 +10052,12 @@ async function claimStarterHome(id){
   me.starterHomeAvailable = false;
   if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; stampHouse(p); } // hned kde bydlet
 
-  addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${pct.toFixed(0)} % domu ${domKratce(p)} zdarma.`, p.id);
+  addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${des(pct, 0)} % domu ${domKratce(p)} zdarma.`, p.id);
   saveWorld(); refreshAll();
   playSound('buy');
   showAlert(p.useType === 'residence'
-    ? `Gratuluju! Získal jsi ${pct.toFixed(0)} % domu zdarma a rovnou v něm bydlíš — klesly ti denní náklady. Další nemovitosti už se kupují za peníze.`
-    : `Získal jsi ${pct.toFixed(0)} % domu zdarma. Je to ale menšinový podíl, takže tu zatím nebydlíš — dokup podíl přes 50 %, nebo si zatím najmi byt. Podíl ti mezitím vydělává na hodnotě.`);
+    ? `Gratuluju! Získal jsi ${des(pct, 0)} % domu zdarma a rovnou v něm bydlíš — klesly ti denní náklady. Další nemovitosti už se kupují za peníze.`
+    : `Získal jsi ${des(pct, 0)} % domu zdarma. Je to ale menšinový podíl, takže tu zatím nebydlíš — dokup podíl přes 50 %, nebo si zatím najmi byt. Podíl ti mezitím vydělává na hodnotě.`);
 }
 
 async function sellHouseStake(id){
@@ -10035,12 +10067,12 @@ async function sellHouseStake(id){
   const marketPer = houseMarketPricePerPercent(p);
   const refundPer = Math.round(marketPer * HOUSE_SELL_RATIO);
   const condNote = (p.useType==='rental' && p.units) ? ` Cena je snížená kvůli stavu domu.` : '';
-  const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${myPct.toFixed(1)} %, dostaneš ~${refundPer} Kč za 1 %.${condNote})`, myPct));
+  const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${des(myPct, 1)} %, dostaneš ~${refundPer} Kč za 1 %.${condNote})`, myPct));
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
   { const k = muzuProdat(currentUser.name, id, pct);
     if(!k.ok){
-      showAlert(`Tenhle podíl ručí za hypotéku, nejde ho prodat.\n\nVázáno: ${k.vazano.toFixed(1)} %\nVolně k prodeji: ${k.volne.toFixed(1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNejdřív hypotéku doplať v bance.`);
+      showAlert(`Tenhle podíl ručí za hypotéku, nejde ho prodat.\n\nVázáno: ${des(k.vazano, 1)} %\nVolně k prodeji: ${des(k.volne, 1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNejdřív hypotéku doplať v bance.`);
       return; } }
   const refund = Math.round(marketPer * pct * HOUSE_SELL_RATIO);
   // Varování před prodejem — po prodeji většiny přijdeš o rozhodování a při prodeji
@@ -10049,8 +10081,8 @@ async function sellHouseStake(id){
   const ztratimVetsinu = myPct > 50 && zbyde <= 50;
   const prodavamVse = zbyde <= 0.001;
   const jePronajem = p.useType === 'rental' && asArray(p.units).length;
-  let varovani = `Prodat ${pct.toFixed(1)} % domu ${domKratce(p)} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n`;
-  if(zbyde > 0.001) varovani += `Zůstane ti ${zbyde.toFixed(1)} % domu.\n`;
+  let varovani = `Prodat ${des(pct, 1)} % domu ${domKratce(p)} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n`;
+  if(zbyde > 0.001) varovani += `Zůstane ti ${des(zbyde, 1)} % domu.\n`;
   if(prodavamVse && jePronajem){
     varovani += `\n⚠️ Prodáváš celý svůj podíl. Pokud v domě nezůstane žádný majitel, ZRUŠÍ SE i byty — přestavbu bys musel platit znovu.\n`;
   } else if(ztratimVetsinu){
@@ -10072,11 +10104,11 @@ async function sellHouseStake(id){
   // Prodej městu se do kroniky nezapisoval, takže v příběhu domu chyběly celé převody.
   recordSale(p, refund, pct, currentUser.name, 'město', false);   // výkup se slevou ≠ tržní cena
   if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; stampHouse(p); }
-  zapisDoDeniku('sell', `Prodal jsem městu ${pct.toFixed(0)} % domu ${domKratce(p)}`, refund);
-  addNews('sell', `💸 ${currentUser.name} prodal ${pct.toFixed(0)} % domu ${domKratce(p)} za ${refund} Kč.`, p.id);
+  zapisDoDeniku('sell', `Prodal jsem městu ${des(pct, 0)} % domu ${domKratce(p)}`, refund);
+  addNews('sell', `💸 ${currentUser.name} prodal ${des(pct, 0)} % domu ${domKratce(p)} za ${refund} Kč.`, p.id);
   saveWorld(); refreshAll();
   playSound('sell');
-  showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
+  showAlert(`Prodáno ${des(pct, 1)} % za ${refund} Kč.`);
 }
 
 // ===== TRŽIŠTĚ NEMOVITOSTÍ (prodej podílu mezi hráči) =====
@@ -10091,17 +10123,17 @@ async function listHouseStake(id){
   const myPct = myHousePct(p);
   if(myPct <= 0){ showAlert('V tomhle domě nemáš podíl.'); return; }
   if(myActiveListingFor(id)){ showAlert('Tenhle dům už máš na tržišti. Nejdřív zruš starou nabídku.'); return; }
-  const pct = parseFloat(await showPrompt(`Kolik % nabídnout k prodeji? (vlastníš ${myPct.toFixed(1)} %)`, myPct));
+  const pct = parseFloat(await showPrompt(`Kolik % nabídnout k prodeji? (vlastníš ${des(myPct, 1)} %)`, myPct));
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct + 0.001){ showAlert('Tolik nevlastníš.'); return; }
   { const k = muzuProdat(currentUser.name, id, pct);
     if(!k.ok){
-      showAlert(`Tenhle podíl ručí za hypotéku, nejde ho nabídnout.\n\nVázáno: ${k.vazano.toFixed(1)} %\nVolně k prodeji: ${k.volne.toFixed(1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNejdřív hypotéku doplať v bance.`);
+      showAlert(`Tenhle podíl ručí za hypotéku, nejde ho nabídnout.\n\nVázáno: ${des(k.vazano, 1)} %\nVolně k prodeji: ${des(k.volne, 1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNejdřív hypotéku doplať v bance.`);
       return; } }
   const isAuction = await showConfirm('OK = aukce (hráči přihazují 2 dny), Zrušit = pevná cena (kdo chce, koupí hned).');
   const marketRef = Math.round(houseMarketPricePerPercent(p) * pct);
   if(isAuction){
-    const vstup = parseInt(await showPrompt(`Vyvolávací cena aukce za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
+    const vstup = parseInt(await showPrompt(`Vyvolávací cena aukce za ${des(pct, 1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
     const overeno = platnaCena(vstup, marketRef);
     if(!overeno) return;
     if(overeno.chyba){ showAlert(overeno.chyba); return; }
@@ -10109,17 +10141,17 @@ async function listHouseStake(id){
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction', mod: Date.now(),
       startBid, currentBid:startBid, highestBidder:null, endsAtDay: world.day + AUCTION_DURATION_DAYS};
-    addNews('market', `🔨 ${currentUser.name} vydražuje ${pct.toFixed(0)} % domu ${domKratce(p)} (od ${startBid} Kč).`, p.id);
+    addNews('market', `🔨 ${currentUser.name} vydražuje ${des(pct, 0)} % domu ${domKratce(p)} (od ${startBid} Kč).`, p.id);
     showAlert(`Aukce spuštěna — končí za ${AUCTION_DURATION_DAYS} herní dny.`);
   } else {
-    const vstup = parseInt(await showPrompt(`Pevná cena za ${pct.toFixed(1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
+    const vstup = parseInt(await showPrompt(`Pevná cena za ${des(pct, 1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
     const overeno = platnaCena(vstup, marketRef);
     if(!overeno) return;
     if(overeno.chyba){ showAlert(overeno.chyba); return; }
     const price = overeno.cena;
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price, mod: Date.now()};
-    addNews('market', `🏷️ ${currentUser.name} nabízí ${pct.toFixed(0)} % domu ${domKratce(p)} za ${price} Kč.`, p.id);
+    addNews('market', `🏷️ ${currentUser.name} nabízí ${des(pct, 0)} % domu ${domKratce(p)} za ${price} Kč.`, p.id);
     showAlert(`Podíl nabídnut na tržišti za ${price} Kč.`);
   }
   saveWorld(); refreshAll(); renderMarket();
@@ -10130,7 +10162,7 @@ async function cancelListing(listingId){
   if(!l) return;
   const jeAukce = l.type === 'auction';
   if(!(await showConfirm(
-    `Stáhnout nabídku ${l.pct.toFixed(1)} % domu ${domKratce(l.houseId)}?` +
+    `Stáhnout nabídku ${des(l.pct, 1)} % domu ${domKratce(l.houseId)}?` +
     (jeAukce && l.highestBidder
       ? `\n\n⚠️ V aukci už někdo přihodil ${l.currentBid.toLocaleString('cs-CZ')} Kč — peníze se mu vrátí a o nabídku přijdeš.`
       : `\n\nPodíl ti zůstane, jen ho přestaneš nabízet.`)))) return;
@@ -10187,7 +10219,7 @@ async function buyListing(listingId){
   const seller = world.users[l.seller];
   // ověřit, že prodejce pořád podíl má
   if((p.owners?.[l.seller]||0) < l.pct - 0.001){ showAlert('Prodejce už podíl nemá, nabídka je neplatná.'); closeListing(listingId); saveWorld(); renderMarket(); return; }
-  if(!(await showConfirm(`Koupit ${l.pct.toFixed(1)} % domu ${domKratce(l.houseId)} od ${l.seller} za ${l.price} Kč?`))) return;
+  if(!(await showConfirm(`Koupit ${des(l.pct, 1)} % domu ${domKratce(l.houseId)} od ${l.seller} za ${l.price} Kč?`))) return;
   const fee = Math.round(l.price * MARKET_FEE);
   me.balance -= l.price;
   if(seller) seller.balance += (l.price - fee); // prodejci jde cena minus provize (provize městu = mizí)
@@ -10198,11 +10230,11 @@ async function buyListing(listingId){
   stampOwners(p, l.seller, currentUser.name);
   zapisNedokoncenyNakup(currentUser.name, p.id, predKoupi, l.pct, l.price);
   recordSale(p, l.price, l.pct, l.seller, currentUser.name); // reálný prodej posune hodnotu domu
-  addNews('trade', `🏷️ ${currentUser.name} koupil ${l.pct.toFixed(0)} % domu ${domKratce(p)} od hráče ${l.seller} za ${l.price} Kč.`, p.id);
+  addNews('trade', `🏷️ ${currentUser.name} koupil ${des(l.pct, 0)} % domu ${domKratce(p)} od hráče ${l.seller} za ${l.price} Kč.`, p.id);
   closeListing(listingId);
   saveWorld(); refreshAll(); renderMarket();
   playSound('buy');
-  showAlert(`Koupeno ${l.pct.toFixed(1)} % za ${l.price} Kč.`);
+  showAlert(`Koupeno ${des(l.pct, 1)} % za ${l.price} Kč.`);
 }
 
 // Přihození v aukci (peníze se zablokují, předchozímu se vrátí)
@@ -10211,7 +10243,7 @@ async function bidListing(listingId){
   if(!l || l.type!=='auction') return;
   if(l.seller === currentUser.name){ showAlert('Nemůžeš dražit vlastní aukci.'); return; }
   const minBid = l.highestBidder ? l.currentBid + 1 : l.currentBid;
-  const vstupBid = parseInt(await showPrompt(`Tvá nabídka za ${l.pct.toFixed(1)} % (min. ${minBid} Kč):`, minBid), 10);
+  const vstupBid = parseInt(await showPrompt(`Tvá nabídka za ${des(l.pct, 1)} % (min. ${minBid} Kč):`, minBid), 10);
   if(isNaN(vstupBid) || vstupBid < minBid){ showAlert(`Musíš přihodit aspoň ${minBid} Kč.`); return; }
   const overenyBid = platnaCena(vstupBid, Math.max(minBid, Math.round(houseMarketPricePerPercent(world.parcels[l.houseId]) * l.pct)));
   if(!overenyBid) return;
@@ -10221,7 +10253,7 @@ async function bidListing(listingId){
   if(me.balance < bid){ showAlert('Nemáš dost peněz na tuhle nabídku.'); return; }
   if(l.highestBidder === currentUser.name){ showAlert('Už vedeš v této aukci.'); return; }
   if(!(await showConfirm(
-    `Přihodit ${bid.toLocaleString('cs-CZ')} Kč za ${l.pct.toFixed(1)} % domu?\n\n` +
+    `Přihodit ${bid.toLocaleString('cs-CZ')} Kč za ${des(l.pct, 1)} % domu?\n\n` +
     `Peníze se ti hned zablokují (nebudeš je moct utratit), dokud aukce neskončí.\n` +
     `Když tě někdo přebije, dostaneš je celé zpátky.\n\n` +
     `Aukce končí den ${l.endsAtDay}. Zůstane ti volných ${Math.round(me.balance - bid).toLocaleString('cs-CZ')} Kč.`))) return;
@@ -10252,7 +10284,7 @@ function resolveAuctions(){
       p.owners[l.highestBidder] = (p.owners[l.highestBidder]||0) + l.pct;
       stampOwners(p, l.seller, l.highestBidder);
       recordSale(p, l.currentBid, l.pct, l.seller, l.highestBidder); // vydražená cena posune hodnotu domu
-      addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${l.pct.toFixed(0)} % domu ${domKratce(p)} za ${l.currentBid} Kč.`, p.id);
+      addNews('trade', `🔨 ${l.highestBidder} vyhrál aukci na ${des(l.pct, 0)} % domu ${domKratce(p)} za ${l.currentBid} Kč.`, p.id);
     } else if(l.highestBidder && world.users[l.highestBidder]){
       // prodej se nekonal (prodejce už podíl nemá) — vrátit dražiteli peníze
       world.users[l.highestBidder].balance += l.currentBid;
@@ -10330,7 +10362,7 @@ function financeBreakdown(name){
       .filter(p => p.useType==='rental' && (p.owners?.[name]||0) > 0)
       .map(p => p.owners[name]);
     const prumer = podily.length ? podily.reduce((a,b)=>a+b,0)/podily.length : 100;
-    const popis = prumer < 99.5 ? ` — tvůj podíl ${prumer.toFixed(0)} %` : '';
+    const popis = prumer < 99.5 ? ` — tvůj podíl ${des(prumer, 0)} %` : '';
     income.push({label:`🏘️ Nájem z bytů (reálně vybráno${popis})`, amount: rentIncome});
   }
   if(solarIncome>0) income.push({label:'☀️ Solární panely', amount: solarIncome});
@@ -10391,7 +10423,7 @@ function financeBreakdown(name){
   // daň z nemovitosti
   let tax=0;
   tax = danSazba(name).dan / DAYS_PER_YEAR;
-  if(tax>0.5) expense.push({label:`🏛️ Daň z nemovitosti (${(danSazba(name).prumer*100).toFixed(1)} % ročně)`, amount: tax});
+  if(tax>0.5) expense.push({label:`🏛️ Daň z nemovitosti (${des((danSazba(name).prumer*100), 1)} % ročně)`, amount: tax});
   // Daň z příjmu z majetku — počítá se ze VŠECH výnosů (nájem, provozovny, firmy, solár),
   // stejným vzorcem jako o půlnoci, ať se odhad se skutečností nerozejde.
   const hrubyMajetek = rentIncome + provozIncome + bizIncome + solarIncome;
@@ -10521,10 +10553,10 @@ async function buyHouseStakeOnMortgage(id){
   }
 
   const vstup = parseInt(await showPrompt(
-    `Kolik % domu koupit na hypotéku? (volných ${volne.toFixed(1)} %, zvládneš ${maxPct.toFixed(0)} %)\n\n` +
+    `Kolik % domu koupit na hypotéku? (volných ${des(volne, 1)} %, zvládneš ${des(maxPct, 0)} %)\n\n` +
     `Cena za 1 %: ${Math.round(cenaZaProcento).toLocaleString('cs-CZ')} Kč\n` +
     `Z toho zaplatíš hned: ${Math.round(cenaZaProcento*MORTGAGE_DOWNPAYMENT_RATIO).toLocaleString('cs-CZ')} Kč (${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} %)\n` +
-    `Zbytek půjčí banka za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně.`, Math.min(10, maxPct)), 10);
+    `Zbytek půjčí banka za ${des((MORTGAGE_ANNUAL_RATE*100), 0)} % ročně.`, Math.min(10, maxPct)), 10);
   if(isNaN(vstup) || vstup <= 0) return;
   const pct = Math.min(vstup, volne, maxPct);
 
@@ -10536,10 +10568,10 @@ async function buyHouseStakeOnMortgage(id){
   if(me.balance < akontace){ showAlert('Na akontaci nemáš dost peněz.'); return; }
 
   if(!(await showConfirm(
-    `Koupit ${pct.toFixed(1)} % domu ${domKratce(p)} na hypotéku?\n\n` +
+    `Koupit ${des(pct, 1)} % domu ${domKratce(p)} na hypotéku?\n\n` +
     `Cena celkem: ${cena.toLocaleString('cs-CZ')} Kč\n` +
     `Zaplatíš hned: ${akontace.toLocaleString('cs-CZ')} Kč\n` +
-    `Půjčka od banky: ${uver.toLocaleString('cs-CZ')} Kč za ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně\n` +
+    `Půjčka od banky: ${uver.toLocaleString('cs-CZ')} Kč za ${des((MORTGAGE_ANNUAL_RATE*100), 0)} % ročně\n` +
     `Banka si bude strhávat ~${dennaSplatka} Kč denně\n\n` +
     `⚠️ Dům ručí za dluh. Když přestaneš splácet, banka si vezme právě tenhle podíl.`))) return;
 
@@ -10547,7 +10579,7 @@ async function buyHouseStakeOnMortgage(id){
   const p2 = world.parcels[id];
   if(!p2){ showAlert('Dům se mezitím ztratil ze světa, nákup se neprovedl.'); return; }
   if(pct > houseFreePct(p2) + 0.001){
-    showAlert(`Někdo byl rychlejší — volných je jen ${houseFreePct(p2).toFixed(1)} %. Nákup se neprovedl.`);
+    showAlert(`Někdo byl rychlejší — volných je jen ${des(houseFreePct(p2), 1)} %. Nákup se neprovedl.`);
     return;
   }
 
@@ -10567,9 +10599,9 @@ async function buyHouseStakeOnMortgage(id){
   });
 
   recordSale(p2, cena, pct, 'město', currentUser.name);
-  addNews('trade', `🏦 ${currentUser.name} koupil ${pct.toFixed(0)} % domu ${domKratce(p2)} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`, p2.id);
+  addNews('trade', `🏦 ${currentUser.name} koupil ${des(pct, 0)} % domu ${domKratce(p2)} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`, p2.id);
   saveWorld(); refreshAll(); playSound('buy');
-  showAlert(`Hotovo! Vlastníš ${pct.toFixed(1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
+  showAlert(`Hotovo! Vlastníš ${des(pct, 1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
 }
 
 async function repayLoan(loanId){
@@ -10614,7 +10646,7 @@ function zabavZastavu(user, loan, p, duvod){
   if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; stampHouse(p); }
 
   applySeizureProceeds(user, loan, vytezek);
-  addNews('bank', `🏦 Banka zabavila ${bere.toFixed(0)} % domu ${domKratce(p)} hráči ${jmeno} — ${duvod}.`, p.id);
+  addNews('bank', `🏦 Banka zabavila ${des(bere, 0)} % domu ${domKratce(p)} hráči ${jmeno} — ${duvod}.`, p.id);
   if(currentUser && currentUser.name === jmeno){
     showAlert(`🏦 Banka si vzala zastavený podíl v domě ${domKratce(p)} (${duvod}). Prodejem se pokryla část dluhu.`);
   }
@@ -10643,7 +10675,7 @@ function seizeAssetForDebt(user, loan){
   if(house){
     const pct = house.owners[owner];
     const proceeds = Math.round(housePricePerPercent(house) * pct * HOUSE_SELL_RATIO);
-    seizedDesc = `${pct.toFixed(1)} % domu ${domKratce(house)} (výplata ${proceeds} Kč)`;
+    seizedDesc = `${des(pct, 1)} % domu ${domKratce(house)} (výplata ${proceeds} Kč)`;
     applySeizureProceeds(user, loan, proceeds);
     delete house.owners[owner];
     stampOwners(house, owner);
@@ -10653,7 +10685,7 @@ function seizeAssetForDebt(user, loan){
     if(biz){
       const pct = biz.owners[owner];
       const proceeds = Math.round(pricePerPercent(biz) * pct * BUSINESS_SELL_RATIO);
-      seizedDesc = `${pct.toFixed(1)} % podílu v ${biz.name} (výplata ${proceeds} Kč)`;
+      seizedDesc = `${des(pct, 1)} % podílu v ${biz.name} (výplata ${proceeds} Kč)`;
       applySeizureProceeds(user, loan, proceeds);
       delete biz.owners[owner];
       stampBizOwners(biz, owner);
@@ -10742,7 +10774,7 @@ function renderMarket(){
       const leads = l.highestBidder === currentUser?.name;
       const daysLeft = Math.max(0, l.endsAtDay - world.day);
       return `<div class="card">
-        <h3>🔨 Aukce — ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
+        <h3>🔨 Aukce — ${houseLabel} <span class="badge badge-rent">${des(l.pct, 1)} %</span></h3>
         <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(l.seller)}>${escapeHtml(l.seller)}</span>`}</p>
         <p>Aktuální nabídka: <b style="color:var(--gold)">${l.currentBid} Kč</b>${l.highestBidder?` (vede ${leads?'ty':`<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(l.highestBidder)}>${escapeHtml(l.highestBidder)}</span>`})`:' – zatím nikdo'}</p>
         <p style="font-size:0.92em;color:var(--muted)">Končí za ${daysLeft} ${daysLeft===1?'den':'dní'} (den ${l.endsAtDay})</p>
@@ -10751,7 +10783,7 @@ function renderMarket(){
       </div>`;
     } else {
       return `<div class="card">
-        <h3>${l.dormant?"🏚️":"🏷️"} ${houseLabel} <span class="badge badge-rent">${l.pct.toFixed(1)} %</span></h3>
+        <h3>${l.dormant?"🏚️":"🏷️"} ${houseLabel} <span class="badge badge-rent">${des(l.pct, 1)} %</span></h3>
         <p>Prodává: ${mine ? l.seller+' (ty)' : `<span style="cursor:pointer;text-decoration:underline;" ${profileAttr(l.seller)}>${escapeHtml(l.seller)}</span>`}</p>
         ${l.dormant ? `<p style="font-size:0.88em;color:var(--orange);margin:2px 0;">Majitel dlouho nehraje — město dům nabídlo levněji. Peníze dostane on.</p>` : ''}
         <p>Cena: <b style="color:var(--gold)">${l.price} Kč</b> <span style="font-size:0.92em;color:var(--muted)">(${Math.round(l.price/l.pct)} Kč/1 %)</span></p>
@@ -11838,7 +11870,7 @@ function renderAdmin(){
     <h3>⚙️ Ekonomika</h3>
     <div class="row"><button class="secondary" onclick="adminResetMarket()">Resetovat trh (na stabilní)</button></div>
     <div class="row"><button class="secondary" onclick="adminResetInflation()">Resetovat inflaci (na 1,0)</button></div>
-    <p style="font-size:0.85em;color:var(--muted)">Trh teď: ${marketCycleLabel().label} (×${marketMultiplier().toFixed(2)}) · inflace ×${inflationMult().toFixed(3)}</p>
+    <p style="font-size:0.85em;color:var(--muted)">Trh teď: ${marketCycleLabel().label} (×${des(marketMultiplier(), 2)}) · inflace ×${des(inflationMult(), 3)}</p>
   </div>`;
 
   html += `<div class="card">
@@ -12071,7 +12103,7 @@ function adminPlayerDetail(name){
     const obsazenych = byty.filter(x => x && (x.tenant || x.npc)).length;
     const najemCelkem = byty.reduce((s,x) => s + (x ? (x.rentPrice||0) : 0), 0);
     td += `<div style="border:1px solid var(--border);border-radius:6px;padding:5px 7px;margin-top:4px;background:var(--panel);">
-      <p style="margin:0;font-size:0.84em;"><b>${domKratce(p)}</b> · podíl <b>${podil.toFixed(1)} %</b>${spravce?' 👑 <span style="color:var(--accent);font-size:0.9em">rozhoduje</span>':''}</p>
+      <p style="margin:0;font-size:0.84em;"><b>${domKratce(p)}</b> · podíl <b>${des(podil, 1)} %</b>${spravce?' 👑 <span style="color:var(--accent);font-size:0.9em">rozhoduje</span>':''}</p>
       ${r('využití', p.useType === 'rental' ? '🏘️ pronájem' : (p.useType === 'residence' ? '🏠 bydlení' : '— neurčeno (nic nevydělává)'))}
       ${r('hodnota domu', kc(effectiveHousePrice(p)) + ' Kč (jeho podíl ' + kc(effectiveHousePrice(p)*podil/100) + ' Kč)')}
       ${r('poslední změna', p.mod ? kdy(p.mod) + ' <span style="opacity:0.7">(' + dt(p.mod) + ')</span>' : 'nezaznamenána — s domem se nikdy nehýbalo', p.mod ? undefined : 'var(--orange)')}
@@ -12542,7 +12574,7 @@ function renderStatDetail(which){
 
     html += `<div class="card"><h3>💰 Kde máš peníze</h3>
       <p>V hotovosti: <b style="color:var(--gold)">${kc(u.balance)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— můžeš hned utratit</span></p>
-      <p>Na spoření: <b>${kc(u.savings)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— úročí se ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % ročně</span></p>
+      <p>Na spoření: <b>${kc(u.savings)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— úročí se ${des((SAVINGS_ANNUAL_RATE*100), 0)} % ročně</span></p>
       <p>V majetku: <b>${kc(maj.trzni)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— domy a firmy v tržní ceně</span></p>
       ${dluh > 0 ? `<p>Dluhy: <b style="color:var(--danger)">−${kc(dluh)} Kč</b></p>` : ''}
       <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">Čisté jmění: <b style="color:var(--gold)">${kc(worth)} Kč</b></p>
@@ -12655,7 +12687,7 @@ function renderStatDetail(which){
     }
     if(status==='owner'){
       const domov = Object.values(world.parcels).find(p => p.useType==='residence' && (p.owners?.[u.name]||0) > 0);
-      if(domov) kdeBydli = domKratce(domov) + ` (podíl ${(domov.owners[u.name]||0).toFixed(0)} %)`;
+      if(domov) kdeBydli = domKratce(domov) + ` (podíl ${des((domov.owners[u.name]||0), 0)} %)`;
     }
     const celkem = Math.round(cost + rentPart);
 
@@ -12702,7 +12734,7 @@ function renderStatDetail(which){
     const rozdil = mojeHodnota - (mojeHodnota / mult);
 
     html += `<div class="card"><h3>📊 Trh je ${cyc.label}</h3>
-      <p>Ceny nemovitostí: <b style="color:${cyc.color}">×${mult.toFixed(2)}</b> proti základu</p>
+      <p>Ceny nemovitostí: <b style="color:${cyc.color}">×${des(mult, 2)}</b> proti základu</p>
       <p style="font-size:0.9em;color:var(--muted)">${mult>=1 ? 'Ceny jsou nad průměrem — dobrá doba prodávat.' : 'Ceny jsou pod průměrem — dobrá doba nakupovat.'}</p>
     </div>`;
 
@@ -12968,6 +13000,17 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'13.3', datum:'2026-09-25', body:[
+    ['oprava','Desetinná čísla se psala s tečkou (4.0 %, 1.6 Kč) místo české čárky. Opraveno na 157 místech — procenta, částky, násobky trhu i hodnocení podniků. Čísla verzí zůstávají s tečkou, tam je to správně.'],
+  ]},
+  { verze:'13.2', datum:'2026-09-25', body:[
+    ['info','Průvodce má novou kapitolu „Daně a co všechno platíš" — daň z příjmu i s pásmy, daň z nemovitosti, životní úroveň a údržba na jednom místě. Dosud se o dani z příjmu psalo jen v novinkách.'],
+    ['info','A kapitolu „Denní doba a počasí", kde je vysvětlené ztmavení mapy, rozsvícené domy i to, že počasí je skutečné a přidává za chůzi.'],
+  ]},
+  { verze:'13.1', datum:'2026-09-25', body:[
+    ['info','U zájemců o bydlení je teď napsané, CO konkrétně jim nesedí — „nájem je o 40 Kč vyšší, než zaplatí", „byt je ve stavu 55 %, chce aspoň 70 %", „v domě chybí 🌡️ zateplení". Dřív tam byl jen výčet požadavků a když vadil nájem, vypadalo to, že vadí vylepšení.'],
+    ['info','Když nevyhovuje nikdo, hra rovnou napíše proč — a u vyhovujících je vidět, kolik by ještě snesli, takže poznáš, jestli si můžeš říct o víc.'],
+  ]},
   { verze:'13.0', datum:'2026-09-25', body:[
     ['zmena','Noc na mapě je výraznější — ztmavení vzrostlo ze 42 na 62 %, soumrak a svítání taky o kus. A za tmy se domy rozsvítí: značky dostanou teplou záři a plnou sytost, aby přes tmavou vrstvu vystoupily. Tvoje domy svítí o něco víc než cizí.'],
   ]},
@@ -13426,7 +13469,7 @@ function renderFinance(){
     <p style="font-size:0.85em;color:var(--muted)">Kolik ti každý den přiteče a odteče (odhad podle současného stavu).</p>
     <p style="font-size:0.82em;color:var(--muted);margin:2px 0 6px;">🕛 = vyplácí se najednou o půlnoci · ⚡ = chodí hned, jakmile si to vyděláš</p>`;
   html += `<p style="margin-top:6px;color:var(--accent)"><b>Příjmy: +${Math.round(f.totalIncome)} Kč/den</b></p>`;
-  if(f.naSporeni > 0.05) html += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🐷 Úrok ze spoření +${f.naSporeni.toFixed(1)} Kč/den — připisuje se rovnou na spořicí účet, do hotovosti nepřijde.</p>`;
+  if(f.naSporeni > 0.05) html += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🐷 Úrok ze spoření +${des(f.naSporeni, 1)} Kč/den — připisuje se rovnou na spořicí účet, do hotovosti nepřijde.</p>`;
   // U každé položky značka, kdy se peníze objeví — bez toho hráči nesedělo číslo
   // v hlavičce s denní bilancí.
   const kdy = l => /Plat|Spropitné/.test(l) ? '⚡' : '🕛';
@@ -13501,7 +13544,7 @@ function renderFinance(){
     savPts.push(Math.round(startAmt * Math.pow(1+SAVINGS_ANNUAL_RATE/DAYS_PER_YEAR, d)));
     loanPts.push(Math.round(startAmt * Math.pow(1+LOAN_ANNUAL_RATE/DAYS_PER_YEAR, d)));
   }
-  html += `<p style="font-size:0.9em;">💰 <b>1000 Kč na spoření</b> (${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} %):</p>
+  html += `<p style="font-size:0.9em;">💰 <b>1000 Kč na spoření</b> (${des((SAVINGS_ANNUAL_RATE*100), 0)} %):</p>
     <p style="font-size:0.85em;margin-left:10px;color:var(--accent)">za 90 dní → ${savPts[savPts.length-1]} Kč (+${savPts[savPts.length-1]-startAmt} Kč zadarmo)</p>`;
   html += `<p style="font-size:0.9em;">💵 <b>1000 Kč půjčka</b> (${Math.round(LOAN_ANNUAL_RATE*100)} %), když nesplácíš:</p>
     <p style="font-size:0.85em;margin-left:10px;color:var(--danger)">za 90 dní → dluh ${loanPts[loanPts.length-1]} Kč (+${loanPts[loanPts.length-1]-startAmt} Kč navíc)</p>`;
@@ -13793,8 +13836,8 @@ function renderGuide(){
 
   html += guideSection('🐷','Spoření a úrok naopak', `
     <p>Když máš peníze, které hned nepotřebuješ, můžeš je dát na <b>spořicí účet</b> v bance.</p>
-    <p>Tam ti pomalu rostou — banka ti přidá <b>${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % za rok</b>. Je to opak půjčky: u půjčky ty platíš bance, u spoření banka platí tobě.</p>
-    <p>Úrok ze spoření (${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} %) je ale mnohem menší než úrok z půjčky (${Math.round(LOAN_ANNUAL_RATE*100)} %). Spoření je <b>bezpečné, ale pomalé</b> — velké bohatství se buduje spíš chytrými investicemi do domů a firem.</p>
+    <p>Tam ti pomalu rostou — banka ti přidá <b>${des((SAVINGS_ANNUAL_RATE*100), 0)} % za rok</b>. Je to opak půjčky: u půjčky ty platíš bance, u spoření banka platí tobě.</p>
+    <p>Úrok ze spoření (${des((SAVINGS_ANNUAL_RATE*100), 0)} %) je ale mnohem menší než úrok z půjčky (${Math.round(LOAN_ANNUAL_RATE*100)} %). Spoření je <b>bezpečné, ale pomalé</b> — velké bohatství se buduje spíš chytrými investicemi do domů a firem.</p>
     <p style="color:var(--muted)">💡 Ponaučení: peníze, co jen leží, nevydělávají. Ať už spoříš nebo investuješ, dej penězům práci.</p>
   `);
 
@@ -13831,7 +13874,7 @@ function renderGuide(){
   `);
 
   html += guideSection('📈','Inflace — proč čísla rostou', `
-    <p>Časem se ve hře <b>všechno pomalu zdražuje</b> — domy, nájmy, ale i platy a ceny v obchodě. Tomu se říká <b>inflace</b> (asi ${(INFLATION_ANNUAL*100).toFixed(1)} % za rok).</p>
+    <p>Časem se ve hře <b>všechno pomalu zdražuje</b> — domy, nájmy, ale i platy a ceny v obchodě. Tomu se říká <b>inflace</b> (asi ${des((INFLATION_ANNUAL*100), 1)} % za rok).</p>
     <p>Protože rostou ceny i platy stejně, v praxi se toho moc nemění — jen jsou čísla větší. Ale pozor: <b>peníze, které jen leží</b> (hotovost), postupně <b>ztrácejí hodnotu</b> — za stejnou částku si za rok koupíš míň.</p>
     <p style="color:var(--muted)">💡 Ponaučení: nenechávej hromadu peněz jen tak ležet. Dej je na spoření (aspoň drží krok s inflací) nebo je investuj do domů a firem (porazí inflaci).</p>
   `);
@@ -13847,6 +13890,25 @@ function renderGuide(){
     <p>Za každé místo dostaneš <b>${MISTO_ODMENA} Kč</b>, a to jen jednou — opakovaná návštěva už nic nevynese. Za kompletní sadu je bonus <b>${MISTO_SADA_BONUS} Kč</b> a zprávu o tom napíšou městské noviny.</p>
     ${MISTO_SADY.map(s2 => `<p style="margin:2px 0;">${s2.emoji} <b>${s2.nazev}</b></p>`).join('')}
     <p style="color:var(--muted)">Postup i nejbližší nenavštívené místo najdeš v 🎯 Denních výzvách. Místa se stahují z OpenStreetMap, takže jsou to opravdové budovy a parky, ne vymyšlené body.</p>
+  `);
+
+  html += guideSection('🏛️','Daně a co všechno platíš', `
+    <p>Z výdělků <b>z majetku</b> — nájem, provozovny, podíly ve firmách, solár — se platí <b>daň z příjmu</b>. Je progresivní, takže vyšší sazba se týká vždycky jen části nad hranicí:</p>
+    ${DAN_PRIJEM_PASMA.map((x, i) => {
+      const od = i === 0 ? 0 : DAN_PRIJEM_PASMA[i-1].do;
+      return `<p style="margin:2px 0;">• ${od === 0 ? `do ${x.do} Kč denně` : (x.do === Infinity ? `nad ${od} Kč denně` : `${od}–${x.do} Kč denně`)}: <b>${Math.round(x.sazba*100)} %</b></p>`;
+    }).join('')}
+    <div class="ex">Kdo má z domů 200 Kč denně, neplatí nic. Při 1 000 Kč odvede 105 Kč, při 3 000 Kč zhruba 605 Kč.</div>
+    <p><b>Daň z nemovitosti</b> se platí z hodnoty tvých podílů, i z domů, které nic nevydělávají: ${Math.round(DAN_PASMA[0].sazba*100)} % ročně do ${DAN_PASMA[0].do.toLocaleString('cs-CZ')} Kč majetku, ${des((DAN_PASMA[1].sazba*100), 1)} % z části do ${DAN_PASMA[1].do.toLocaleString('cs-CZ')} Kč a ${Math.round(DAN_PASMA[2].sazba*100)} % z toho nad.</p>
+    <p><b>💎 Životní úroveň.</b> Z čistého jmění nad ${ZIVOTNI_UROVEN_OD.toLocaleString('cs-CZ')} Kč platíš navíc ${des((ZIVOTNI_UROVEN*100), 3)} % denně k životním nákladům — bohatý člověk zkrátka žije dráž.</p>
+    <p><b>🔧 A počítej s údržbou.</b> Chátrání bytů sebere zhruba třetinu nájmu. Kolik si denně odložit, ti hra spočítá v Moje nemovitosti.</p>
+    <p style="color:var(--muted)">Malých hráčů se to nedotkne: do ${ZIVOTNI_UROVEN_OD.toLocaleString('cs-CZ')} Kč jmění a ${DAN_PRIJEM_PASMA[0].do} Kč denního výnosu neplatíš navíc ani korunu. Všechno je vidět ve Financích jako samostatné řádky.</p>
+  `);
+
+  html += guideSection('🌙','Denní doba a počasí', `
+    <p>Mapa se barví podle skutečného času — v noci ztmavne domodra, za svítání a soumraku má teplý nádech, přes den je čistá. <b>Za tmy se domy rozsvítí</b>, aby přes tmavou vrstvu vystoupily; ty tvoje svítí nejvíc.</p>
+    <p>Když v Bučovicích prší nebo sněží, padají přes mapu kapky nebo vločky. Počasí je skutečné a <b>ovlivňuje výdělek z chůze</b> — v nepohodě dostáváš víc.</p>
+    <p style="color:var(--muted)">Všechny tyhle efekty jdou vypnout v Nastavení, když ti vadí nebo máš starší telefon.</p>
   `);
 
   html += guideSection('🎨','Barvy na mapě', `
@@ -14166,18 +14228,18 @@ function renderLeaderboard(){
     return `<div class="card" style="overflow:hidden;">
       <h3>🗺️ Kdo drží město</h3>
       <div style="display:flex;height:22px;border-radius:6px;overflow:hidden;border:1px solid var(--border);">
-        ${serazene.map(([jmeno, hod]) => `<div title="${escapeHtml(jmeno)}: ${dil(hod).toFixed(2)} %"
+        ${serazene.map(([jmeno, hod]) => `<div title="${escapeHtml(jmeno)}: ${des(dil(hod), 2)} %"
           style="width:${dil(hod)}%;min-width:3px;background:${barvaHrace(jmeno).hex};"></div>`).join('')}
         <div style="flex:1;background:var(--panel2);" title="zbytek patří městu"></div>
       </div>
       <p style="font-size:0.84em;color:var(--muted);margin:4px 0 0;">
-        Hráči drží dohromady <b style="color:var(--gold)">${dil(hraciCelkem).toFixed(1)} %</b> města, zbytek je pořád volný.</p>
+        Hráči drží dohromady <b style="color:var(--gold)">${des(dil(hraciCelkem), 1)} %</b> města, zbytek je pořád volný.</p>
       <div style="display:flex;flex-wrap:wrap;gap:4px 12px;font-size:0.86em;margin:6px 0 0;">
         ${serazene.slice(0, 6).map(([jmeno, hod]) => `<span style="white-space:nowrap;">
           <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${barvaHrace(jmeno).hex};vertical-align:middle;"></span>
-          ${escapeHtml(jmeno)} ${dil(hod).toFixed(dil(hod) < 0.1 ? 2 : 1)} %</span>`).join('')}
+          ${escapeHtml(jmeno)} ${des(dil(hod), dil(hod) < 0.1 ? 2 : 1)} %</span>`).join('')}
         ${serazene.length > 6 ? `<span style="white-space:nowrap;color:var(--muted);">+ ${serazene.length - 6} ${serazene.length - 6 === 1 ? 'další hráč' : (serazene.length - 6 < 5 ? 'další hráči' : 'dalších hráčů')}</span>` : ''}
-        <span style="white-space:nowrap;color:var(--muted);">◻️ volné ${dil(mestoZbytek).toFixed(1)} %</span>
+        <span style="white-space:nowrap;color:var(--muted);">◻️ volné ${des(dil(mestoZbytek), 1)} %</span>
       </div>
       <p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Počítá se z hodnoty podílů ve všech ${mesto.length} domech v Bučovicích.</p>
     </div>`;
@@ -14266,7 +14328,7 @@ function renderBank(){
     <div class="row"><button onclick="takeLoan()">Vzít půjčku (${Math.round(LOAN_ANNUAL_RATE*100)} % p.a.)</button></div>
     ${infoBox('Půjčka nebo hypotéka?', `
       <p><b>💵 Běžná půjčka — ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně.</b> Peníze na cokoliv, banka nemá žádnou záruku. Proto je drahá. Když ${LOAN_SEIZURE_MISSED_DAYS} dní nesplácíš, banka si vezme <b>kterýkoliv</b> tvůj majetek.</p>
-      <p><b>🏦 Hypotéka — ${(MORTGAGE_ANNUAL_RATE*100).toFixed(0)} % ročně.</b> Jde si pro ni jen při koupi domu, přímo v jeho detailu. Složíš ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny a zbytek půjčí banka. Dům jí ručí, proto je úrok třikrát nižší.</p>
+      <p><b>🏦 Hypotéka — ${des((MORTGAGE_ANNUAL_RATE*100), 0)} % ročně.</b> Jde si pro ni jen při koupi domu, přímo v jeho detailu. Složíš ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny a zbytek půjčí banka. Dům jí ručí, proto je úrok třikrát nižší.</p>
       <div class="ex">Dům za 30 000 Kč: za hotové potřebuješ celých 30 000. Na hypotéku ti stačí <b>${Math.round(30000*MORTGAGE_DOWNPAYMENT_RATIO).toLocaleString('cs-CZ')} Kč</b> a bydlíš hned — zbytek splácíš z nájmu.</div>
       <p><b>Kde je háček.</b> Když dluh přeroste ${Math.round(MORTGAGE_REPO_MULTIPLIER*100)} % hodnoty zastaveného podílu, nebo ${MORTGAGE_SEIZURE_MISSED_DAYS} dní nesplácíš, banka si vezme <b>právě ten dům</b>. A protože ho prodá pod cenou, zbytek dluhu ti může zůstat.</p>
       <p><b>Kdy se vyplatí.</b> Když dům vydělá na nájmu víc, než stojí úrok. Prázdný dům na hypotéku je naopak nejrychlejší cesta do dluhů.</p>
@@ -14277,7 +14339,7 @@ function renderBank(){
       <div class="ex">Půjčíš si 20 000 Kč (úrok ~${Math.round(20000*LOAN_ANNUAL_RATE/DAYS_PER_YEAR)} Kč/den), koupíš za ně podíl v domě, který nese 80 Kč/den. Vyděláváš ${Math.round(80 - 20000*LOAN_ANNUAL_RATE/DAYS_PER_YEAR)} Kč denně navíc — a dluh se sám splácí.</div>
       <p><b>Špatný dluh.</b> Půjčíš si na běžný život, protože jsi v mínusu. Úrok tvůj problém jen zvětší — za měsíc dlužíš víc a příjem máš pořád stejný.</p>
       <p><b>Jak poznat rozdíl.</b> Zeptej se: <i>vydělá mi to, co si koupím, víc než ${Math.round(LOAN_ANNUAL_RATE*100)} % ročně?</i> Dům ano. Nákup jídla ne.</p>
-      <p><b>Nejhorší kombinace.</b> Mít dluh a zároveň spořit. Platíš ${Math.round(LOAN_ANNUAL_RATE*100)} % a dostáváš ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % — prodělaváš na tom každý den. Nejdřív splať.</p>
+      <p><b>Nejhorší kombinace.</b> Mít dluh a zároveň spořit. Platíš ${Math.round(LOAN_ANNUAL_RATE*100)} % a dostáváš ${des((SAVINGS_ANNUAL_RATE*100), 0)} % — prodělaváš na tom každý den. Nejdřív splať.</p>
     `)}
     ${infoBox('Jak funguje půjčka?', `
       <p><b>K čemu je.</b> Půjčka ti dá peníze hned, abys mohl koupit dům dřív, než si našetříš. Dům pak vydělává — a z toho splácíš. Tomu se říká <b>investiční dluh</b> a je to jediný dluh, který dává smysl.</p>
@@ -14293,7 +14355,7 @@ function renderBank(){
   // Spořicí účet
   html += `<div class="card">
     <h3>🐷 Spořicí účet</h3>
-    <p>Naspořeno: <b style="color:var(--accent)">${Math.round(me.savings||0)} Kč</b> · úrok <b>${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % p.a.</b></p>
+    <p>Naspořeno: <b style="color:var(--accent)">${Math.round(me.savings||0)} Kč</b> · úrok <b>${des((SAVINGS_ANNUAL_RATE*100), 0)} % p.a.</b></p>
     <p style="font-size:0.85em;color:var(--muted)">Peníze uložené na spoření <b>pomalu rostou</b> a jsou v bezpečí (neutratíš je omylem). Úrok je ale mnohem nižší než u půjčky — spořit je bezpečné, ale bohatství se buduje spíš investicemi.</p>
     <div class="row">
       <button class="secondary" onclick="depositSavings()">Vložit na spoření</button>
@@ -14301,9 +14363,9 @@ function renderBank(){
     </div>
     ${infoBox('Jak funguje spoření?', `
       <p><b>Co to je.</b> Stranou odložené peníze, které samy pomalu rostou. Nejsou na běžném účtu, takže je omylem neutratíš — ale kdykoliv si je můžeš vybrat zpět.</p>
-      <p><b>Úrok ${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} % ročně</b> se připisuje každý den z toho, co máš naspořeno. Další den se počítá i z připsaného úroku — složené úročení tentokrát <b>pro tebe</b>.</p>
+      <p><b>Úrok ${des((SAVINGS_ANNUAL_RATE*100), 0)} % ročně</b> se připisuje každý den z toho, co máš naspořeno. Další den se počítá i z připsaného úroku — složené úročení tentokrát <b>pro tebe</b>.</p>
       <div class="ex">Uložíš 10 000 Kč a necháš ležet. Za 90 dní máš ${Math.round(10000*Math.pow(1+SAVINGS_ANNUAL_RATE/DAYS_PER_YEAR,90)).toLocaleString('cs-CZ')} Kč. Není to zázrak, ale je to zadarmo.</div>
-      <p><b>Na co si dát pozor.</b> Úrok ze spoření (${(SAVINGS_ANNUAL_RATE*100).toFixed(0)} %) je <b>mnohem nižší</b> než úrok z půjčky (${Math.round(LOAN_ANNUAL_RATE*100)} %). Když máš dluh a zároveň spoříš, prodělaváš — nejdřív splať dluh.</p>
+      <p><b>Na co si dát pozor.</b> Úrok ze spoření (${des((SAVINGS_ANNUAL_RATE*100), 0)} %) je <b>mnohem nižší</b> než úrok z půjčky (${Math.round(LOAN_ANNUAL_RATE*100)} %). Když máš dluh a zároveň spoříš, prodělaváš — nejdřív splať dluh.</p>
       <p><b>K čemu je to dobré.</b> Jako rezerva na nečekané výdaje. Když se rozbije pračka nebo vypadne příjem, sáhneš do spoření místo do půjčky.</p>
       <p><b>Bohatství tím ale nezbuduješ.</b> Nemovitosti a podniky vydělávají násobně víc. Spoření je polštář, ne motor.</p>
     `)}
@@ -14325,16 +14387,16 @@ function renderBank(){
         const hodnota = houseMarketPricePerPercent(dum) * Math.min(l.pct || 0, dum.owners?.[me.name] || 0);
         const pomer = hodnota > 0 ? l.balance / hodnota : 99;
         const barva = pomer > 1.2 ? 'var(--danger)' : (pomer > 0.9 ? 'var(--gold)' : 'var(--accent)');
-        kryti = `<p style="font-size:0.92em;">Zástava: ${l.pct.toFixed(0)} % domu ${domKratce(l.houseId)} v hodnotě
+        kryti = `<p style="font-size:0.92em;">Zástava: ${des(l.pct, 0)} % domu ${domKratce(l.houseId)} v hodnotě
           <b>${Math.round(hodnota).toLocaleString('cs-CZ')} Kč</b> · dluh je <b style="color:${barva}">${Math.round(pomer*100)} %</b> její hodnoty
           <span style="color:var(--muted)">(nad ${Math.round(MORTGAGE_REPO_MULTIPLIER*100)} % si ji banka vezme)</span></p>`;
       }
       return `<div class="card">
         <h3>${jeHypo ? '🏦 Hypotéka' : '💵 Půjčka'}</h3>
-        <p>Dluh: <b style="color:var(--danger)">${Math.round(l.balance)} Kč</b> · úrok ${(l.dailyRate*DAYS_PER_YEAR*100).toFixed(1)} % p.a.</p>
+        <p>Dluh: <b style="color:var(--danger)">${Math.round(l.balance)} Kč</b> · úrok ${des((l.dailyRate*DAYS_PER_YEAR*100), 1)} % p.a.</p>
         ${kryti}
         <p style="font-size:0.92em;color:var(--muted)">Banka strhává min. splátku automaticky (${Math.round(l.principal*podil)} Kč/den), když máš na účtu dost.</p>
-        ${missed > 0 ? `<p style="color:${missed>=limitDnu*0.6?'var(--danger)':'var(--gold)'}">⚠️ ${missed.toFixed(1)} / ${limitDnu} dní nezaplaceno — pak si banka vezme ${jeHypo ? 'zastavený dům' : 'majetek na pokrytí dluhu'}.</p>` : ''}
+        ${missed > 0 ? `<p style="color:${missed>=limitDnu*0.6?'var(--danger)':'var(--gold)'}">⚠️ ${des(missed, 1)} / ${limitDnu} dní nezaplaceno — pak si banka vezme ${jeHypo ? 'zastavený dům' : 'majetek na pokrytí dluhu'}.</p>` : ''}
         <div class="row"><button onclick="repayLoan('${l.id}')">Splatit</button></div>
       </div>`;
     }).join('');
@@ -15457,9 +15519,9 @@ function businessPopupHtml(bizId){
   return `<div style="font-size:1em;min-width:180px;">
     <b>${biz.emoji} ${escapeHtml(biz.name)}</b><br>
     <span style="color:#888">${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount})</span><br>
-    Cena za 1 %: <b>${Math.round(pricePerPercent(biz)).toLocaleString('cs-CZ')} Kč</b> (nese ${(bizYieldPerDay(biz)*inflationMult()/100).toFixed(1)} Kč/den)<br>
-    Prodáno: ${sold.toFixed(1)} % (${ownerCount} vlastníků)<br>
-    ${myPct>0 ? `Tvůj podíl: <b>${myPct.toFixed(1)} %</b><br>` : ''}
+    Cena za 1 %: <b>${Math.round(pricePerPercent(biz)).toLocaleString('cs-CZ')} Kč</b> (nese ${des((bizYieldPerDay(biz)*inflationMult()/100), 1)} Kč/den)<br>
+    Prodáno: ${des(sold, 1)} % (${ownerCount} vlastníků)<br>
+    ${myPct>0 ? `Tvůj podíl: <b>${des(myPct, 1)} %</b><br>` : ''}
     <button style="margin-top:6px;" onclick="buyStake('${biz.id}')">Koupit podíl</button>
     ${myPct>0 ? `<button style="margin-top:6px;" onclick="sellStake('${biz.id}')">Prodat podíl</button>` : ''}
   </div>`;
@@ -15475,7 +15537,7 @@ function renderBusinesses(){
       if(pct>0) myTotalIncome += bizYieldPerHour(biz) * (pct/100);
     });
   }
-  let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${(myTotalIncome*24).toFixed(0)} Kč/den</b> (${myTotalIncome.toFixed(1)} Kč/hod)</p>
+  let html = `<p style="color:var(--muted);font-size:0.92em;margin-bottom:8px;">Tvůj pasivní příjem z podniků: <b style="color:var(--gold)">${des((myTotalIncome*24), 0)} Kč/den</b> (${des(myTotalIncome, 1)} Kč/hod)</p>
     <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Podíl ve firmě vydělává rychleji než dům — vrátí se zhruba za <b>150 dní</b> proti <b>400</b> u domu — a nic u něj neřešíš: nechátrá, nepotřebuje opravy a nikdo se neodstěhuje. Zato je drahý a bydlet v něm nejde. Všechny firmy nesou na vloženou korunu <b>v průměru stejně</b> — liší se jen tím, kolik stojí vstup.</p>
     <p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">📊 Každá firma má ale <b>svůj den</b>. Výnos kolísá zhruba ±40 % kolem průměru a ovlivňuje ho i počasí a dění ve městě — v dešti chodí lidé do kaváren, za hezka na památky.</p>`;
   html += list.map(biz => {
@@ -15493,14 +15555,14 @@ function renderBusinesses(){
     const sipka = vyk.mult >= 1.08 ? '▲' : vyk.mult >= 0.92 ? '▪' : '▼';
     return `<div class="card">
       <h3>${biz.emoji} ${escapeHtml(biz.name)} ${myPct>0 ? '<span class="badge badge-res">tvůj podíl</span>':''}</h3>
-      <p>${biz.category} · ⭐ ${biz.rating} (${biz.ratingCount} recenzí)</p>
-      <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · dnes nese <b style="color:var(--accent)">${per1Day.toFixed(1)} Kč/den</b></p>
+      <p>${biz.category} · ⭐ ${des(biz.rating, 1)} (${biz.ratingCount} recenzí)</p>
+      <p>Cena za 1 %: <b>${per1Cost.toLocaleString('cs-CZ')} Kč</b> · dnes nese <b style="color:var(--accent)">${des(per1Day, 1)} Kč/den</b></p>
       <p style="font-size:0.88em;margin:2px 0;">
         <span style="color:${barvaV}">${sipka} ${vyk.popis} — ${Math.round(vyk.mult*100)} % běžného výnosu</span>
-        <span style="color:var(--muted)"> (průměrně ${per1Prumer.toFixed(1)} Kč/den)</span></p>
+        <span style="color:var(--muted)"> (průměrně ${des(per1Prumer, 1)} Kč/den)</span></p>
       ${vyk.vlivy.length ? `<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">${vyk.vlivy.join(' · ')}</p>` : ''}
-      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> (počítáno z průměru) · prodáno ${sold.toFixed(0)} %</p>
-      ${myPct>0 ? `<p>Tvůj podíl: <b>${myPct.toFixed(1)} %</b> → dnes ti vydělává <b style="color:var(--accent)">${(bizYieldPerDay(biz)*inflationMult()*myPct/100).toFixed(1)} Kč/den</b> <span style="color:var(--muted)">(průměrně ${(bizYieldPrumer(biz)*inflationMult()*myPct/100).toFixed(1)} Kč)</span></p>` : ''}
+      <p style="font-size:0.85em;color:var(--muted)">Vrátí se za ≈ <b style="color:var(--gold)">${paybackDays} dní</b> (počítáno z průměru) · prodáno ${des(sold, 0)} %</p>
+      ${myPct>0 ? `<p>Tvůj podíl: <b>${des(myPct, 1)} %</b> → dnes ti vydělává <b style="color:var(--accent)">${des((bizYieldPerDay(biz)*inflationMult()*myPct/100), 1)} Kč/den</b> <span style="color:var(--muted)">(průměrně ${des((bizYieldPrumer(biz)*inflationMult()*myPct/100), 1)} Kč)</span></p>` : ''}
       ${distanceNoteHtml(biz.lat, biz.lng, INTERACTION_RADIUS)}
       <div class="row">
         <button ${near?'':'disabled'} onclick="buyStake('${biz.id}')">Koupit podíl</button>
@@ -15537,15 +15599,15 @@ async function buyStake(bizId){
   if(available <= 0){ showAlert('Podnik je celý rozprodaný.'); return; }
   const per1 = Math.round(pricePerPercent(biz));
   const per1DayInfo = (bizYieldPerDay(biz)*inflationMult()/100).toFixed(1);
-  const pct = parseFloat(await showPrompt(`Kolik % koupit? Volných ${available.toFixed(1)} %.\n1 % stojí ${per1.toLocaleString('cs-CZ')} Kč a nese ${per1DayInfo} Kč/den.`, Math.min(5, available)));
+  const pct = parseFloat(await showPrompt(`Kolik % koupit? Volných ${des(available, 1)} %.\n1 % stojí ${per1.toLocaleString('cs-CZ')} Kč a nese ${per1DayInfo} Kč/den.`, Math.min(5, available)));
   if(isNaN(pct) || pct <= 0) return;
-  if(pct > available){ showAlert(`Tolik volných % není — max ${available.toFixed(1)} %.`); return; }
+  if(pct > available){ showAlert(`Tolik volných % není — max ${des(available, 1)} %.`); return; }
   const cost = Math.round(pricePerPercent(biz) * pct);
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert('Nemáš dost peněz.'); return; }
   const denne = bizYieldPerDay(biz) * inflationMult() * (pct/100);
   if(!(await showConfirm(
-    `Koupit ${pct.toFixed(1)} % podniku ${biz.name}?\n\n` +
+    `Koupit ${des(pct, 1)} % podniku ${biz.name}?\n\n` +
     `Zaplatíš: ${cost.toLocaleString('cs-CZ')} Kč\n` +
     `Ponese ti: ${Math.round(denne)} Kč/den\n` +
     `Zaplatí se ti zhruba za ${denne > 0 ? Math.round(cost/denne) : '—'} dní.\n\n` +
@@ -15553,23 +15615,23 @@ async function buyStake(bizId){
   me.balance -= cost;
   biz.owners[currentUser.name] = (biz.owners[currentUser.name] || 0) + pct;
   stampBizOwners(biz, currentUser.name);
-  addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${pct.toFixed(0)} % za ${cost} Kč).`,
+  addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${des(pct, 0)} % za ${cost} Kč).`,
     (biz.lat ? { lat: biz.lat, lng: biz.lng } : undefined));
   saveWorld(); refreshAll();
-  showAlert(`Koupeno ${pct.toFixed(1)} % podílu za ${cost} Kč.`);
+  showAlert(`Koupeno ${des(pct, 1)} % podílu za ${cost} Kč.`);
 }
 
 async function sellStake(bizId){
   const biz = world.businesses[bizId];
   const myPct = biz.owners[currentUser.name] || 0;
   if(myPct <= 0) return;
-  const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${myPct.toFixed(1)} %, zpět dostaneš ${Math.round(BUSINESS_SELL_RATIO*100)} % ceny)`, myPct));
+  const pct = parseFloat(await showPrompt(`Kolik % prodat? (vlastníš ${des(myPct, 1)} %, zpět dostaneš ${Math.round(BUSINESS_SELL_RATIO*100)} % ceny)`, myPct));
   if(isNaN(pct) || pct <= 0) return;
   if(pct > myPct){ showAlert('Tolik nevlastníš.'); return; }
   const refund = Math.round(pricePerPercent(biz) * pct * BUSINESS_SELL_RATIO);
   const ztrataDenne = bizYieldPerDay(biz) * inflationMult() * (pct/100);
   if(!(await showConfirm(
-    `Prodat ${pct.toFixed(1)} % podniku ${biz.name} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n` +
+    `Prodat ${des(pct, 1)} % podniku ${biz.name} za ${refund.toLocaleString('cs-CZ')} Kč?\n\n` +
     `Přijdeš o příjem ${Math.round(ztrataDenne)} Kč/den.\n` +
     `Zpátky dostáváš jen ${Math.round(BUSINESS_SELL_RATIO*100)} % ceny — prodej se prodělává.`))) return;
   world.users[currentUser.name].balance += refund;
@@ -15578,7 +15640,7 @@ async function sellStake(bizId){
   stampBizOwners(biz, currentUser.name);
   saveWorld(); refreshAll();
   playSound('sell');
-  showAlert(`Prodáno ${pct.toFixed(1)} % za ${refund} Kč.`);
+  showAlert(`Prodáno ${des(pct, 1)} % za ${refund} Kč.`);
 }
 
 // ===== LOGIN =====
