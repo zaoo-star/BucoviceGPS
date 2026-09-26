@@ -777,7 +777,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '13.7';
+const APP_VERSION = '13.9';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1084,8 +1084,12 @@ function npcApplicantsHtml(p, unitIdx){
   const list = (world.npcTenants && world.npcTenants.list) || [];
   const matching = list.filter(npc => unitMeetsNpc(p, u, npc));
   const notMatching = list.filter(npc => !unitMeetsNpc(p, u, npc));
-  let html = `<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">
-    <p style="font-size:0.9em;font-weight:600;">🏠 Zájemci o bydlení</p>`;
+  // Nadpis říká, KTERÉHO bytu se zájemci týkají, a blok má vlastní rámeček. Bez toho
+  // vypadal seznam, jako by patřil k bytu pod ním — a čísla pak nedávala smysl
+  // („nájem o 80 Kč vyšší" u bytu, kde je férových 42 Kč; hlásila Eva).
+  let html = `<div style="margin-top:8px;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);">
+    <p style="font-size:0.9em;font-weight:600;margin:0 0 4px;">🏠 Zájemci o byt v ${unitIdx + 1}. patře
+      <span style="font-weight:400;color:var(--muted)">(nájem ${u.rentPrice || 0} Kč/den)</span></p>`;
   if(!matching.length && !notMatching.length){
     html += `<p style="font-size:0.85em;color:var(--muted)">Zrovna nikdo nehledá byt. Zkus to za chvíli.</p>`;
   } else if(!matching.length){
@@ -13283,6 +13287,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'13.9', datum:'2026-09-25', body:[
+    ['oprava','U zakázky „Roznos zásilek" stálo „Rozvezni balíky" — správně je „Rozvez balíky". Díky, Evo.'],
+  ]},
+  { verze:'13.8', datum:'2026-09-25', body:[
+    ['oprava','Seznam zájemců o bydlení nebylo poznat, ke kterému bytu patří — vypadal, jako by patřil k bytu pod ním, a čísla pak nedávala smysl („nájem je o 80 Kč vyšší" u bytu, kde je férových 42 Kč). Teď je v nadpisu napsané patro i nájem toho bytu a blok má vlastní rámeček.'],
+  ]},
   { verze:'13.7', datum:'2026-09-25', body:[
     ['oprava','Audit: deset tlačítek (koupě, prodej, oprava, nastavení nájmu, přestavba…) spadlo, když dům mezitím zmizel — třeba když doběhla synchronizace, zatímco byl panel otevřený. Teď slušně řeknou, že dům už ve hře není. Stejně tak neznámý režim žebříčku už panel neshodí.'],
     ['info','Dočasná diagnostika denní doby z detailu dne zmizela — svůj účel splnila.'],
@@ -14974,7 +14984,7 @@ const ZAKAZKY_ZA_DEN = 2;
 const ZAKAZKA_ODMENA = 2.4;         // násobek denní mzdy nástupní pozice
 
 const ZAKAZKA_DRUHY = [
-  { emoji:'📦', name:'Roznos zásilek',      popis:'Rozvezni balíky po okolí.' },
+  { emoji:'📦', name:'Roznos zásilek',      popis:'Rozvez balíky po okolí.' },
   { emoji:'🧹', name:'Úklid po akci',       popis:'Po jarmarku zbyl nepořádek.' },
   { emoji:'🪴', name:'Zalití záhonů',       popis:'Městská zeleň potřebuje vodu.' },
   { emoji:'🔧', name:'Drobná oprava',       popis:'Rozbitá lavička, uvolněná cedule.' },
