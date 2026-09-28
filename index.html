@@ -777,7 +777,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '13.9';
+const APP_VERSION = '14.0';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -920,7 +920,7 @@ const HOUSE_UPGRADES = {
   ac:         { icon:'❄️', name:'Klimatizace',      costRatio:0.08,
     desc:'Komfort navíc — dům snese vyšší nájem, aniž by se vyprázdnil.' },
   renovation: { icon:'🔧', name:'Rekonstrukce',     costRatio:0.10,
-    desc:'Kvalitní materiály — byty chátrají o polovinu pomaleji, míň platíš za opravy.' },
+    desc:'Kvalitní materiály — byty chátrají 4× pomaleji, míň platíš za opravy.' },
   solar:      { icon:'☀️', name:'Solární panely',   costRatio:0.08,
     desc:'Vlastní elektřina — vydělává ti každý den, i když je dům prázdný, a snižuje ti účty za bydlení.' },
 };
@@ -6590,6 +6590,14 @@ function playSound(name){ if(SOUNDS[name]) playTones(SOUNDS[name]); }
 // Escapuje text před vložením do HTML (obrana proti XSS z přezdívek/avatarů)
 // České desetinné číslo — s čárkou, ne s tečkou. Verze hry a technické hodnoty
 // se tímhle záměrně neformátují (13.2 musí zůstat 13.2).
+// České skloňování po číslovce: 1 byt, 2–4 byty, 5+ bytů.
+function sklonuj(pocet, jeden, dva, pet){
+  const n = Math.abs(Math.round(pocet));
+  if(n === 1) return jeden;
+  if(n >= 2 && n <= 4) return dva;
+  return pet;
+}
+
 function des(x, mist){
   const n = Number(x);
   if(!isFinite(n)) return '0';
@@ -8915,7 +8923,7 @@ function renderSelected(id){
 
   let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>`;
   html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
-  html += `<p style="font-size:0.92em;color:var(--muted)">${p.levels||1} ${(p.levels||1)===1?'patro':'patra/pater'}${
+  html += `<p style="font-size:0.92em;color:var(--muted)">${p.levels||1} ${sklonuj(p.levels||1, 'patro', 'patra', 'pater')}${
     pristavebNavic(p) ? ` + ${pristavebNavic(p)} ${pristavebNavic(p)===1?'přístavba':'přístavby'}` : ''} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(housePricePerPercent(p))} Kč</p>`;
   // Kolik z hodnoty dělají úpravy — hráčka se ptala, proč se hodnota po investicích nehne.
   {
@@ -9148,7 +9156,9 @@ function renderSelected(id){
       if(realne !== null){
         html += `<p style="font-size:0.9em;margin:4px 0 0 0;">
           💰 Teď ti reálně chodí <b style="color:var(--gold)">${Math.round(realne)} Kč/den</b>
-          <span style="color:var(--muted)">(obsazeno ${obsazene.length} z ${byty.length} ${byty.length===1?'bytu':'bytů'}) — přesně tohle se připíše o půlnoci</span></p>`;
+          <span style="color:var(--muted)">(obsazeno ${obsazene.length} z ${byty.length} ${sklonuj(byty.length, 'bytu', 'bytů', 'bytů')}${
+            plnyDumMult(p) > 1 ? `, včetně bonusu +${des((plnyDumMult(p)-1)*100, 0)} % za plně obsazený dům` : ''})${
+            danZPrijmu(1) > 0 ? ' — před daní z příjmu' : ' — přesně tohle se připíše o půlnoci'}</span></p>`;
       }
       html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
         📈 Při plném obsazení: <b>${Math.round(cisty)} Kč/den</b> na každé procento (po dani).
@@ -9283,7 +9293,7 @@ function renderSelected(id){
     // reálně vybraný nájem celkem (po obsazenosti)
     const collectedTotal = p.units.reduce((s,u) => s + vybranyNajem(p, u), 0);
     const myShare = collectedTotal * (myPct/100);
-    html += `<div class="card"><h3>🏘️ Pronájem — ${p.units.length} ${p.units.length===1?'byt':'bytů'}</h3>
+    html += `<div class="card"><h3>🏘️ Pronájem — ${p.units.length} ${sklonuj(p.units.length, 'byt', 'byty', 'bytů')}</h3>
       <p>Reálný výběr: <b style="color:var(--gold)">${des(collectedTotal, 0)} Kč/den</b>${myPct>0?` · tvůj podíl (${des(myPct, 1)} %): <b style="color:var(--gold)">${des(myShare, 0)} Kč/den</b>`:''}</p>
       <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
       ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
@@ -9385,7 +9395,10 @@ function renderSelected(id){
             return realCollected
               ? `<p style="margin:3px 0 0 0;font-size:0.9em;">
                    Rozpad: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${des(myPct, 0)} %</b> =
-                   <b style="color:var(--gold)">${des((realCollected*myPct/100), 0)} Kč/den pro tebe</b></p>`
+                   <b style="color:var(--gold)">${des((realCollected*myPct/100), 0)} Kč/den pro tebe</b>${
+                     // Když je dům plně obsazený, město přihazuje bonus — bez téhle řádky
+                     // nesedělo, co je nahoře v hlavičce domu (hlásila Eva).
+                     plnyDumMult(p) > 1 ? `<br><span style="font-size:0.88em;color:var(--accent)">+ bonus ${des((plnyDumMult(p)-1)*100, 0)} % za plně obsazený dům → <b>${des(realCollected*myPct/100*plnyDumMult(p), 0)} Kč/den</b></span>` : ''}</p>`
               : `<p style="margin:3px 0 0 0;font-size:0.9em;">
                    Až se někdo nastěhuje: <b>${u.rentPrice} Kč</b> × tvůj podíl <b>${des(myPct, 0)} %</b> =
                    <b style="color:var(--gold)">${des((u.rentPrice*myPct/100), 0)} Kč/den pro tebe</b></p>`;
@@ -9394,8 +9407,15 @@ function renderSelected(id){
             // Nájemník platí VŽDY celý nájem, ale rozdělí se jen mezi vlastníky podílů.
             // Neprodaná část domu patří městu a jeho díl nájmu propadne — hráče to mátlo.
             const volne = houseFreePct(p);
-            if(volne < 1 || !realCollected) return '';
-            return `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Zbylých ${des(volne, 0)} % domu patří městu, takže ${des((realCollected*volne/100), 0)} Kč/den jde jemu. Když podíl dokoupíš, poputují tobě.</p>`;
+            // Kolik drží OSTATNÍ hráči — bez toho to vypadalo, že zbytek nájmu mizí.
+            const ostatni = Object.entries(p.owners || {})
+              .filter(([jm, pct]) => jm !== currentUser.name && pct > 0);
+            const ostatniPct = ostatni.reduce((a, [, pct]) => a + pct, 0);
+            if((volne < 1 && !ostatniPct) || !realCollected) return '';
+            const casti = [];
+            if(ostatniPct >= 0.5) casti.push(`${ostatni.map(([jm, pct]) => `${escapeHtml(jm)} ${des(pct, 0)} %`).join(', ')} — dohromady ${des(u.rentPrice*ostatniPct/100, 0)} Kč/den`);
+            if(volne >= 0.5) casti.push(`město ${des(volne, 0)} % — ${des(u.rentPrice*volne/100, 0)} Kč/den (když podíl dokoupíš, poputují tobě)`);
+            return `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Zbytek nájmu si dělí ${casti.join(' · ')}.</p>`;
           })()}
           ${(u.tenant || u.npc) && iDecide ? `<p style="margin:2px 0 0 0;font-size:0.85em;color:var(--accent)">Nájemník platí každý den, dokud mu byt udržuješ.</p>` : ''}
         </div>` : ''}
@@ -13287,6 +13307,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'14.0', datum:'2026-09-25', body:[
+    ['oprava','U bytu se psalo „zbylých 3 % patří městu", ale zbytek nájmu si dělí i ostatní spoluvlastníci — vypadalo to, jako by peníze mizely. Teď je vypsané, kdo kolik dostane: „Zbytek nájmu si dělí Eff 23 %, EDDIE 5 % — dohromady 14 Kč/den · město 3 % — 2 Kč/den."'],
+    ['oprava','Hlavička domu hlásila 77 Kč/den, ale byty dohromady 70 Kč. Rozdíl dělal bonus za plně obsazený dům, o kterém u bytů nebyla zmínka. Teď je vidět u obojího.'],
+    ['oprava','Rekonstrukce slibovala, že byty chátrají „o polovinu pomaleji" — ve skutečnosti 4× pomaleji. Text opraven podle toho, jak to hra doopravdy počítá.'],
+    ['oprava','Skloňování: „2 patra/pater" a „Pronájem — 2 bytů" se změnilo na „2 patra" a „2 byty".'],
+  ]},
   { verze:'13.9', datum:'2026-09-25', body:[
     ['oprava','U zakázky „Roznos zásilek" stálo „Rozvezni balíky" — správně je „Rozvez balíky". Díky, Evo.'],
   ]},
