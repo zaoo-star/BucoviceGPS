@@ -135,6 +135,32 @@
     background:var(--panel2);border:1px solid var(--border);border-radius:12px;
     padding:12px;margin-bottom:10px;
   }
+
+  /* Delší text patří doleva — na střed se dlouhé odstavce čtou špatně, oko nemá kde
+     začít další řádek. Na střed necháváme jen nadpisy a klíčová čísla. */
+  .panelContent p, .panelContent li, .sekceTelo p{ text-align:left; }
+  .panelContent h3, .panelContent h4{ text-align:center; }
+
+  /* Rozklikávací sekce v detailu domu */
+  details.sekce{
+    background:var(--panel2);border:1px solid var(--border);border-radius:12px;
+    margin-bottom:8px;overflow:hidden;
+  }
+  details.sekce > summary.sekceNadpis{
+    padding:11px 12px;font-weight:700;font-size:15px;cursor:pointer;
+    list-style:none;display:flex;align-items:center;gap:8px;
+  }
+  details.sekce > summary.sekceNadpis::-webkit-details-marker{display:none;}
+  details.sekce > summary.sekceNadpis::after{
+    content:'▾';margin-left:auto;color:var(--muted);font-size:13px;transition:transform 0.15s;
+  }
+  details.sekce[open] > summary.sekceNadpis::after{ transform:rotate(180deg); }
+  details.sekce[open] > summary.sekceNadpis{ border-bottom:1px solid var(--border); }
+  .sekceTelo{ padding:10px 12px 12px; }
+
+  /* Tlačítka v detailu vedle sebe místo tří pruhů pod sebou */
+  .sekceTelo .row, .panelContent .row{ display:flex;flex-wrap:wrap;gap:6px; }
+  .sekceTelo .row > button, .panelContent .row > button{ flex:1 1 140px; }
   .card h3{margin:0 0 6px 0;font-size:1.08em;}
   .card p{margin:3px 0;font-size:1em;color:var(--muted);}
   .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;}
@@ -777,7 +803,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '14.0';
+const APP_VERSION = '14.3';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -4351,7 +4377,10 @@ function stampOwnerList(obj, jmena){
   if(!obj.ownerMods || typeof obj.ownerMods !== 'object' || Array.isArray(obj.ownerMods)) obj.ownerMods = {};
   (jmena || []).filter(Boolean).forEach(n => { obj.ownerMods[n] = t; });
 }
-function stampOwners(p, ...jmena){ stampOwnerList(p, jmena); }
+function stampOwners(p, ...jmena){
+  stampOwnerList(p, jmena);
+  zapomenCeny();   // změna podílů mění ceny, daně i jmění — paměť musí pryč
+}
 
 // ===== POJISTKA NA NÁKUPY =====
 // Peníze se strhávají z účtu hráče, ale podíl se ukládá do domu — jsou to dvě různá místa,
@@ -7159,10 +7188,33 @@ function rizikoDomu(p){
   return 1 + Math.min(1.2, ruch * 0.28);     // 1× až 2,2×
 }
 
+// Kolik bodů stavu smí jedna noční škoda sebrat. Měření ukázalo, že rozbité okno za
+// 300 Kč je u domu s nájmem 100 Kč tři dny výdělku — a protože se událost losuje jednou
+// za HRÁČE (ne za dům), majitel jednoho domu přicházel o 44 % nájmu, zatímco majitel deseti
+// o 4 %. Škodu proto zastropujeme na den a půl nájmu toho domu (hlásil Jerry).
+// Jedna škoda nesmí spolknout víc než zhruba den a půl nájmu z toho domu — a u hráče,
+// který má jen pár domů, ani to ne.
+function skodaStrop(p, majitel){
+  // Počítáme ze SKUTEČNĚ vybíraného nájmu, ne z férové ceny — u domu s podhodnoceným
+  // nájmem byla škoda jinak dražší, než kolik dům nese.
+  const skutecny = asArray(p.units).reduce((a, u) => a + (u && u.rentPrice || 0), 0);
+  const denni = skutecny > 0 ? skutecny : (safeCall(() => fairRentForHouse(p) * asArray(p.units).length) || 0);
+  if(denni <= 0) return 99;
+  const domu = majitel ? Object.values(world.parcels || {}).filter(x => (x.owners?.[majitel] || 0) > 50).length : 99;
+  const dnu = domu <= 2 ? 0.8 : 1.5;
+  // Spodní hranice 2 body: tři body byly u levného domu přes strop (měřeno 1,05 dne
+  // místo 0,8 u hráče se dvěma domy).
+  return Math.max(2, Math.round(denni * dnu / REPAIR_COST_PER_POINT));
+}
+
 function nocniIncident(u){
   if(!u) return;
   const moje = Object.values(world.parcels).filter(p => (p.owners?.[u.name] || 0) > 50);
   if(!moje.length) return;
+  // Kdo má jeden dva domy, nemá škodu z čeho rozložit. Měření ukázalo, že hráči s jedním
+  // domem ubíral vandalismus skoro pětinu nájmu (proti 1 % u portfolia dvaceti domů) —
+  // šanci proto snižujeme výrazněji.
+  const zacatecnik = moje.length <= 2 ? 0.4 : (moje.length <= 4 ? 0.7 : 1);
 
   // Dům se vybere s ohledem na riziko — u rušných míst se to stává častěji.
   const vazene = [];
@@ -7170,7 +7222,7 @@ function nocniIncident(u){
   const p = vazene[Math.floor(Math.random() * vazene.length)];
   if(!p) return;
 
-  if(Math.random() > NOCNI_SANCE * rizikoDomu(p) / 1.6) return;
+  if(Math.random() > NOCNI_SANCE * rizikoDomu(p) / 1.6 * zacatecnik) return;
 
   // Provozovna: vykradené zásoby místo poškození bytu.
   // U obchodu v přízemí může v noci dopadnout na obchod, ale i na byty nahoře —
@@ -7195,7 +7247,7 @@ function nocniIncident(u){
   const ev = NOCNI_UDALOSTI[Math.floor(Math.random() * NOCNI_UDALOSTI.length)];
   const byty = asArray(p.units).filter(x => x && (x.condition ?? 100) > 5);
   const tlumeni = hasUpgrade(p, 'renovation') ? 0.5 : 1;   // kvalitní materiály vydrží víc
-  let skoda = Math.round(ev.stav * tlumeni);
+  let skoda = Math.min(Math.round(ev.stav * tlumeni), skodaStrop(p, u.name));
   const poplatek = Math.round(effectiveHousePrice(p) * (ev.poplatek || 0) * tlumeni);
 
   if(byty.length){
@@ -7208,12 +7260,19 @@ function nocniIncident(u){
   if(poplatek > 0){ u.balance -= poplatek; pricti(u, 'naklady', poplatek); }
   stampHouse(p);
 
+  // Kolik oprava vyjde — hráči se ptali, jestli není škoda drahá proti tomu, co dům nese.
+  const cenaOpravy = Math.round(skoda * REPAIR_COST_PER_POINT);
+  const denniNajem = Math.round(asArray(p.units).reduce((a, x) => a + vybranyNajem(p, x), 0));
   const popis = `${ev.emoji} ${ev.nazev} — ${domKratce(p)}`;
-  zapisDoDeniku('other', popis + (skoda ? ` (stav −${skoda} %)` : ''), poplatek ? -poplatek : null);
+  const dnyNajmu = denniNajem > 0 ? cenaOpravy / denniNajem : 0;
+  zapisDoDeniku('other', popis + (skoda
+    ? ` (stav −${skoda} %, oprava ~${cenaOpravy} Kč${dnyNajmu ? ` = ${des(dnyNajmu, 1)} dne nájmu z tohohle domu` : ''})` : ''),
+    poplatek ? -poplatek : null);
   addNews('rental', `${ev.emoji} ${u.name}: ${ev.text.toLowerCase()} Dům ${domKratce(p)}.`, p.id);
   if(u.name === (currentUser && currentUser.name)){
     notifyPlayer(ev.nazev, `${domLabel(p)}: ${ev.text}` +
-      (skoda ? ` Stav bytu klesl o ${skoda} %.` : '') +
+      (skoda ? ` Stav bytu klesl o ${skoda} %, oprava vyjde asi na ${cenaOpravy} Kč${
+        denniNajem > 0 ? ` (${(cenaOpravy/denniNajem).toFixed(1)}× denní nájem domu)` : ''}.` : '') +
       (poplatek ? ` Úklid stál ${poplatek} Kč.` : ''));
   }
 }
@@ -8910,6 +8969,86 @@ function popularityInfo(p){
   return {label:'prémiová lokalita', color:'var(--orange)', stars:'★★★'};
 }
 
+// ===== SBALITELNÉ SEKCE V DETAILU DOMU =====
+// Detail domu byl pět obrazovek scrollování, než se člověk dostal k bytům. Karty proto
+// zabalíme do rozklikávacích sekcí. Děláme to až nad hotovým HTML — šablony detailu jsou
+// dlouhé a přepisovat je po částech by bylo mnohem rizikovější než jeden průchod textem.
+let SEKCE_OTEVRENE = null;         // které sekce má hráč rozbalené (drží se mezi překresleními)
+const SEKCE_VYCHOZI = ['byty', 'koupit'];
+
+function prepniSekci(id, otevreno){
+  if(!SEKCE_OTEVRENE) SEKCE_OTEVRENE = new Set(SEKCE_VYCHOZI);
+  if(otevreno) SEKCE_OTEVRENE.add(id); else SEKCE_OTEVRENE.delete(id);
+}
+
+// Z nadpisu karty odvodíme trvalé id, ať si sekce pamatuje svůj stav i po překreslení.
+function sekceId(nadpis){
+  const t = (nadpis || '').toLowerCase();
+  if(t.includes('pronájem') || t.includes('byt')) return 'byty';
+  if(t.includes('vylepšení')) return 'vylepseni';
+  if(t.includes('projekt') || t.includes('renovač')) return 'projekty';
+  if(t.includes('kronika')) return 'kronika';
+  if(t.includes('provozovn')) return 'provoz';
+  if(t.includes('nápověd')) return 'napoveda';
+  return 'sekce_' + t.replace(/[^a-záčďéěíňóřšťúůýž0-9]+/g, '').slice(0, 12);
+}
+
+// Najde konec elementu, který začíná na pozici `od` (počítá vnořené <div>).
+function konecElementu(html, od){
+  let hloubka = 0, i = od;
+  while(i < html.length){
+    if(html.startsWith('<div', i)){ hloubka++; i += 4; continue; }
+    if(html.startsWith('</div>', i)){ hloubka--; i += 6; if(hloubka === 0) return i; continue; }
+    i++;
+  }
+  return html.length;
+}
+
+// Nápovědy v detailu (šest otazníků pod sebou) sbalíme do jedné sekce. Otevřou se jednou
+// za čas, ale zabíraly celou obrazovku.
+function zabalNapovedu(html){
+  const prvni = html.indexOf('<details class="infoBox"');
+  if(prvni < 0) return html;
+  const zbytek = html.slice(prvni);
+  // zabalíme jen tehdy, když už za nápovědami nic jiného není
+  if(zbytek.replace(/<details class="infoBox"[\s\S]*?<\/details>/g, '').trim() !== '') return html;
+  const kolik = (zbytek.match(/<details class="infoBox"/g) || []).length;
+  const otevreno = SEKCE_OTEVRENE && SEKCE_OTEVRENE.has('napoveda');
+  return html.slice(0, prvni) +
+    `<details class="sekce"${otevreno ? ' open' : ''} ontoggle="prepniSekci('napoveda', this.open)">` +
+    `<summary class="sekceNadpis">❓ Nápověda k tomuhle domu (${kolik})</summary>` +
+    `<div class="sekceTelo">${zbytek}</div></details>`;
+}
+
+function sbalitelneKarty(html, vynechatPrvni){
+  if(!SEKCE_OTEVRENE) SEKCE_OTEVRENE = new Set(SEKCE_VYCHOZI);
+  let vysledek = '', i = 0, poradi = 0;
+  for(;;){
+    const zacatek = html.indexOf('<div class="card"', i);
+    if(zacatek < 0){ vysledek += html.slice(i); break; }
+    const konec = konecElementu(html, zacatek);
+    const karta = html.slice(zacatek, konec);
+    const nadpis = (karta.match(/<h3[^>]*>([\s\S]*?)<\/h3>/) || [])[1];
+    vysledek += html.slice(i, zacatek);
+    poradi++;
+    // První karta (hlavička domu) zůstává rozbalená — je to to hlavní, co chceš vidět.
+    if(!nadpis || (vynechatPrvni && poradi === 1)){
+      vysledek += karta;
+    } else {
+      const cistyNadpis = nadpis.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      const id = sekceId(cistyNadpis);
+      const otevreno = SEKCE_OTEVRENE.has(id);
+      const telo = karta.replace(/^<div class="card"[^>]*>/, '').replace(/<\/div>$/, '')
+                        .replace(/<h3[^>]*>[\s\S]*?<\/h3>/, '');
+      vysledek += `<details class="sekce"${otevreno ? ' open' : ''} ontoggle="prepniSekci('${id}', this.open)">` +
+        `<summary class="sekceNadpis">${cistyNadpis}</summary>` +
+        `<div class="sekceTelo">${telo}</div></details>`;
+    }
+    i = konec;
+  }
+  return zabalNapovedu(vysledek);
+}
+
 function renderSelected(id){
   const p = world.parcels[id];
   const el = document.getElementById('selectedContent');
@@ -9521,7 +9660,7 @@ function renderSelected(id){
     <p><b>Projekty.</b> Větší stavby, které pár dní trvají — podkroví přidá byt, fasáda a zahrada zvednou hodnotu.</p>
     <p><b>Prodej.</b> Podíl můžeš prodat zpátky městu (hned, ale za nižší cenu) nebo nabídnout na tržišti ostatním hráčům (za víc, ale musíš počkat).</p>
   `);
-  setHtml(el, html);
+  setHtml(el, safeCall(() => sbalitelneKarty(html, true)) || html);
 }
 
 const mineOtevrene = new Set();
@@ -13307,6 +13446,25 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'14.3', datum:'2026-09-30', body:[
+    ['oprava','Krátká paměť cen a daní (kvůli rychlosti) se nemazala při změně podílů — po koupi nebo prodeji tak mohla čtvrt vteřiny ukazovat stará čísla. Teď se maže i tam.'],
+    ['info','Hloubkový audit ekonomiky: daňová pásma navazují bez skoků, efektivní sazba roste (0 % → 10,5 % → 20,2 % → 30,6 %), nákupem a prodejem podílu se nedá vydělat, vlastní nabídku na tržišti si koupit nejde a stěhováním nájemníků taky ne.'],
+  ]},
+  { verze:'14.2', datum:'2026-09-26', body:[
+    ['oprava','Noční škody byly pro majitele jednoho domu neúnosné — Jerry se ptal správně. Událost se losuje jednou za hráče, ne za dům: kdo měl deset domů, přišel o 4 % nájmu, kdo jeden, o 44 %. Škoda je teď zastropovaná na den a půl nájmu toho domu a hráči s jedním nebo dvěma domy mají o třetinu menší šanci, že je to potká.'],
+    ['info','Rozbité okno u domu s nájmem 100 Kč stálo 300 Kč, tedy tři dny výdělku. Teď nejvýš 150 Kč. U velkých domů se strop neuplatní — tam byla škoda přiměřená už předtím.'],
+    ['zmena','Jerry se ptal, jestli není vandalismus drahý proti tomu, co dům vydělá. Měření: u portfolia 22 domů ubírá 0,9 % nájmu, ale u hráče s jedním domem skoro 18 % — tam se škoda nemá z čeho rozložit. Kdo má nejvýš dva domy, má teď skoro o polovinu menší šanci na noční škodu a jedna škoda mu nevezme víc než 0,8 dne nájmu (dřív 1,5).'],
+    ['info','V upozornění i v deníku je teď napsané, kolik oprava vyjde a kolikrát je to denní nájem toho domu — dřív bylo vidět jen „stav klesl o 14 %".'],
+    ['info','Prověřeno na Jerryho dotaz, jestli není vandalismus drahý proti výnosu: jeden zásah stojí nejvýš 1,5 dne nájmu z toho domu (u hráče se dvěma domy 0,8 dne) a s rekonstrukcí polovinu. Celkem sebere 1–2 % příjmu. Skutečný odtok je obyčejné chátrání — to je zhruba třetina nájmu.'],
+    ['oprava','Strop na škodě se počítal z férové ceny, ne z toho, co dům opravdu vybírá — u podhodnoceného nájmu tak škoda přesáhla, co dům nese. A minimální škoda 3 body byla u nejlevnějších domů nad stropem (měřeno 1,05 dne místo 0,8). Obojí opraveno.'],
+    ['info','V deníku je u škody napsané, kolika dnům nájmu z toho domu odpovídá — ať je poznat, jestli je to drobnost, nebo rána.'],
+  ]},
+  { verze:'14.1', datum:'2026-09-25', body:[
+    ['zmena','🧹 Detail domu se dal sbalit. Místo pěti obrazovek scrollování jsou z karet rozklikávací sekce — hlavička domu zůstává vidět, byty a koupě jsou rozbalené, zbytek si otevřeš, když ho potřebuješ. Co si rozbalíš, to ti zůstane i po překreslení.'],
+    ['zmena','Šest otazníků s nápovědou se slilo do jedné sekce „Nápověda k tomuhle domu".'],
+    ['zmena','Delší texty v panelech jsou zarovnané doleva — na střed se dlouhé odstavce čtou špatně. Na střed zůstaly nadpisy a klíčová čísla.'],
+    ['zmena','Tlačítka v detailu stojí vedle sebe místo tří pruhů pod sebou, takže zabírají třetinu místa.'],
+  ]},
   { verze:'14.0', datum:'2026-09-25', body:[
     ['oprava','U bytu se psalo „zbylých 3 % patří městu", ale zbytek nájmu si dělí i ostatní spoluvlastníci — vypadalo to, jako by peníze mizely. Teď je vypsané, kdo kolik dostane: „Zbytek nájmu si dělí Eff 23 %, EDDIE 5 % — dohromady 14 Kč/den · město 3 % — 2 Kč/den."'],
     ['oprava','Hlavička domu hlásila 77 Kč/den, ale byty dohromady 70 Kč. Rozdíl dělal bonus za plně obsazený dům, o kterém u bytů nebyla zmínka. Teď je vidět u obojího.'],
