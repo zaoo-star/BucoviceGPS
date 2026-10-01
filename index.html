@@ -61,10 +61,18 @@
   .rate.down{color:var(--danger);}
   @keyframes tikPulz{0%{transform:scale(1);}40%{transform:scale(1.18);}100%{transform:scale(1);}}
   .tikPulz{animation:tikPulz 0.45s ease-out;display:inline-block;}
+  /* Hlavička: skleněné pilulky. Dřív to byly plné tmavé obdélníky, které nad světlou
+     mapou působily jako nálepky. Rozostřené pozadí je nechá splynout a zůstanou čitelné. */
   .statPill{
-    background:rgba(23,26,33,0.92);border:1px solid var(--border);border-radius:10px;
-    padding:5px 10px;font-weight:600;font-size:11px;display:flex;align-items:center;gap:5px;
-    white-space:nowrap;pointer-events:auto;backdrop-filter:blur(4px);
+    background:rgba(18,21,28,0.58);
+    border:1px solid rgba(255,255,255,0.10);
+    border-radius:999px;
+    padding:5px 11px;font-weight:600;font-size:11.5px;
+    display:flex;align-items:center;gap:5px;
+    white-space:nowrap;pointer-events:auto;
+    backdrop-filter:blur(14px) saturate(1.3);
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);
+    box-shadow:0 3px 10px rgba(0,0,0,0.26);
   }
   #balance{color:var(--gold);}
   #dayPill{color:var(--accent2);}
@@ -100,12 +108,21 @@
     position:absolute;left:10px;top:46%;transform:translateY(-50%);z-index:400;
     display:flex;flex-direction:column;gap:10px;
   }
+  /* Lišta: menší kulatá skleněná tlačítka místo velkých dlaždic — zabírají míň mapy
+     a působí vzdušněji. Průhlednost s rozostřením drží čitelnost nad světlou i tmavou mapou. */
   .railBtn{
-    width:54px;height:54px;border-radius:15px;background:rgba(23,26,33,0.92);
-    border:1px solid var(--border);color:var(--text);font-size:24px;
+    width:46px;height:46px;border-radius:50%;
+    background:rgba(18,21,28,0.62);
+    border:1px solid rgba(255,255,255,0.10);
+    color:var(--text);font-size:21px;
     display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;
-    backdrop-filter:blur(4px);flex-shrink:0;
+    backdrop-filter:blur(14px) saturate(1.3);
+    -webkit-backdrop-filter:blur(14px) saturate(1.3);
+    box-shadow:0 4px 14px rgba(0,0,0,0.32);
+    transition:transform 0.12s ease, background 0.15s ease;
+    flex:0 0 auto;
   }
+  .railBtn:active{ transform:scale(0.92); background:rgba(40,46,58,0.78); }
   .railBtn.active{background:var(--accent);color:#08130a;border-color:var(--accent);}
 
   #bottomSheet{
@@ -178,18 +195,19 @@
   }
   label{font-size:0.92em;color:var(--muted);display:block;margin-top:8px;}
   .parcelMarker{
-    width:26px;height:26px;display:flex;align-items:center;
-    justify-content:center;transition:opacity 0.2s;
+    width:28px;height:28px;display:flex;align-items:center;
+    justify-content:center;transition:opacity 0.2s, transform 0.12s;
     /* Naklonění a zvětšení musí být v JEDNÉ vlastnosti transform, jinak se přebíjejí.
        Dřív pravidlo pro naklonění (které platí na každou druhou a třetí značku) přepsalo
        zvětšení u domů v dosahu — proto byly některé domečky větší a jiné menší náhodně. */
     --naklon:0deg; --zvetseni:1;
     transform:rotate(var(--naklon)) scale(var(--zvetseni));
-    /* Vzhled nálepky: zaoblený roh, bílý okraj a měkký stín. */
-    border-radius:10px;
-    border:2px solid rgba(255,255,255,0.92);
-    box-shadow:0 2px 5px rgba(0,0,0,0.35);
-    opacity:0.82;
+    /* Kulatá známka s tenkým světlým prstencem — čistší a na mapě méně rušivá než
+       dřívější hranatá nálepka se silným bílým rámem. */
+    border-radius:50%;
+    border:1.5px solid rgba(255,255,255,0.75);
+    box-shadow:0 3px 8px rgba(0,0,0,0.38), inset 0 1px 0 rgba(255,255,255,0.18);
+    opacity:0.9;
     font-size:15px;
   }
 
@@ -228,6 +246,51 @@
   @media (prefers-reduced-motion: reduce){
     body.jeNoc .parcelMarker{ box-shadow:0 2px 5px rgba(0,0,0,0.45); }
   }
+
+
+  /* Ikona + popisek pod ní. Tlačítko je kvůli tomu o kus vyšší, ale širší nezůstává —
+     lišta by jinak zabrala moc mapy. */
+  .railBtn{ flex-direction:column; gap:1px; border-radius:16px; height:auto; padding:5px 0 4px; }
+  .railBtn .railPopis{
+    font-size:8.5px;font-weight:600;line-height:1;letter-spacing:0.02em;
+    color:rgba(255,255,255,0.72);text-transform:uppercase;
+  }
+  /* Na nízkém displeji popisky schováme, ať se lišta vejde bez posouvání. */
+  @media (max-height: 620px){
+    .railBtn .railPopis{ display:none; }
+    .railBtn{ padding:0; }
+  }
+
+  /* ===== JEDNOTNÝ MODERNÍ VZHLED ===== */
+  /* Panely a dialogy dostaly stejné sklo jako hlavička a lišta, ať to drží pohromadě. */
+  #sheetHeader{
+    background:rgba(18,21,28,0.78);
+    backdrop-filter:blur(16px) saturate(1.2);
+    -webkit-backdrop-filter:blur(16px) saturate(1.2);
+    border-bottom:1px solid rgba(255,255,255,0.08);
+  }
+  #customModal .modalBox{
+    border:1px solid rgba(255,255,255,0.10);
+    box-shadow:0 18px 50px rgba(0,0,0,0.55);
+    border-radius:18px;
+  }
+  /* Tlačítka: měkčí rohy a jemný stín místo plochých obdélníků. */
+  button{
+    border-radius:12px;
+    box-shadow:0 2px 6px rgba(0,0,0,0.22);
+    transition:transform 0.1s ease, filter 0.15s ease;
+  }
+  button:active{ transform:scale(0.97); filter:brightness(1.08); }
+  button.secondary{ background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); }
+  /* Karty a sekce: méně ostré hrany, jemnější oddělení. */
+  .card, details.sekce{
+    border-radius:14px;
+    border:1px solid rgba(255,255,255,0.07);
+    background:rgba(255,255,255,0.028);
+  }
+  .infoBox{ border-radius:12px; }
+  /* Spodní panel ať má zaoblenou hranu jako moderní aplikace. */
+  #bottomSheet{ border-top-left-radius:20px;border-top-right-radius:20px; }
 
   /* ===== DENNÍ DOBA A POČASÍ NAD MAPOU ===== */
   #vrstvaDenNoc, #vrstvaPocasi{
@@ -317,9 +380,9 @@
 
   /* Pilulky a lišta ať ladí s teplejším podkladem */
   .statPill{
-    background:rgba(30,25,20,0.88);
-    border:1px solid rgba(255,255,255,0.12);
-    box-shadow:0 2px 6px rgba(0,0,0,0.3);
+    background:rgba(18,21,28,0.58);
+    border:1px solid rgba(255,255,255,0.10);
+    box-shadow:0 3px 10px rgba(0,0,0,0.26);
   }
   .railBtn{
     border-radius:18px;
@@ -803,7 +866,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '14.3';
+const APP_VERSION = '14.5';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8731,6 +8794,27 @@ function nactiVzhled(){
     if(u && typeof u === 'object') VZHLED_VOLBY.forEach(v => { if(typeof u[v.id] === 'boolean') VZHLED[v.id] = u[v.id]; });
   } catch(e){}
 }
+// Popisky pod ikonami v postranních lištách. Bez nich si hráč musel pamatovat, co která
+// emoji dělá — zvlášť 💡 (finance) a 📈 (investice) se pletly.
+const RAIL_POPISKY = {
+  daily:'Výzvy', mine:'Domy', jobs:'Práce', businesses:'Investice', market:'Tržiště',
+  bank:'Banka', leaderboard:'Žebříček', news:'Noviny', chat:'Chat', finance:'Finance',
+  guide:'Průvodce', admin:'Admin', denik:'Deník', zmeny:'Novinky'
+};
+
+function doplnPopiskyIkon(){
+  document.querySelectorAll('.railBtn').forEach(b => {
+    if(b.querySelector('.railPopis')) return;          // už má
+    const tab = b.dataset ? b.dataset.tab : null;
+    const text = RAIL_POPISKY[tab] || (b.title || '').split(' ')[0];
+    if(!text) return;
+    const sp = document.createElement('span');
+    sp.className = 'railPopis';
+    sp.textContent = text;
+    b.appendChild(sp);
+  });
+}
+
 function prepniVzhled(id){
   if(!VZHLED_VOLBY.some(v => v.id === id)) return;
   VZHLED[id] = !VZHLED[id];
@@ -13446,6 +13530,14 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'14.5', datum:'2026-09-30', body:[
+    ['zmena','Pod ikonami v bočních lištách je napsané, co otevírají — Výzvy, Domy, Práce, Investice, Tržiště, Banka, Žebříček, Noviny, Chat, Finance, Průvodce, Deník, Novinky. Dřív se dalo poznat jen podle obrázku a hlavně 💡 finance a 📈 investice se pletly. Na nízkém displeji se popisky schovají, aby se lišta vešla.'],
+  ]},
+  { verze:'14.4', datum:'2026-09-30', body:[
+    ['zmena','🎨 Modernější vzhled. Pilulky v hlavičce a tlačítka v liště jsou skleněné s rozostřeným pozadím — nad světlou mapou už nepůsobí jako nalepené cedulky. Tlačítka v liště jsou kulatá a o kus menší, takže zabírají míň mapy.'],
+    ['zmena','Domy na mapě jsou kulaté známky s tenkým prstencem místo hranatých nálepek se silným bílým rámem. Čitelnost zůstala, mapa je klidnější.'],
+    ['zmena','Panely, dialogy, karty i tlačítka mají jednotné zaoblení a jemnější stíny, aby celá hra působila jako jeden celek.'],
+  ]},
   { verze:'14.3', datum:'2026-09-30', body:[
     ['oprava','Krátká paměť cen a daní (kvůli rychlosti) se nemazala při změně podílů — po koupi nebo prodeji tak mohla čtvrt vteřiny ukazovat stará čísla. Teď se maže i tam.'],
     ['info','Hloubkový audit ekonomiky: daňová pásma navazují bez skoků, efektivní sazba roste (0 % → 10,5 % → 20,2 % → 30,6 %), nákupem a prodejem podílu se nedá vydělat, vlastní nabídku na tržišti si koupit nejde a stěhováním nájemníků taky ne.'],
@@ -16555,6 +16647,7 @@ window.onload = async () => {
   safeCall(() => nactiAdresy());
   // Místa do sbírky: z paměti hned, z OpenStreetMap až po chvíli, ať start appky nezdržuje.
   safeCall(() => nactiVzhled());
+  safeCall(() => doplnPopiskyIkon());
   setTimeout(() => safeCall(() => doruciVzkazy()), 3000);
   safeCall(() => zkontrolujDataZmen());   // upozorní v konzoli, když u verze zůstalo staré datum
   safeCall(() => nactiMistaZPameti());
