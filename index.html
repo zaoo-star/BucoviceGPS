@@ -261,6 +261,18 @@
     .railBtn{ padding:0; }
   }
 
+  /* Tlačítka voleb v dialogu (výběr oboru, využití domu…). */
+  #modalVolby{ display:none;flex-direction:column;gap:7px;margin:10px 0 4px; }
+  #modalVolby .volbaBtn{
+    display:flex;flex-direction:column;gap:2px;text-align:left;
+    background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);
+    border-radius:12px;padding:9px 12px;color:var(--text);font-size:14px;cursor:pointer;
+    box-shadow:none;
+  }
+  #modalVolby .volbaBtn:active{ background:rgba(255,255,255,0.12); }
+  #modalVolby .volbaPopis{ font-weight:700; }
+  #modalVolby .volbaDetail{ font-size:11.5px;color:var(--muted);font-weight:400;line-height:1.35; }
+
   /* ===== JEDNOTNÝ MODERNÍ VZHLED ===== */
   /* Panely a dialogy dostaly stejné sklo jako hlavička a lišta, ať to drží pohromadě. */
   #sheetHeader{
@@ -558,6 +570,7 @@
 <div id="customModal">
   <div class="modalBox">
     <p id="modalMessage"></p>
+    <div id="modalVolby"></div>
     <input id="modalInput" type="text" />
     <div class="modalBtnRow">
       <button id="modalCancelBtn" class="secondary">Zrušit</button>
@@ -768,9 +781,43 @@ function zavriDialog(){
 
 // numeric=true → číselná klávesnice, jinak normální písmenková.
 // (Dřív tu byla natvrdo číselná, takže při psaní jména nabízel mobil jen číslice.)
+// Výběr klepnutím místo psaní čísla. Hra se dřív ptala „napiš číslo 1–6", což nový hráč
+// vůbec nepochopil — a u provozovny to byla první věc, se kterou se potkal.
+// `volby` = pole { popis, detail, hodnota }. Vrací hodnotu vybrané položky, nebo null.
+function showChoice(message, volby){
+  return new Promise(resolve => {
+    otevriDialog();
+    const mm = document.getElementById('modalMessage');
+    mm.textContent = message;
+    mm.style.textAlign = String(message).includes('\n') ? 'left' : 'center';
+    document.getElementById('modalInput').style.display = 'none';
+    document.getElementById('modalCancelBtn').style.display = '';
+    const box = document.getElementById('modalVolby');
+    box.innerHTML = '';
+    box.style.display = 'flex';
+    (volby || []).forEach((v, i) => {
+      const b = document.createElement('button');
+      b.className = 'volbaBtn';
+      b.innerHTML = `<span class="volbaPopis">${v.popis}</span>` +
+        (v.detail ? `<span class="volbaDetail">${v.detail}</span>` : '');
+      b.onclick = () => {
+        document.getElementById('customModal').classList.remove('open');
+        box.innerHTML = ''; box.style.display = 'none';
+        zavriDialog();
+        resolve(v.hodnota !== undefined ? v.hodnota : i);
+      };
+      box.appendChild(b);
+    });
+    // Zrušení i zavření křížkem vrací null — volající to už umí ošetřit.
+    modalResolve = (v) => { box.innerHTML = ''; box.style.display = 'none'; resolve(null); };
+    document.getElementById('customModal').classList.add('open');
+  });
+}
+
 function showPrompt(message, defaultValue, numeric){
   return new Promise(resolve => {
     otevriDialog();
+    { const vb = document.getElementById('modalVolby'); if(vb){ vb.innerHTML = ''; vb.style.display = 'none'; } }
     modalResolve = resolve;
     // Víceřádkovou zprávu čteme líp zarovnanou doleva, krátkou hlášku na střed.
     const mm = document.getElementById('modalMessage');
@@ -793,6 +840,7 @@ function showPrompt(message, defaultValue, numeric){
 function showConfirm(message){
   return new Promise(resolve => {
     otevriDialog();
+    { const vb = document.getElementById('modalVolby'); if(vb){ vb.innerHTML = ''; vb.style.display = 'none'; } }
     modalResolve = resolve;
     // Víceřádkovou zprávu čteme líp zarovnanou doleva, krátkou hlášku na střed.
     const mm = document.getElementById('modalMessage');
@@ -809,6 +857,7 @@ function showConfirm(message){
 function showAlert(message){
   return new Promise(resolve => {
     otevriDialog();
+    { const vb = document.getElementById('modalVolby'); if(vb){ vb.innerHTML = ''; vb.style.display = 'none'; } }
     modalResolve = resolve;
     // Víceřádkovou zprávu čteme líp zarovnanou doleva, krátkou hlášku na střed.
     const mm = document.getElementById('modalMessage');
@@ -866,7 +915,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '14.6';
+const APP_VERSION = '14.8';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -993,7 +1042,7 @@ const LIVING_BREAKDOWN = [
   {key:'ostatni', label:'🧾 Ostatní',  ratio:0.20},
 ];
 const LIVING_COST_VARIATION = 0.12;   // ±12 % denní kolísání nákladů (ceny se mění den ode dne)
-const SAVINGS_ANNUAL_RATE = 0.03;     // spořicí účet vynáší 3 % ročně (bezpečné, ale pomalé — vs půjčka 18 %)
+const SAVINGS_ANNUAL_RATE = 0.03;     // spořicí účet vynáší 3 % ročně (bezpečné, ale pomalé)
 const INFLATION_ANNUAL = 0.025;       // inflace 2,5 % ročně — ceny i mzdy pomalu rostou, hotovost ztrácí hodnotu
 const EVENT_CHANCE_PER_DAY = 0.15;    // 15% šance na náhodnou životní událost každý herní den
 const RENT_DECAY = 1;                 // úbytek stavu bytu/herní den (100→0 za 100 dní), jen u obsazeného bytu
@@ -1849,8 +1898,13 @@ const BUSINESS_DEFS = [
 const BUSINESS_SELL_RATIO = 0.7; // kolik % ceny dostaneš zpět při prodeji podílu
 
 const MORTGAGE_DOWNPAYMENT_RATIO = 0.2;  // 20 % vlastních peněz, zbytek na hypotéku
-const MORTGAGE_ANNUAL_RATE = 0.06;       // 6 % p.a. — jištěno domem
-const LOAN_ANNUAL_RATE = 0.18;           // 18 % p.a. — nezajištěná půjčka
+const MORTGAGE_ANNUAL_RATE = 0.25;       // 25 % p.a. — jištěno domem, proto levnější než běžná půjčka
+// Sazby vycházejí z toho, kolik v Bučovicích vynášejí domy: čistý výnos je kolem 70 %
+// ročně, takže při starých 6 % byla hypotéka zadarmo a „kup všechno na dluh" byl jediný
+// rozumný tah. Při 25 % koupě na hypotéku pořád vydělává (z 49 Kč čistého denně sebere
+// úrok 17), ale prázdný dům už bolí — splácíš dál. Starým půjčkám
+// zůstává sazba, se kterou vznikly — nikomu se dluh nezdraží pod rukama.
+const LOAN_ANNUAL_RATE = 0.40;           // 40 % p.a. — nezajištěná půjčka
 const DAYS_PER_YEAR = 365;
 const LOAN_LIMIT_RATIO = 0.8;            // max půjčka = 80 % odhadovaného jmění (nad rámec základního stropu)
 const LOAN_BASE_LIMIT = 15000;          // každý si může půjčit aspoň tolik (nastartování na začátku)
@@ -4615,22 +4669,44 @@ function maxRentForHouse(p){ return Math.max(50, Math.round(fairRentForHouse(p) 
 // Z domu, kde má hráč většinu, jde udělat provozovnu. Na rozdíl od podílu ve firmě si
 // tady hráč vybírá MÍSTO — výnos se počítá z poptávky v okolí, ne paušálně.
 // Dobře umístěná provozovna vydělá víc než pronájem, špatně umístěná skoro nic.
+// `investice` = kolikrát dražší je zařízení oproti základu. Dřív stály všechny obory
+// stejně, což nedávalo smysl: vybavit posilovnu činkami a stroji je něco jiného než
+// postavit pult do večerky. Dražší obory za to mají vyšší výnos.
+// `zbozi` je to, co se v provozovně spotřebovává — „zásoby" sedí večerce, ale ne
+// kadeřnictví ani fitku (hlásil Zaoo).
 const PROVOZ_TYPY = {
-  vecerka:    { name:'Večerka',      emoji:'🏪', vynos:1.00, radius:250,
+  vecerka:    { name:'Večerka',      emoji:'🏪', vynos:1.00, radius:250, investice:0.85,
+                zbozi:'zboží', zboziPopis:'pečivo, nápoje a drogerie na pultech',
                 popis:'Základní zboží. Živí ji hlavně to, kolik lidí bydlí v okolí.' },
-  kavarna:    { name:'Kavárna',      emoji:'☕', vynos:1.15, radius:300,
-                popis:'Potřebuje ruch — místa zájmu, podniky, průchozí ulice.' },
-  pekarna:    { name:'Pekárna',      emoji:'🥐', vynos:1.05, radius:280,
+  pekarna:    { name:'Pekárna',      emoji:'🥐', vynos:1.05, radius:280, investice:1.00,
+                zbozi:'suroviny', zboziPopis:'mouka, droždí a máslo na ranní pečení',
                 popis:'Stálá klientela z okolních domů, ráno nejvíc.' },
-  kadernictvi:{ name:'Kadeřnictví',  emoji:'💇', vynos:1.10, radius:400,
+  kavarna:    { name:'Kavárna',      emoji:'☕', vynos:1.15, radius:300, investice:1.08,
+                zbozi:'suroviny', zboziPopis:'káva, mléko a zákusky',
+                popis:'Potřebuje ruch — místa zájmu, podniky, průchozí ulice.' },
+  kadernictvi:{ name:'Kadeřnictví',  emoji:'💇', vynos:1.10, radius:400, investice:1.00,
+                zbozi:'materiál', zboziPopis:'barvy, šampony a nůžky k nabroušení',
                 popis:'Lidé za ním dojdou dál, konkurence ale hodně bolí.' },
-  fitko:      { name:'Fitness',      emoji:'🏋️', vynos:1.20, radius:450,
-                popis:'Velký spád, ale drahý provoz a hodně citlivé na konkurenci.' },
-  restaurace: { name:'Restaurace',   emoji:'🍽️', vynos:1.25, radius:350,
-                popis:'Nejvyšší výnos, nejvyšší nároky na místo i zásoby.' }
+  restaurace: { name:'Restaurace',   emoji:'🍽️', vynos:1.25, radius:350, investice:1.25,
+                zbozi:'suroviny', zboziPopis:'maso, zelenina a nápoje do kuchyně',
+                popis:'Nejvyšší výnos, nejvyšší nároky na místo i suroviny.' },
+  fitko:      { name:'Fitness',      emoji:'🏋️', vynos:1.20, radius:450, investice:1.25,
+                zbozi:'vybavení', zboziPopis:'opotřebené stroje, činky a servis',
+                popis:'Velký spád, ale drahé stroje a hodně citlivé na konkurenci.' }
 };
 
-const PROVOZ_INVESTICE = 0.55;    // kolik z hodnoty domu stojí zařízení provozovny
+// Název toho, co provozovna spotřebovává (pro texty v detailu a dialozích).
+function zboziNazev(p, pad){
+  const t = p && p.provoz ? PROVOZ_TYPY[p.provoz.typ] : null;
+  const n = (t && t.zbozi) || 'zásoby';
+  if(pad === '2') return { 'zboží':'zboží', 'suroviny':'surovin', 'materiál':'materiálu', 'vybavení':'vybavení' }[n] || 'zásob';
+  if(pad === '4') return { 'zboží':'zboží', 'suroviny':'suroviny', 'materiál':'materiál', 'vybavení':'vybavení' }[n] || 'zásoby';
+  return n;
+}
+
+// 0,62 (dřív 0,55): zařízení má stát o kus víc, ať je otevření provozovny rozhodnutí,
+// ne samozřejmost. Návratnost zůstává kolem 130–150 dní.
+const PROVOZ_INVESTICE = 0.62;    // kolik z hodnoty domu stojí zařízení provozovny
 // Základ výnosu je nastavený tak, aby při průměrné poptávce vyšla návratnost kolem 200 dní —
 // tedy mezi pronájmem (400) a podílem ve firmě (150). Dobré místo se vrátí za ~130 dní,
 // špatné za 400+. V tom je celá hra: nejde o to CO otevřeš, ale KDE.
@@ -4769,9 +4845,14 @@ function provozVynos(p){
 }
 
 // `jenPrizemi` umožní spočítat cenu dřív, než se provozovna otevře (pro nabídku v dialogu).
-function provozInvestice(p, jenPrizemi){
+function provozInvestice(p, jenPrizemi, typKlic){
   const podil = jenPrizemi ? provozPodilPater(pocetPater(p)) : provozPodil(p);
-  return Math.round(effectiveHousePrice(p) * PROVOZ_INVESTICE * podil);
+  // Obor rozhoduje o ceně zařízení. Když ho ještě neznáme (nabídka tlačítka), bereme
+  // nejlevnější, proto u tlačítka stojí „od".
+  const typ = PROVOZ_TYPY[typKlic || (p.provoz && p.provoz.typ)];
+  const nasobek = typ ? (typ.investice || 1)
+    : Math.min(...Object.values(PROVOZ_TYPY).map(t => t.investice || 1));
+  return Math.round(effectiveHousePrice(p) * PROVOZ_INVESTICE * podil * nasobek);
 }
 // Jak se provozovně dnes daří. Podnikání je risk: kolísá víc než podíl ve firmě (±50 %),
 // občas přijde skvělý den (×1,9) a občas propadák (×0,35). Průměr dlouhodobě vychází
@@ -8131,7 +8212,7 @@ function renderSkladMarker(){
   if(skladMarker && map.hasLayer(skladMarker)) map.removeLayer(skladMarker);
   skladMarker = L.marker([SKLAD.lat, SKLAD.lng], {
     icon: L.divIcon({ html:`<div class="skladMarker">${SKLAD.emoji}</div>`, className:'', iconSize:[32,32] })
-  }).addTo(map).bindTooltip(nesu > 0 ? `${SKLAD.nazev} — neseš ${nesu} % zásob` : `${SKLAD.nazev} — nalož zboží pro provozovny`);
+  }).addTo(map).bindTooltip(nesu > 0 ? `${SKLAD.nazev} — neseš ${nesu} %` : `${SKLAD.nazev} — nalož ${zboziProMoje(currentUser.name)} pro provozovny`);
   skladMarker._klic = klic;
 }
 
@@ -9200,7 +9281,7 @@ function renderSelected(id){
         const b = vk.mult >= 1.1 ? 'var(--accent)' : vk.mult >= 0.9 ? 'var(--muted)' : 'var(--danger)';
         return `<p style="margin:4px 0;">Dnes: <b style="color:${b}">${vk.popis} (${Math.round(vk.mult*100)} %)</b>${
           vk.vlivy.length ? ` <span style="color:var(--muted);font-size:0.9em;">— ${vk.vlivy.join(' · ')}</span>` : ''}</p>`; })()}
-      <p style="margin:4px 0;">Zásoby: <b style="color:${barvaZ}">${zas} %</b></p>
+      <p style="margin:4px 0;">${zboziNazev(p, '1').charAt(0).toUpperCase() + zboziNazev(p, '1').slice(1)}: <b style="color:${barvaZ}">${zas} %</b></p>
       <div style="background:var(--panel2);border-radius:4px;height:8px;margin:4px 0;overflow:hidden;">
         <div style="width:${zas}%;height:100%;background:${barvaZ};"></div>
       </div>
@@ -9804,7 +9885,7 @@ function renderMine(){
     const predrazene = p.useType === 'rental' ? byty.filter(u => u && u.npc && (u.rentPrice || 0) > npcMaxNajem(p, u)) : [];
     if(predrazene.length) problemy.push(`${predrazene.length}× nájem nad únosnou mez`);
     if(rozbite.length) problemy.push(`${rozbite.length}× oprava`);
-    if(provoz && zasoby < 30) problemy.push('dochází zásoby');
+    if(provoz && zasoby < 30) problemy.push(`dochází ${zboziNazev(p, '1') === 'zboží' ? 'zboží' : zboziNazev(p, '1') === 'suroviny' ? 'suroviny' : zboziNazev(p, '1') === 'materiál' ? 'materiál' : 'vybavení'}`);
     if(!p.useType && pct > 50) problemy.push('bez využití');
     return { p, pct, dil, byty, obsazene, mojeByty, prazdne, rozbite, najemCelkem, najemPlne,
              provoz, provozCisty, provozDnesKc, solar, hodnota, dan, prijem, zasoby, problemy,
@@ -9958,7 +10039,7 @@ function renderMine(){
             vk.vlivy.length ? `<br><span style="color:var(--muted);font-size:0.9em;">${vk.vlivy.join(' · ')}</span>` : ''}</p>`; })()}
         <p>Dnes utrží <b style="color:var(--gold)">${kc(d.provozDnesKc)} Kč</b>${d.zasoby < 95 ? ` <span style="color:var(--muted)">(se zásobami ${d.zasoby} %)</span>` : ''}</p>
         <p style="font-size:0.88em;color:var(--muted);">S plnými zásobami: tržby ${kc(plny)} − zásoby ${kc(plny * PROVOZ_ZASOBY_PODIL)} = čistě ${kc(d.provozCisty)} Kč/den</p>
-        <p style="font-size:0.88em;color:${barva};">📦 Zásoby ${d.zasoby} %${d.zasoby < 30 ? ' — dochází, zajdi doplnit!' : ''}</p>
+        <p style="font-size:0.88em;color:${barva};">📦 ${zboziNazev(p, '1').charAt(0).toUpperCase() + zboziNazev(p, '1').slice(1)} ${d.zasoby} %${d.zasoby < 30 ? ' — dochází, zajdi doplnit!' : ''}</p>
         <div style="background:var(--panel2);border-radius:4px;height:6px;margin:3px 0;overflow:hidden;">
           <div style="width:${d.zasoby}%;height:100%;background:${barva};"></div></div>`;
     }
@@ -12045,13 +12126,18 @@ function renderDaily(){
     const zaBod = Math.round(cenaZaBodSklad(u.name));
     return `<div class="card" style="text-align:left;">
       <h3 style="text-align:center;">${SKLAD.emoji} Zásobování</h3>
-      <p style="font-size:0.93em;margin:4px 0;">Neseš <b style="color:${nesu ? 'var(--gold)' : 'var(--muted)'}">${nesu} %</b> zásob${
-        nesu ? ` — zanes je do provozovny, tam se doplní zdarma.` : '.'} Uneseš ${ZBOZI_KAPACITA} %.</p>
-      <p style="font-size:0.9em;margin:2px 0;">Tvoje provozovny potřebují dohromady <b>${chybiCelkem} %</b> zásob.</p>
+      <p style="font-size:0.93em;margin:4px 0;">Neseš <b style="color:${nesu ? 'var(--gold)' : 'var(--muted)'}">${nesu} %</b>${
+        nesu ? ` — ${zboziProMoje(u.name)}. Zanes je do provozovny, tam se doplní zdarma.` : ` (vozíš ${zboziProMoje(u.name)})`}. Uneseš ${ZBOZI_KAPACITA} %.</p>
+      <p style="font-size:0.9em;margin:2px 0;">Tvoje provozovny potřebují dohromady <b>${chybiCelkem} %</b>:</p>
+      ${moje.map(x => {
+        const chybi = Math.max(0, 100 - Math.round(x.provoz.zasoby ?? 100));
+        const t = PROVOZ_TYPY[x.provoz.typ];
+        return chybi < 1 ? '' : `<p style="font-size:0.86em;margin:1px 0 1px 8px;">${t ? t.emoji : '🏪'} ${domKratce(x)} — ${chybi} % ${zboziNazev(x, '2')}</p>`;
+      }).join('')}
       <p style="font-size:0.86em;color:var(--muted);margin:2px 0;">Ve skladu stojí procento ${zaBod} Kč. Dovoz na místo je o ${Math.round(ROZVOZ_PRIRAZKA*100)} % dražší — za pohodlí se platí.</p>
       ${d !== null ? `<p style="font-size:0.88em;margin:4px 0 0;">🧭 Sklad je ${kudyText(SKLAD, d)}.</p>` : ''}
       <div class="row" style="margin-top:6px;">
-        <button ${d !== null && d <= INTERACTION_RADIUS ? '' : 'disabled'} onclick="naloztZbozi()">📦 Naložit zboží</button>
+        <button ${d !== null && d <= INTERACTION_RADIUS ? '' : 'disabled'} onclick="naloztZbozi()">📦 Naložit</button>
         <button class="secondary" onclick="ukazSklad()">Na mapě</button>
       </div>
     </div>`;
@@ -13530,6 +13616,16 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'14.8', datum:'2026-09-30', body:[
+    ['zmena','👆 Výběr provozovny se klepe, nepíše. Místo „napiš číslo 1–6" jsou tlačítka s názvem oboru, cenou, odhadem výnosu, návratností a tím, co se v něm doplňuje. Stejně se vybírá i to, jestli chceš obchod jen v přízemí, nebo přes celý dům.'],
+    ['zmena','📦 Zásobování mluví o tom, co opravdu vezeš — suroviny do pekárny, vybavení do fitka, materiál do kadeřnictví. Karta v Denních výzvách navíc vypisuje po domech, kde kolik chybí.'],
+    ['zmena','🏦 Hypotéka podražila ze 6 na 25 % ročně a běžná půjčka z 18 na 40 %. Dům vynáší kolem 70 % ročně čistého, takže při starých sazbách byly cizí peníze zadarmo a „kup všechno na dluh" byl jediný rozumný tah. Teď koupě na hypotéku pořád vydělává (z typického domu zbyde po úroku 32 Kč denně místo 44), ale prázdný dům bolí — úrok běží dál. Pět tisíc na běžnou půjčku stojí 5,50 Kč denně, tedy dvě procenta denní mzdy. STARÉ PŮJČKY SI DRŽÍ SAZBU, SE KTEROU VZNIKLY — nikomu se dluh nezdraží pod rukama.'],
+  ]},
+  { verze:'14.7', datum:'2026-09-30', body:[
+    ['zmena','🏪 Každý obor stojí jinak. Dřív vyšly všechny provozovny stejně, což nedávalo smysl — vybavit posilovnu stroji je něco jiného než postavit pult do večerky. Nejlevnější je večerka (0,85× základ), nejdražší restaurace a fitness (1,25×). Zařízení celkově podražilo o 13 %, ať je otevření provozovny rozhodnutí, ne samozřejmost. Návratnost vychází u všech oborů na 134–164 dní.'],
+    ['zmena','📦 V provozovně se doplňuje to, co tam dává smysl: večerka zboží (pečivo, nápoje, drogerie), pekárna a kavárna suroviny, kadeřnictví materiál (barvy, šampony, nůžky k nabroušení), restaurace suroviny, fitness vybavení (opotřebené stroje, činky a servis). Dřív měly všechny „zásoby", i posilovna.'],
+    ['info','Výběr oboru teď u každého ukazuje cenu zařízení, odhad výnosu, návratnost ve dnech i to, co se v něm doplňuje.'],
+  ]},
   { verze:'14.6', datum:'2026-09-30', body:[
     ['oprava','Změna využití domu zavřela provozovnu beze slova — stačilo jedno klepnutí na „Pronájem" nebo „Bydlení" a obchod byl pryč i s penězi, které do něj šly. Varování bylo jen u nájemníků. Teď se hra zeptá, napíše, kolik provozovna denně nese a za kolik v ní propadnou zásoby.'],
   ]},
@@ -15341,39 +15437,47 @@ async function otevritProvozovnu(id){
   if(pater >= 2){
     const podil = provozPodilPater(pater);
     const bydlimTu = p.useType === 'residence' || asArray(p.units).some(u => u && u.ownerOccupied);
-    const volbaRozsahu = await showPrompt(
-      `🏪 Provozovna v domě ${domKratce(p)} (${pater} ${pater < 5 ? 'patra' : 'pater'})\n\n` +
-      `1) Jen PŘÍZEMÍ — za ${provozInvestice(p, true).toLocaleString('cs-CZ')} Kč\n` +
-      `   Obchod dole, nahoře ${pater - 1 === 1 ? 'zůstane byt' : `zůstane ${pater - 1} ${pater - 1 < 5 ? 'byty' : 'bytů'}`}` +
-      `${bydlimTu ? ' — v jednom můžeš dál bydlet' : ' k pronájmu'}.\n` +
-      `   Vydělá ${Math.round(podil * 100)} % toho, co provozovna přes celý dům (přízemí je komerčně nejcennější patro), a k tomu nájem z bytů.\n\n` +
-      `2) CELÝ DŮM — za ${provozInvestice(p, false).toLocaleString('cs-CZ')} Kč\n` +
-      `   Nejvyšší výnos z provozovny, ale vystěhuje všechny${bydlimTu ? ' včetně tebe' : ''}.\n\n` +
-      `Napiš 1 nebo 2:`, '1');
+    const volbaRozsahu = await showChoice(
+      `🏪 Provozovna v domě ${domKratce(p)} (${pater} ${sklonuj(pater, 'patro', 'patra', 'pater')})\n\nKde ji chceš otevřít?`,
+      [
+        { popis:`🏬 Jen přízemí — ${provozInvestice(p, true).toLocaleString('cs-CZ')} Kč`,
+          detail:`Obchod dole, nahoře ${pater - 1 === 1 ? 'zůstane byt' : `zůstanou ${pater - 1} ${sklonuj(pater - 1, 'byt', 'byty', 'bytů')}`}` +
+            `${bydlimTu ? ' — v jednom můžeš dál bydlet' : ' k pronájmu'}. Vydělá ${Math.round(podil * 100)} % toho co celý dům, a k tomu bereš nájem.`,
+          hodnota:'1' },
+        { popis:`🏢 Celý dům — ${provozInvestice(p, false).toLocaleString('cs-CZ')} Kč`,
+          detail:`Nejvyšší výnos z provozovny, ale ${bydlimTu ? 'přijdeš o bydlení a ' : ''}všichni nájemníci se vystěhují a nájem skončí.`,
+          hodnota:'2' }
+      ]);
     if(volbaRozsahu === null) return;
     if(volbaRozsahu.trim() === '1') jenPrizemi = true;
     else if(volbaRozsahu.trim() !== '2'){ showAlert('Neplatná volba.'); return; }
   }
   const podil = jenPrizemi ? provozPodilPater(pater) : 1;
-  const cena = provozInvestice(p, jenPrizemi);
+  // Cenu spočítáme až podle vybraného oboru — každý stojí jinak.
+  let cena = provozInvestice(p, jenPrizemi);
 
   // 2) Obor — s odhadem poptávky PRO TOHLE MÍSTO. Stejná pekárna vydělá jinde třikrát víc.
   const seznam = Object.entries(PROVOZ_TYPY).map(([k, t]) => {
     const pop = poptavkaProMisto(p, k);
     // Čistě, po zásobách — hrubý odhad by hráče nalákal na čísla, která nikdy neuvidí.
     const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index * (1 - PROVOZ_ZASOBY_PODIL) * podil);
-    return { k, t, pop, denne };
+    const cenaOboru = provozInvestice(p, jenPrizemi, k);
+    return { k, t, pop, denne, cenaOboru, navratnost: denne > 0 ? Math.round(cenaOboru / denne) : 0 };
   }).sort((a,b) => b.denne - a.denne);
 
-  const vyber = await showPrompt(
+  const vyber = await showChoice(
     `🏪 ${jenPrizemi ? 'Provozovna v přízemí' : 'Provozovna přes celý dům'} — ${domKratce(p)}\n\n` +
-    `Zařízení stojí ${cena.toLocaleString('cs-CZ')} Kč. Výnos závisí na tom, kolik lidí je v okolí a jaká je konkurence.\n\n` +
-    seznam.map((x, i) => `${i+1}) ${x.t.emoji} ${x.t.name} — poptávka ${x.pop.popis}, ~${x.denne} Kč/den čistě`).join('\n') +
-    `\n\nNapiš číslo (1–${seznam.length}):`, '1');
+    `Každý obor stojí jinak a hodí se jinam. Klepni na ten, který chceš otevřít.`,
+    seznam.map((x, i) => ({
+      popis:`${x.t.emoji} ${x.t.name} — ${x.cenaOboru.toLocaleString('cs-CZ')} Kč`,
+      detail:`Poptávka ${x.pop.popis} · ~${x.denne} Kč/den čistě${x.navratnost ? ` · vrátí se za ${x.navratnost} dní` : ''}<br>` +
+        `Doplňuje se ${x.t.zbozi}: ${x.t.zboziPopis}`,
+      hodnota:i
+    })));
   if(vyber === null) return;
-  const idx = parseInt(vyber, 10) - 1;
-  if(isNaN(idx) || idx < 0 || idx >= seznam.length){ showAlert('Neplatná volba.'); return; }
+  const idx = vyber;
   const volba = seznam[idx];
+  cena = volba.cenaOboru;
 
   if(me.balance < cena){ showAlert(`Na zařízení potřebuješ ${cena.toLocaleString('cs-CZ')} Kč, máš ${Math.round(me.balance).toLocaleString('cs-CZ')} Kč.`); return; }
 
@@ -15401,8 +15505,9 @@ async function otevritProvozovnu(id){
   if(!(await showConfirm(
     `${volba.t.emoji} ${volba.t.name}${jenPrizemi ? ' v přízemí' : ''} za ${cena.toLocaleString('cs-CZ')} Kč?\n\n` +
     `Poptávka na tomhle místě: ${volba.pop.popis}\n${volba.pop.faktory.join(' · ')}\n\n` +
-    `Čistý výnos: ~${volba.denne} Kč/den (po odečtení zásob)\n` +
-    `Zásoby ubývají ${PROVOZ_ZASOBY_DEN} % denně a stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % toho, co provozovna vydělá. Doplňují se na místě.\n\n` +
+    `Čistý výnos: ~${volba.denne} Kč/den (po odečtení ${volba.t.zbozi === 'zboží' ? 'zboží' : volba.t.zbozi === 'suroviny' ? 'surovin' : volba.t.zbozi === 'materiál' ? 'materiálu' : 'vybavení'})` +
+    `${volba.navratnost ? ` · vrátí se za ${volba.navratnost} dní` : ''}\n` +
+    `Doplňuje se ${volba.t.zbozi} — ${volba.t.zboziPopis}. Ubývá ${PROVOZ_ZASOBY_DEN} % denně a stojí zhruba ${Math.round(PROVOZ_ZASOBY_PODIL*100)} % toho, co provozovna vydělá. Nakoupíš ve velkoskladu, nebo si necháš dovézt na místo s příplatkem.\n\n` +
     (varovani ? varovani + '\n' : '') +
     (jenPrizemi ? `Byty nahoře zůstávají — dál z nich bereš nájem. Provozovnu můžeš kdykoliv zavřít a přízemí se zase stane bytem.`
                 : `Byty zůstanou zachované, na pronájem se dá kdykoliv vrátit.`)))) return;
@@ -15471,6 +15576,22 @@ const ROZVOZ_PRIRAZKA = 0.20;     // o kolik je dražší nechat si zboží dov�
 
 function mojeZbozi(u){ return Math.max(0, Math.round((u && u.zbozi) || 0)); }
 
+// Co vlastně veze — podle toho, jaké provozovny hráč má. Do fitka se nosí vybavení,
+// do pekárny suroviny; obecné „zboží" platilo jen pro večerku.
+function zboziProMoje(name){
+  const druhy = new Set();
+  Object.values(world.parcels || {}).forEach(p => {
+    if(maProvoz(p) && (p.owners?.[name] || 0) > 50){
+      const t = PROVOZ_TYPY[p.provoz.typ];
+      if(t && t.zbozi) druhy.add(t.zbozi);
+    }
+  });
+  const list = [...druhy];
+  if(!list.length) return 'zboží';
+  if(list.length === 1) return list[0];
+  return list.slice(0, -1).join(', ') + ' a ' + list[list.length - 1];
+}
+
 // Cena za jeden procentní bod zásob pro danou provozovnu.
 function cenaZaBod(p){
   return provozPlnyVynos(p) * PROVOZ_ZASOBY_PODIL / PROVOZ_ZASOBY_DEN;
@@ -15495,7 +15616,7 @@ async function naloztZbozi(){
   const nejvic = Math.min(volno, maxZaPenize);
   if(nejvic < 1){ showAlert('Na zboží teď nemáš peníze.'); return; }
   const odpoved = await showPrompt(
-    `🏭 ${SKLAD.nazev}\n\nKolik zboží naložit? (v procentech zásob, nejvíc ${nejvic})\n` +
+    `🏭 ${SKLAD.nazev}\n\nKolik naložit ${zboziProMoje(currentUser.name)}? (v procentech, nejvíc ${nejvic})\n` +
     `Cena ${Math.round(zaBod)} Kč za procento — o ${Math.round(ROZVOZ_PRIRAZKA * 100)} % míň, než když si necháš dovézt na místo.\n` +
     `Uneseš ${ZBOZI_KAPACITA} %, teď neseš ${mojeZbozi(me)} %.`, String(nejvic));
   const kolik = Math.min(nejvic, Math.max(0, parseInt(odpoved, 10) || 0));
