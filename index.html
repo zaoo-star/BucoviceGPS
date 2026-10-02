@@ -866,7 +866,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '14.5';
+const APP_VERSION = '14.6';
 const APP_BUILD = '28.07.2026 07:58';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -13530,6 +13530,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'14.6', datum:'2026-09-30', body:[
+    ['oprava','Změna využití domu zavřela provozovnu beze slova — stačilo jedno klepnutí na „Pronájem" nebo „Bydlení" a obchod byl pryč i s penězi, které do něj šly. Varování bylo jen u nájemníků. Teď se hra zeptá, napíše, kolik provozovna denně nese a za kolik v ní propadnou zásoby.'],
+  ]},
   { verze:'14.5', datum:'2026-09-30', body:[
     ['zmena','Pod ikonami v bočních lištách je napsané, co otevírají — Výzvy, Domy, Práce, Investice, Tržiště, Banka, Žebříček, Noviny, Chat, Finance, Průvodce, Deník, Novinky. Dřív se dalo poznat jen podle obrázku a hlavně 💡 finance a 📈 investice se pletly. Na nízkém displeji se popisky schovají, aby se lišta vešla.'],
   ]},
@@ -15587,9 +15590,22 @@ async function setUseType(id, type){
     });
   }
 
-  // Z celé provozovny se změnou využití stává obyčejný dům — data o ní nenecháme viset.
+  // Z celé provozovny se změnou využití stává obyčejný dům. DŘÍV se smazala beze slova —
+  // hráčce tak zmizelo fitko i s penězi, které do něj dala, jedním klepnutím (hlásila Eva).
   // (Obchod v přízemí se takhle nezavírá: zůstane dole i pod bydlením v celém domě.)
-  if(p.useType === 'provozovna' && p.provoz && !p.provoz.prizemi) delete p.provoz;
+  if(p.useType === 'provozovna' && p.provoz && !p.provoz.prizemi){
+    const typ = PROVOZ_TYPY[p.provoz.typ];
+    const denne = Math.round(safeCall(() => provozCistyVynos(p)) || 0);
+    const zasoby = Math.round(p.provoz.zasoby ?? 100);
+    const potvrzeno = await showConfirm(
+      `⚠️ Tím zavřeš provozovnu!\n\n` +
+      `${typ ? typ.emoji + ' ' + typ.name : 'Provozovna'} v tomhle domě ti nese ${denne} Kč/den` +
+      (zasoby > 5 ? ` a máš v ní zásoby za ${Math.round(zasoby * cenaZaBod(p))} Kč, které propadnou.` : '.') +
+      `\n\nOtevřít ji znovu znamená zaplatit celou investici od začátku.\n\n` +
+      `Chceš místo toho ${type === 'rental' ? 'pronájem' : 'bydlení'}?`);
+    if(!potvrzeno) return;
+    delete p.provoz;
+  }
   p.useType = type;
   stampHouse(p);
   saveWorld(); refreshAll();
