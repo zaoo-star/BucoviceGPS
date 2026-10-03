@@ -29,7 +29,12 @@
   }
   *{box-sizing:border-box;}
   body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);}
-  #app{position:relative;height:100vh;height:100dvh;overflow:hidden;}
+  /* Výška appky = skutečně viditelná plocha (--appH nastavuje JS z window.innerHeight).
+     Samotné 100dvh se na Androidu občas nepřepočítalo — po návratu z pozadí, po zavření
+     klávesnice nebo když Chrome schoval/ukázal lištu — a appka pak byla vyšší než displej.
+     Spodní lišta tím vyjela pod okraj obrazovky a nebyla vidět (hlásil Zaoo). */
+  #app{position:relative;height:100vh;height:100dvh;height:var(--appH, 100dvh);overflow:hidden;}
+  html, body{height:100%;overflow:hidden;}
   /* Tažení prstem dolů nesmí obnovit stránku (jinak appka "spadne" zpět na úvodní obrazovku
      uprostřed čtení nebo posouvání mapy). */
   html, body{overscroll-behavior:none;overscroll-behavior-y:contain;}
@@ -905,6 +910,10 @@
   }
   body.jeNoc .hracKolecko{ box-shadow:0 0 0 2.5px rgba(255,255,255,0.95), 0 0 16px 5px var(--hb); }
   @media (prefers-reduced-motion: reduce){ .hracPulz{ animation:none;opacity:0.25;transform:scale(1.5); } }
+
+  .fotoAv{ display:inline-block;border-radius:50%;object-fit:cover;vertical-align:middle;background:#fff; }
+  .hudAvatar .fotoAv, .hracKolecko .fotoAv{ display:block; }
+  .hudAvatar:has(.fotoAv){ overflow:visible; }
 </style>
 </head>
 <body>
@@ -1271,7 +1280,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '18.2';
+const APP_VERSION = '18.4';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -7453,7 +7462,7 @@ function userInfoHtml(name){
   const u = world.users[name] || {};
   const r = rankHrace(name).rank;
   // V horní kartě je jen avatar s odznakem hodnosti — jméno je v profilu po klepnutí.
-  return `<span class="hudAvatar" title="${escapeHtml(name)} · ${escapeHtml(r.nazev)}">${escapeHtml(u.avatar || '🧑')}<span class="hudRank">${r.emoji}</span></span>`;
+  return `<span class="hudAvatar" title="${escapeHtml(name)} · ${escapeHtml(r.nazev)}">${avatarHtml(name, u.avatar, 38)}<span class="hudRank">${r.emoji}</span></span>`;
 }
 
 // Povýšení hlásíme jen směrem nahoru a jen jednou — kdo o peníze přijde a zase je získá,
@@ -8769,7 +8778,7 @@ function hracIkona(){
   const barva = b ? b.hex : '#38bdf8';
   const sipka = hracSmer !== null ? `<div class="hracSipka" style="transform:rotate(${Math.round(hracSmer)}deg)"></div>` : '';
   return L.divIcon({ className:'', iconSize:[56, 66], iconAnchor:[28, 28], tooltipAnchor:[0, -24],
-    html:`<div class="hracJa" style="--hb:${barva}">${sipka}<div class="hracPulz"></div><div class="hracKolecko">${escapeHtml(av)}</div><div class="hracStitek">Ty</div></div>` });
+    html:`<div class="hracJa" style="--hb:${barva}">${sipka}<div class="hracPulz"></div><div class="hracKolecko">${avatarHtml(currentUser ? currentUser.name : '', av, 34)}</div><div class="hracStitek">Ty</div></div>` });
 }
 function aktualizujHraceIkonu(pos){
   // Směr chůze z posledních dvou bodů — jen při skutečném pohybu, ať šipka neskáče od šumu GPS.
@@ -8785,7 +8794,7 @@ function aktualizujHraceIkonu(pos){
     }
   } else hracPosledniBod = { lat: pos.lat, lng: pos.lng };
   const u = currentUser && world.users[currentUser.name];
-  const klic = [(u && u.avatar) || '', currentUser ? (barvaHrace(currentUser.name) || {}).hex : '', hracSmer === null ? '-' : Math.round(hracSmer / 10)].join('|');
+  const klic = [(u && u.avatar) || '', currentUser && fotky[currentUser.name] ? fotky[currentUser.name].length : 0, currentUser ? (barvaHrace(currentUser.name) || {}).hex : '', hracSmer === null ? '-' : Math.round(hracSmer / 10)].join('|');
   if(klic !== hracIkonaKlic){ hracIkonaKlic = klic; playerMarker.setIcon(hracIkona()); }
 }
 function updatePlayerMarker(pos, accuracy){
@@ -10414,6 +10423,122 @@ function rozprostriZnacky(){
     });
   });
 }
+
+
+// ===== PROFILOVÉ FOTKY =====
+// Fotka NESMÍ být ve světě — ten se posílá celý při každém zápisu (i několikrát za minutu)
+// a dvacet fotek by z každého zápisu udělalo desítky kilobajtů navíc. Leží proto zvlášť
+// v databázi (FOTO_CESTA), stáhne se jednou a pak jen změny, a v telefonu se pamatuje.
+// Zmenšuje se na 128×128 px (JPEG ~5 kB).
+// Soukromí: fotka je vidět v chatu, v profilu, v horní kartě a na TVÉ značce na mapě.
+// Ostatním hráčům se na mapě dál ukazuje emoji — tvář spojená s polohou v reálném čase
+// by komukoli ukázala, kde konkrétní člověk právě je.
+const FOTO_CESTA = 'worlds/_fotky';
+const FOTO_MAX = 24000;
+const FOTO_RE = /^data:image\/(jpeg|webp|png);base64,[A-Za-z0-9+/]+=*$/;
+let fotky = {};
+function fotoKlic(jmeno){ return encodeURIComponent(jmeno).replace(/\./g, '%2E'); }
+function fotoJmeno(klic){ try { return decodeURIComponent(klic); } catch(e){ return null; } }
+function platnaFotka(f){ return typeof f === 'string' && f.length <= FOTO_MAX && FOTO_RE.test(f); }
+function nactiFotkyZPameti(){
+  try {
+    const x = JSON.parse(localStorage.getItem('bp_fotky') || '{}');
+    Object.entries(x).forEach(([k, v]) => { if(bezpecnyKlic(k) && platnaFotka(v)) fotky[k] = v; });
+  } catch(e){}
+}
+function ulozFotkyDoPameti(){ try { localStorage.setItem('bp_fotky', JSON.stringify(fotky)); } catch(e){} }
+let fotkyNaslouchaji = false;
+function pripojFotky(){
+  if(fotkyNaslouchaji || !fbDb) return;
+  fotkyNaslouchaji = true;
+  const ref = fbDb.ref(FOTO_CESTA);
+  const prijmi = snap => {
+    const jm = fotoJmeno(snap.key);
+    if(!jm || !bezpecnyKlic(jm)) return;
+    const v = snap.val();
+    if(v && platnaFotka(v.f)) fotky[jm] = v.f; else delete fotky[jm];
+    ulozFotkyDoPameti(); prekresliFotky();
+  };
+  ref.on('child_added', prijmi);
+  ref.on('child_changed', prijmi);
+  ref.on('child_removed', snap => {
+    const jm = fotoJmeno(snap.key);
+    if(jm && fotky[jm]){ delete fotky[jm]; ulozFotkyDoPameti(); prekresliFotky(); }
+  });
+}
+let _fotkyCasovac = null;
+function prekresliFotky(){
+  clearTimeout(_fotkyCasovac);
+  _fotkyCasovac = setTimeout(() => safeCall(() => {
+    if(currentUser){
+      const ui = document.getElementById('userInfo');
+      if(ui) ui.innerHTML = userInfoHtml(currentUser.name);
+      hracIkonaKlic = '';
+      if(playerMarker){ const ll = playerPos || playerMarker.getLatLng(); aktualizujHraceIkonu({ lat: ll.lat, lng: ll.lng }); }
+    }
+    const chat = document.getElementById('tab-chat');
+    if(chat && chat.classList.contains('active')) renderChat();
+    const prof = document.getElementById('tab-profile');
+    if(prof && prof.classList.contains('active')) renderProfile();
+  }), 250);
+}
+// Avatar hráče: fotka, když ji má, jinak jeho emoji. `src` je ověřená data-URL (jen base64),
+// takže se do atributu nic nebezpečného nedostane.
+function avatarHtml(jmeno, emoji, px){
+  const f = fotky[jmeno];
+  if(f && platnaFotka(f)) return `<img class="fotoAv" src="${f}" alt="" style="width:${px}px;height:${px}px;">`;
+  return escapeHtml(emoji || '🧑');
+}
+function vyberFotku(){
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = () => { const f = inp.files && inp.files[0]; if(f) zpracujFotku(f); };
+  inp.click();
+}
+function zpracujFotku(file){
+  if(!/^image\//.test(file.type || 'image/')){ showAlert('Tohle není obrázek.'); return; }
+  if(file.size > 20 * 1024 * 1024){ showAlert('Obrázek je moc velký (víc než 20 MB).'); return; }
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = async () => {
+    URL.revokeObjectURL(url);
+    const S = 128;
+    const c = document.createElement('canvas');
+    c.width = c.height = S;
+    const g = c.getContext('2d');
+    if(!g){ showAlert('Tenhle telefon neumí obrázek zpracovat.'); return; }
+    // ořez na čtverec ze středu, ať obličej nezůstane deformovaný
+    const m = Math.min(img.width, img.height);
+    g.drawImage(img, (img.width - m) / 2, (img.height - m) / 2, m, m, 0, 0, S, S);
+    let data = c.toDataURL('image/jpeg', 0.8);
+    if(data.length > FOTO_MAX) data = c.toDataURL('image/jpeg', 0.6);
+    if(!platnaFotka(data)){ showAlert('Fotku se nepodařilo zpracovat — zkus jinou.'); return; }
+    if(!(await showConfirm('Nastavit tuhle fotku jako profilovou?\n\nUvidí ji všichni hráči v chatu a v profilu. Na mapě ji vidíš jen ty — ostatním se ukazuje tvoje emoji, ať nikdo nepozná, kde právě jsi.\n\nNevkládej nic nevhodného — správce ji může smazat.'))) return;
+    ulozFotku(data);
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); showAlert('Tenhle soubor se nedá otevřít jako obrázek.'); };
+  img.src = url;
+}
+function ulozFotku(data){
+  if(!currentUser || !platnaFotka(data)) return;
+  const ja = currentUser.name;
+  fotky[ja] = data; ulozFotkyDoPameti(); prekresliFotky();
+  if(!fbDb){ showToast('Fotka uložena v telefonu — na server se nahraje, až bude spojení.'); return; }
+  fbDb.ref(FOTO_CESTA + '/' + fotoKlic(ja)).set({ f: data, ts: Date.now() })
+    .then(() => showToast('📷 Fotka nastavena'))
+    .catch(e => showAlert(`Fotku se nepodařilo uložit na server (${(e && e.code) || 'chyba'}). Nejspíš to blokují pravidla databáze — správce musí povolit zápis do „${FOTO_CESTA}".`));
+}
+async function smazatFotku(jmeno){
+  if(!currentUser) return;
+  const ja = currentUser.name;
+  const cizi = jmeno !== ja;
+  if(cizi && !isAdmin) return;
+  if(!(await showConfirm(cizi ? `Smazat profilovou fotku hráče ${jmeno}?` : 'Odstranit profilovou fotku? Zase se ukáže tvoje emoji.'))) return;
+  delete fotky[jmeno]; ulozFotkyDoPameti(); prekresliFotky();
+  if(fbDb) fbDb.ref(FOTO_CESTA + '/' + fotoKlic(jmeno)).remove().catch(() => {});
+  showToast('Fotka odstraněna');
+}
+nactiFotkyZPameti();
 
 // ===== BARVY HRÁČŮ =====
 // Každý hráč má svou barvu a jeho domy jsou v ní na mapě vidět — svoje i cizí. Mapa tím
@@ -15522,7 +15647,7 @@ function renderChat(forceScroll){
       </div>`;
     const odsazeni = isAdmin ? 56 : 30;   // místo pro ikony vpravo, ať do nich text nezajede
     const hlavicka = navazuje ? '' : `<div style="display:flex;align-items:center;gap:6px;padding-right:${odsazeni}px;">
-        <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" ${profileAttr(m.name)}>${escapeHtml(m.avatar||'🧑')} ${escapeHtml(m.name)}${
+        <span style="cursor:pointer;font-weight:600;color:${mine?'var(--accent)':'var(--accent2)'}" ${profileAttr(m.name)}>${avatarHtml(m.name, m.avatar, 22)} ${escapeHtml(m.name)}${
           world.users[m.name] ? ` <span title="${escapeHtml(rankHrace(m.name).rank.nazev)}" style="font-weight:400;">${rankHrace(m.name).rank.emoji}</span>` + trofejeHtml(m.name) +
             `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${barvaHrace(m.name).hex};margin-left:4px;vertical-align:middle;"></span>` : ''}</span>
         <span style="font-size:0.72em;color:var(--muted);">${timeAgo(m.ts)}</span>
@@ -15730,6 +15855,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'18.4', datum:'2026-10-03', body:[
+    ['novinka','📷 Profilová fotka: v profilu klepni na „Nahrát fotku". Uvidí ji ostatní v chatu a ve tvém profilu, ty ji máš i v horní kartě a na své značce na mapě.'],
+    ['info','Ostatním hráčům se na mapě dál ukazuje tvoje emoji, ne fotka — aby podle tváře nikdo nepoznal, kde se právě nacházíš. Nevhodnou fotku může správce smazat.'],
+  ]},
+  { verze:'18.3', datum:'2026-10-03', body:[
+    ['oprava','Spodní lišta občas zmizela pod okraj obrazovky — appka se po návratu z pozadí nebo po zavření klávesnice nepřizpůsobila výšce displeje. Teď se výška hlídá průběžně a lišta zůstává vidět.'],
+  ]},
   { verze:'18.2', datum:'2026-10-03', body:[
     ['zmena','📍 Tvoje poloha je na mapě vidět mnohem líp: místo malé modré tečky je tam tvůj avatar v kolečku tvojí barvy, se štítkem „Ty", pulzující vlnou a šipkou, kterým směrem jdeš. Je vždycky nad ostatními značkami, v noci svítí.'],
   ]},
@@ -16886,7 +17018,13 @@ function renderProfile(){
   if(!isOwn) html += `<div class="row"><button class="secondary" onclick="viewProfile(currentUser.name)">◂ Zpět na můj profil</button></div>`;
 
   html += `<div class="card" style="text-align:center;">
-    <div style="font-size:48px;${isOwn?'cursor:pointer':''}" ${isOwn?'onclick="changeAvatar()"':''}>${escapeHtml(u.avatar||'🧑')}</div>
+    <div style="font-size:48px;display:flex;justify-content:center;${isOwn?'cursor:pointer':''}" ${isOwn?'onclick="changeAvatar()"':''}>${avatarHtml(u.name, u.avatar, 76)}</div>
+    ${isOwn ? `<div class="row" style="justify-content:center;gap:6px;margin:6px 0 2px;">
+        <button class="secondary" style="flex:0 1 auto;min-height:36px;font-size:0.88em;" onclick="vyberFotku()">📷 ${fotky[u.name] ? 'Změnit fotku' : 'Nahrát fotku'}</button>
+        ${fotky[u.name] ? `<button class="secondary" style="flex:0 1 auto;min-height:36px;font-size:0.88em;" data-jm="${escapeHtml(u.name)}" onclick="smazatFotku(this.dataset.jm)">Odstranit</button>` : ''}
+      </div>
+      <p style="font-size:0.78em;color:var(--muted);margin:2px 0 6px;">Fotku uvidí ostatní v chatu a v profilu. Na mapě jsi pro ně dál emoji.${fotky[u.name] ? '' : ' Klepnutím na emoji ho změníš.'}</p>`
+      : (isAdmin && fotky[u.name] ? `<div class="row" style="justify-content:center;"><button class="danger" style="flex:0 1 auto;min-height:34px;font-size:0.85em;" data-jm="${escapeHtml(u.name)}" onclick="smazatFotku(this.dataset.jm)">🗑️ Smazat fotku (správce)</button></div>` : '')}
     <h3 style="margin:4px 0;">
       <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${barvaHrace(u.name).hex};vertical-align:middle;margin-right:5px;"></span>${escapeHtml(u.name)}${isOwn?' <span style="color:var(--accent);font-size:1em;">(ty)</span>':''}</h3>
     ${isOwn ? `<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">Barva tvých domů na mapě — uvidí ji i ostatní hráči:</p>
@@ -19130,6 +19268,23 @@ function isMobileDevice(){
   return false;
 }
 
+// ===== VÝŠKA APPKY PODLE VIDITELNÉ PLOCHY =====
+function nastavVyskuAppky(){
+  const h = Math.round(window.innerHeight || document.documentElement.clientHeight || 0);
+  if(h > 200){
+    const ted = document.documentElement.style.getPropertyValue('--appH');
+    if(ted !== h + 'px') document.documentElement.style.setProperty('--appH', h + 'px');
+  }
+  // Stránka se nemá posouvat vůbec — kdyby ji klávesnice nebo prohlížeč posunul, vrátit.
+  if(window.scrollY || window.scrollX) window.scrollTo(0, 0);
+}
+nastavVyskuAppky();
+['resize', 'orientationchange', 'pageshow', 'focusout'].forEach(ev => window.addEventListener(ev, () => setTimeout(nastavVyskuAppky, 60)));
+document.addEventListener('visibilitychange', () => { if(!document.hidden) setTimeout(nastavVyskuAppky, 120); });
+if(window.visualViewport) window.visualViewport.addEventListener('resize', () => setTimeout(nastavVyskuAppky, 60));
+// Pojistka: některé změny lišty prohlížeče nevyvolají žádnou událost.
+setInterval(nastavVyskuAppky, 1500);
+
 window.onload = async () => {
   // Hra je jen pro mobil. Na počítači ukážeme hlášku a nespustíme ji.
   // (Vývojářská výjimka: adresa s ?pc na konci obejde blok — pro testování na PC.)
@@ -19175,6 +19330,8 @@ window.onload = async () => {
   setInterval(() => { safeCall(() => hlidejSezonu()); safeCall(() => hlidejUlice()); safeCall(() => renderAkceMarkery()); safeCall(() => zpracujNabidky()); }, 60000);
   setInterval(() => safeCall(() => zpracujNabidky()), 15000);
   setTimeout(() => { safeCall(() => hlidejSezonu()); safeCall(() => hlidejUlice()); safeCall(() => renderAkceMarkery()); }, 8000);
+  // Fotky hráčů: připojit, jakmile je databáze připravená (zkouší se, dokud se to nepovede).
+  const fotkyStart = setInterval(() => { safeCall(() => pripojFotky()); if(fotkyNaslouchaji) clearInterval(fotkyStart); }, 2000);
   safeCall(() => nactiPocasi());
   // Kontrolujeme častěji, než je platnost uložených dat. Když se obojí rovnalo, interval
   // se trefil těsně pod hranici platnosti, data se vyhodnotila jako čerstvá a stahovalo
