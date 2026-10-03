@@ -799,6 +799,49 @@
   .graf .st{ position:absolute;left:8px;top:3px;font-size:10.5px;color:var(--muted); }
   .graf .cara{ position:absolute;left:4px;right:4px;border-top:1px dashed rgba(255,255,255,0.18); }
   .grafOsa{ display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-top:3px; }
+
+  /* ===== MAPA 17.3 ===== */
+  /* Ovládání mapy: jeden sloupec stejných tlačítek (ⓘ ◎ nahoře, + − pod nimi). */
+  .naMeBar{ border:none !important;box-shadow:0 3px 10px rgba(0,0,0,0.35) !important;border-radius:10px;overflow:hidden; }
+  .naMeBar a{
+    width:38px !important;height:38px !important;line-height:38px !important;font-size:17px !important;
+    background:rgba(23,26,33,0.92) !important;color:var(--text) !important;border:1px solid var(--border) !important;
+    border-radius:0 !important;text-decoration:none;display:block;text-align:center;
+  }
+  .naMeBar a + a{ border-top:none !important; }
+  .naMeBar a:first-child{ border-top-left-radius:10px !important;border-top-right-radius:10px !important; }
+  .naMeBar a:last-child{ border-bottom-left-radius:10px !important;border-bottom-right-radius:10px !important; }
+  .naMeBar a.zap{ color:var(--accent) !important; }
+  .leaflet-control-zoom{ box-shadow:0 3px 10px rgba(0,0,0,0.35) !important;border-radius:10px; }
+  /* Atribuce mapy (licence ji vyžaduje) — malá a nenápadná vlevo dole, ne přes půl šířky. */
+  .leaflet-control-attribution{
+    font-size:9px !important;line-height:1.5 !important;padding:0 6px !important;margin:0 0 2px 4px !important;
+    background:rgba(15,17,21,0.55) !important;color:#8a93a3 !important;border-radius:6px;
+  }
+  .leaflet-control-attribution a{ color:#9fb0c8 !important; }
+  .leaflet-control-attribution svg{ display:none !important; }
+
+  /* Ztmavení noci jen přes podklad mapy — značky domů a míst zůstanou jasné. */
+  .leaflet-pane > #vrstvaDenNoc{ position:absolute;inset:auto;top:0;left:0;z-index:auto; }
+
+  /* Nápověda „přibliž…" pod horní kartou (dřív byla dole schovaná za lištou) */
+  #mapZoomHint{ top:calc(env(safe-area-inset-top, 0px) + 122px) !important;bottom:auto !important;z-index:440 !important; }
+
+  /* Legenda mapy */
+  #mapLegenda{
+    position:absolute;left:10px;right:58px;bottom:calc(var(--navH) + 10px);z-index:460;
+    max-height:58vh;overflow-y:auto;padding:10px 12px;
+    background:rgba(18,21,28,0.94);border:1px solid rgba(255,255,255,0.12);border-radius:14px;
+    box-shadow:0 6px 18px rgba(0,0,0,0.45);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    font-size:12.5px;
+  }
+  #mapLegenda h4{ margin:0 0 6px;font-size:14px;display:flex;align-items:center; }
+  #mapLegenda h4 button{ margin-left:auto;min-height:30px;width:30px;padding:0;border-radius:50%;background:none;color:var(--muted);box-shadow:none; }
+  .legSkup{ font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:8px 0 3px; }
+  .legR{ display:flex;align-items:center;gap:10px;padding:3px 0; }
+  .legR .vz{ flex:0 0 34px;display:flex;justify-content:center;align-items:center;height:30px; }
+  .legR .vz > div{ transform:scale(0.85); }
+  .legKruh{ width:26px;height:26px;border-radius:50%;border:2px dashed; }
 </style>
 </head>
 <body>
@@ -906,6 +949,7 @@
 
   <!-- Karta „co je kolem mě": když stojíš u domu, vyjede nad spodní lištou. -->
   <div id="kontextKarta" style="display:none;"></div>
+  <div id="mapLegenda" style="display:none;"></div>
 
   <!-- Spodní lišta: pět položek na dosah palce. Všechno ostatní je pod „Víc". -->
   <nav id="spodniLista">
@@ -1163,7 +1207,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '17.2';
+const APP_VERSION = '17.3';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -10039,9 +10083,13 @@ function initMap(){
   const naMe = L.control({position:'bottomright'});
   naMe.onAdd = () => {
     const d = L.DomUtil.create('div', 'leaflet-bar naMeBar');
-    d.innerHTML = '<a href="#" role="button" title="Na mou polohu" aria-label="Na mou polohu">◎</a>';
+    d.innerHTML = '<a href="#" role="button" id="legendaBtn" title="Co je na mapě" aria-label="Co je na mapě">ⓘ</a>' +
+                  '<a href="#" role="button" title="Na mou polohu" aria-label="Na mou polohu">◎</a>';
     L.DomEvent.disableClickPropagation(d);
-    d.querySelector('a').addEventListener('click', (e) => {
+    L.DomEvent.disableScrollPropagation(d);
+    const [btnLeg, btnMe] = d.querySelectorAll('a');
+    btnLeg.addEventListener('click', (e) => { e.preventDefault(); prepniLegendu(); });
+    btnMe.addEventListener('click', (e) => {
       e.preventDefault();
       if(playerPos) map.setView([playerPos.lat, playerPos.lng], Math.max(map.getZoom(), 17));
       else showToast('Polohu ještě neznám — povol GPS.');
@@ -10049,6 +10097,8 @@ function initMap(){
     return d;
   };
   naMe.addTo(map);
+  if(map.attributionControl) map.attributionControl.setPosition('bottomleft');
+  safeCall(() => pripravDenNocNaMape());
   nastavPodklad(0);
 
   L.marker(CITY_CENTER, {icon: L.divIcon({html:'<div class="parcelMarker p-cityhall">🏛️</div>', className:'', iconSize:[26,26]})})
@@ -10184,6 +10234,67 @@ const DENNI_DOBY = [
 function denniDoba(h){
   const hod = (typeof h === 'number') ? h : new Date().getHours();
   return DENNI_DOBY.find(d => hod < d.do) || DENNI_DOBY[DENNI_DOBY.length - 1];
+}
+
+// Noc ztmavovala celou obrazovku včetně značek — domy a místa pak byly ve tmě špatně vidět
+// a musely se uměle „rozsvěcet". Vrstva teď leží v mapě mezi podkladem (200) a kruhy se
+// značkami (400+): ztmavne jen podklad. Mapa se posouvá, takže vrstvu po každém pohybu
+// přesuneme zpátky na viditelnou plochu (s rezervou, ať při rychlém tažení nebliká okraj).
+function pripravDenNocNaMape(){
+  const dn = document.getElementById('vrstvaDenNoc');
+  if(!map || !dn) return;
+  const pane = map.getPane('denNocPane') || map.createPane('denNocPane');
+  pane.style.zIndex = 350;
+  pane.style.pointerEvents = 'none';
+  if(dn.parentNode !== pane) pane.appendChild(dn);
+  const umisti = () => {
+    const rez = 400;
+    const roh = map.containerPointToLayerPoint([-rez, -rez]);
+    const vel = map.getSize();
+    L.DomUtil.setPosition(dn, roh);
+    dn.style.width = (vel.x + 2 * rez) + 'px';
+    dn.style.height = (vel.y + 2 * rez) + 'px';
+  };
+  map.on('move zoom zoomend resize viewreset', umisti);
+  umisti();
+}
+
+// ===== LEGENDA MAPY =====
+function prepniLegendu(){
+  const el = document.getElementById('mapLegenda');
+  if(!el) return;
+  const otevrit = el.style.display === 'none';
+  if(otevrit) el.innerHTML = legendaHtml();
+  el.style.display = otevrit ? 'block' : 'none';
+  const btn = document.getElementById('legendaBtn');
+  if(btn) btn.classList.toggle('zap', otevrit);
+  const kk = document.getElementById('kontextKarta');
+  if(kk && otevrit) kk.style.display = 'none';
+  else safeCall(() => kontextKarta());
+}
+function legendaHtml(){
+  const ja = currentUser ? barvaHrace(currentUser.name) : null;
+  const vz = html => `<span class="vz">${html}</span>`;
+  const r = (vzor, text) => `<div class="legR">${vz(vzor)}<span>${text}</span></div>`;
+  return `<h4>🗺️ Co je na mapě <button onclick="prepniLegendu()" aria-label="Zavřít">✕</button></h4>
+    <div class="legSkup">Ty a okolí</div>
+    ${r('<div style="width:14px;height:14px;border-radius:50%;background:#3b82f6;border:2px solid #fff;"></div>', 'Ty. Modrý kruh kolem je přesnost GPS.')}
+    ${r('<div class="legKruh" style="border-color:#4ade80;"></div>', `Tvůj dosah ${INTERACTION_RADIUS} m — domy v kruhu můžeš kupovat a spravovat.`)}
+    ${r('<div class="legKruh" style="border-color:#f97316;"></div>', 'Oblast dnešní události ve městě (klepni na ni).')}
+    <div class="legSkup">Domy</div>
+    ${r('<div class="parcelMarker p-empty">🏚️</div>', `Volný dům. Vidíš je do ${PRAZDNE_DOMY_DOSAH} m od sebe.`)}
+    ${r(`<div class="parcelMarker p-rental"${ja ? ` style="background:${ja.hex}"` : ''}>🏘️</div>`, 'Dům s majitelem — barva je barva hráče, který o něm rozhoduje.')}
+    ${r(`<div class="parcelMarker p-rental p-mine"${ja ? ` style="background:${ja.hex}"` : ''}>🏠</div>`, 'Zlatý rámeček = máš tu podíl.')}
+    ${r(`<div class="parcelMarker p-rental p-ulice"${ja ? ` style="background:${ja.hex}"` : ''}>🏘️</div>`, 'Zlatý prstenec = dům v ovládnuté ulici (+10 % nájmu).')}
+    ${r('<div class="parcelMarker p-rental" style="position:relative;">🏘️<span class="pUpg">☀️❄️</span></div>', 'Malé ikonky vpravo dole = vylepšení domu.')}
+    ${r('<div class="parcelMarker p-rental-bad">🏘️</div>', 'Červený = všechny byty jsou na nule, potřebují opravu.')}
+    <div class="legSkup">Místa</div>
+    ${r('<div class="parcelMarker p-business">☕</div>', 'Firma — kup si podíl v Investicích.')}
+    ${r('<div class="landmarkMarker">⛲</div>', 'Místo zájmu — jednou denně odměna za návštěvu.')}
+    ${r('<div class="mistoMarker">⛪</div>', 'Místo ze sbírky. Navštívená zešednou.')}
+    ${r('<div class="skladMarker">🏭</div>', 'Sklad — tady se nakládá zboží pro provozovny.')}
+    ${r('<div class="akceMarker" style="animation:none;">🎪</div>', 'Akce ve městě — dojdi pro odměnu.')}
+    <p style="font-size:11px;color:var(--muted);margin:8px 0 0;">Na cokoli klepni a uvidíš podrobnosti.</p>`;
 }
 
 let vrstvyNahlaseno = false;
@@ -15024,6 +15135,11 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'17.3', datum:'2026-10-03', body:[
+    ['zmena','🌙 V noci ztmavne jen podklad mapy — domy, místa a kruhy zůstanou jasně vidět.'],
+    ['novinka','ⓘ Legenda mapy: tlačítko vpravo dole nad ◎ vysvětlí všechny značky, barvy a kruhy.'],
+    ['zmena','Ovládání mapy je jeden úhledný sloupec tlačítek, popisek mapy (OpenStreetMap) je malý vlevo dole a nápověda „přibliž pro zobrazení domů" je pod horní kartou — dřív se schovávala za spodní lištou.'],
+  ]},
   { verze:'17.2', datum:'2026-10-03', body:[
     ['zmena','💡 Finanční přehled je přehlednější: velké číslo denní bilance nahoře, částky zarovnané vpravo, nový ukazatel finanční nezávislosti a rezerva jako ukazatel k cíli dvou týdnů.'],
     ['zmena','⚖️ Majetek a dluhy jsou rozdělené na tři skupiny: co vydělává, co jen stojí daň (třeba malý podíl v cizím domě) a dluhy. Malé podíly už nejsou mezi „pasivy".'],
