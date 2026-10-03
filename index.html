@@ -614,6 +614,98 @@
     box-shadow:0 6px 24px rgba(251,191,36,0.3);
   }
   #achievementToast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  /* ===== ROZLOŽENÍ 17.0: horní karta + spodní lišta ===== */
+  :root{ --navH: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  #topBar{ right:0; padding:calc(8px + env(safe-area-inset-top, 0px)) 8px 0 8px; }
+  #gpsWarning{ max-width:100%; }
+  #hudKarta{
+    pointer-events:auto;display:flex;flex-direction:column;gap:7px;
+    background:rgba(18,21,28,0.74);border:1px solid rgba(255,255,255,0.10);border-radius:16px;
+    padding:8px 10px;box-shadow:0 4px 14px rgba(0,0,0,0.30);
+    backdrop-filter:blur(14px) saturate(1.3);-webkit-backdrop-filter:blur(14px) saturate(1.3);
+  }
+  .hudHlavni{ display:flex;align-items:center;gap:10px; }
+  #userInfo{ background:none;padding:0;border-radius:0;align-self:center;font-size:inherit;cursor:pointer; }
+  .hudAvatar{
+    position:relative;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:20px;background:var(--panel2);border:1px solid rgba(255,255,255,0.14);
+  }
+  .hudRank{ position:absolute;right:-5px;bottom:-5px;font-size:13px;line-height:1; }
+  .hudPenize{ flex:1;min-width:0;cursor:pointer; }
+  .hudCastka{ font-size:20px;font-weight:700;color:var(--gold);line-height:1.15;white-space:nowrap; }
+  .hudPenize .rate{ display:block;margin:0;font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .hudCas{ text-align:right;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap; }
+  .hudCas > div{ cursor:pointer; }
+  #pocasiPill{ color:var(--text); }
+  #hudKarta .statsRow{ gap:5px;pointer-events:auto; }
+  #hudKarta .statPill{
+    background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);box-shadow:none;
+    backdrop-filter:none;-webkit-backdrop-filter:none;padding:3px 9px;font-size:11px;cursor:pointer;
+  }
+
+  #spodniLista{
+    position:absolute;left:0;right:0;bottom:0;z-index:700;height:var(--navH);
+    padding-bottom:env(safe-area-inset-bottom, 0px);display:flex;
+    background:rgba(15,17,21,0.94);border-top:1px solid rgba(255,255,255,0.08);
+    backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  }
+  #spodniLista .navBtn{
+    flex:1;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;
+    width:auto;height:auto;min-height:0;margin:0;padding:6px 0;border:none;border-radius:0;box-shadow:none;
+    background:none;color:var(--muted);font-size:inherit;
+    backdrop-filter:none;-webkit-backdrop-filter:none;
+  }
+  #spodniLista .navIkona{ font-size:21px;line-height:1;opacity:0.65;filter:grayscale(0.7);transition:opacity .15s, filter .15s; }
+  #spodniLista .railPopis{ display:block !important;font-size:10.5px;font-weight:600;letter-spacing:0;text-transform:none;color:inherit; }
+  #spodniLista .navBtn.active{ color:var(--accent);background:none; }
+  #spodniLista .navBtn.active .navIkona{ opacity:1;filter:none; }
+  #spodniLista .navBtn:active{ transform:none;background:rgba(255,255,255,0.05); }
+  #spodniLista .tecka{
+    position:absolute;top:5px;left:calc(50% + 7px);right:auto;width:9px;height:9px;border-radius:50%;
+    background:var(--danger);border:2px solid #0f1115;
+  }
+
+  /* Panel končí nad spodní lištou — lišta zůstává vidět a dá se přepínat i z otevřeného panelu. */
+  #bottomSheet{ top:0;left:0;right:0;bottom:var(--navH); }
+
+  /* Ovládání mapy vpravo nad lištou, ať ho nic nepřekrývá */
+  .leaflet-bottom{ bottom:calc(var(--navH) + 6px) !important; }
+  .leaflet-control-zoom, .naMeBar{ margin-right:10px !important;margin-left:0 !important;margin-bottom:8px !important; }
+  .naMeBar a{
+    width:36px;height:36px;line-height:36px;display:block;text-align:center;font-size:18px;
+    background:var(--panel) !important;color:var(--text) !important;border-radius:10px;text-decoration:none;
+    border:1px solid var(--border);
+  }
+
+  #kontextKarta{
+    position:absolute;left:10px;right:58px;bottom:calc(var(--navH) + 10px);z-index:450;
+    display:flex;align-items:center;gap:10px;padding:8px 8px 8px 12px;
+    background:rgba(18,21,28,0.88);border:1px solid rgba(255,255,255,0.12);border-radius:14px;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  }
+  #kontextKarta .kkIkona{ font-size:22px; }
+  #kontextKarta .kkText{ flex:1;min-width:0; }
+  #kontextKarta .kkNazev{ font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  #kontextKarta .kkPopis{ font-size:11.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  #kontextKarta button{ min-height:36px;padding:6px 12px;font-size:13px; }
+  #kontextKarta .kkZavrit{ background:none;color:var(--muted);padding:6px 6px;min-height:36px; }
+
+  /* Menu „Víc" */
+  .vicSkupina{ font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;margin:12px 2px 6px; }
+  .vicMrizka{ display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:8px; }
+  .vicPolozka{
+    position:relative;display:flex;align-items:center;gap:10px;text-align:left;min-height:56px;
+    background:var(--panel2);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:8px 10px;
+  }
+  .vicPolozka:active{ background:rgba(255,255,255,0.08); }
+  .vicPolozka .vicIkona{ font-size:22px;flex:none; }
+  .vicPolozka .vicNazev{ font-size:13.5px;font-weight:700;display:block; }
+  .vicPolozka .vicPopis{ font-size:11px;font-weight:400;color:var(--muted);display:block;line-height:1.3; }
+  .vicPolozka .tecka{ position:absolute;top:8px;right:8px;width:9px;height:9px;border-radius:50%;background:var(--danger); }
+
+  #customToast{ bottom:calc(var(--navH) + 14px); }
+  #achievementToast{ top:calc(env(safe-area-inset-top, 0px) + 118px); }
 </style>
 </head>
 <body>
@@ -696,39 +788,40 @@
     <div id="gpsWarning">📍 GPS není dostupná — hra potřebuje tvou polohu. Povol prosím přístup k poloze pro tuto stránku.
       <button id="retryGpsBtn" class="secondary" style="margin-left:8px;padding:4px 10px;font-size:0.85em;">Zkusit povolit GPS znovu</button>
     </div>
-    <div class="statsRow">
-      <div class="statPill" id="dayPill" onclick="showStatDetail('day')" style="cursor:pointer;">📅 Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
-      <div class="statPill" id="balance" onclick="showStatDetail('money')" style="cursor:pointer;">💰 <span id="balanceVal">0</span> Kč<span id="rateVal" class="rate"></span></div>
-      <div class="statPill" id="walkPill" onclick="showStatDetail('walk')" style="cursor:pointer;">🚶 <span id="walkVal">0</span> m dnes</div>
-      <div class="statPill" id="pocasiPill" onclick="openSheet('daily')" style="cursor:pointer;display:none;"><span id="pocasiVal"></span></div>
-      <div class="statPill" id="housingPill" onclick="showStatDetail('housing')" style="cursor:pointer;">🏠 <span id="housingVal">bez bydlení</span></div>
-      <div class="statPill" id="marketCyclePill" onclick="showStatDetail('market')" style="cursor:pointer;">📊 <span id="marketCycleVal">Stabilní trh</span></div>
-      <button id="installBtn" class="statPill" onclick="installApp()" style="display:none;cursor:pointer;color:var(--accent);border-color:var(--accent);">📲 Nainstalovat appku</button>
+    <!-- Jedna přehledná karta místo šesti pilulek: vlevo ty, uprostřed peníze (to hlavní),
+         vpravo den a počasí. Pod tím drobné štítky — klepnutím se otevře detail. -->
+    <div id="hudKarta">
+      <div class="hudHlavni">
+        <div id="userInfo"></div>
+        <div id="balance" class="hudPenize" onclick="showStatDetail('money')">
+          <div class="hudCastka"><span id="balanceVal">0</span> Kč</div>
+          <div id="rateVal" class="rate"></div>
+        </div>
+        <div class="hudCas">
+          <div id="dayPill" onclick="showStatDetail('day')">Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
+          <div id="pocasiPill" onclick="openSheet('daily')" style="display:none;"><span id="pocasiVal"></span></div>
+        </div>
+      </div>
+      <div class="statsRow">
+        <div class="statPill" id="walkPill" onclick="showStatDetail('walk')">🚶 <span id="walkVal">0</span> m</div>
+        <div class="statPill" id="housingPill" onclick="showStatDetail('housing')">🏠 <span id="housingVal">bez bydlení</span></div>
+        <div class="statPill" id="marketCyclePill" onclick="showStatDetail('market')"><span id="marketCycleVal">Stabilní trh</span></div>
+        <button id="installBtn" class="statPill" onclick="installApp()" style="display:none;cursor:pointer;color:var(--accent);border-color:var(--accent);">📲 Nainstalovat</button>
+      </div>
     </div>
-    <div id="userInfo"></div>
   </div>
 
-  <div id="sideRail">
-    <button class="railBtn" data-tab="daily" title="Denní výzvy">🎯</button>
-    <button class="railBtn" data-tab="mine" title="Nemovitosti">🏠</button>
-    <button class="railBtn" data-tab="jobs" title="Zaměstnání">💼</button>
-    <button class="railBtn" data-tab="businesses" title="Investice">📈</button>
-    <button class="railBtn" data-tab="market" title="Tržiště nemovitostí">🏷️</button>
-    <button class="railBtn" data-tab="bank" title="Banka">🏦</button>
-    <button class="railBtn" data-tab="leaderboard" title="Žebříček">🏆</button>
-    <button class="railBtn" data-tab="news" title="Noviny">📰</button>
-    <button class="railBtn" data-tab="chat" title="Chat">💬</button>
-    <button class="railBtn" data-tab="finance" title="Finanční přehled">💡</button>
-    <button class="railBtn" data-tab="guide" title="Jak to funguje">📖</button>
-    <button class="railBtn" data-tab="admin" title="Admin" id="adminRailBtn" style="display:none;">🔧</button>
-  </div>
+  <!-- Karta „co je kolem mě": když stojíš u domu, vyjede nad spodní lištou. -->
+  <div id="kontextKarta" style="display:none;"></div>
 
-  <!-- Deník má vlastní ikonu na LEVÉ straně: pravá lišta je plná a deník je věc,
-       do které hráč kouká často — nemá smysl ji schovávat za noviny. -->
-  <div id="leftRail">
-    <button class="railBtn" data-tab="denik" id="denikRailBtn" title="Můj deník">📔</button>
-    <button class="railBtn" data-tab="zmeny" id="zmenyRailBtn" title="Co je nového">🆕</button>
-  </div>
+  <!-- Spodní lišta: pět položek na dosah palce. Všechno ostatní je pod „Víc". -->
+  <nav id="spodniLista">
+    <button class="navBtn active" id="navMapa" onclick="closeSheet()"><span class="navIkona">🗺️</span><span class="railPopis">Mapa</span></button>
+    <button class="railBtn navBtn" data-tab="daily" id="navVyzvy"><span class="navIkona">🎯</span><span class="railPopis">Výzvy</span></button>
+    <button class="railBtn navBtn" data-tab="mine" id="navDomy"><span class="navIkona">🏠</span><span class="railPopis">Domy</span></button>
+    <button class="railBtn navBtn" data-tab="chat" id="navChat"><span class="navIkona">💬</span><span class="railPopis">Chat</span></button>
+    <button class="railBtn navBtn" data-tab="vic" id="navVic"><span class="navIkona">☰</span><span class="railPopis">Víc</span></button>
+  </nav>
 
   <div id="bottomSheet">
     <div id="sheetHeader">
@@ -736,6 +829,9 @@
       <button id="sheetCloseBtn" class="secondary">✕</button>
     </div>
     <div id="sheetBody">
+      <div class="panelContent" id="tab-vic">
+        <div id="vicContent"></div>
+      </div>
       <div class="panelContent active" id="tab-selected">
         <div id="selectedContent" class="empty-state">Klikni na dům na mapě.</div>
       </div>
@@ -974,7 +1070,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '16.3';
+const APP_VERSION = '17.0';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -7064,7 +7160,8 @@ function rankHrace(name){
 function userInfoHtml(name){
   const u = world.users[name] || {};
   const r = rankHrace(name).rank;
-  return `<span style="cursor:pointer">${escapeHtml(u.avatar || '🧑')} ${escapeHtml(name)} <span title="${escapeHtml(r.nazev)}">${r.emoji}</span> ▸</span>`;
+  // V horní kartě je jen avatar s odznakem hodnosti — jméno je v profilu po klepnutí.
+  return `<span class="hudAvatar" title="${escapeHtml(name)} · ${escapeHtml(r.nazev)}">${escapeHtml(u.avatar || '🧑')}<span class="hudRank">${r.emoji}</span></span>`;
 }
 
 // Povýšení hlásíme jen směrem nahoru a jen jednou — kdo o peníze přijde a zase je získá,
@@ -8348,6 +8445,7 @@ function onPosition(pos){
   safeCall(() => checkAkce());    // na akci ve městě?
   safeCall(() => renderAkceMarkery());
   safeCall(() => mincePriChuzi()); // mince nad vlastními domy
+  safeCall(() => kontextKarta());   // dům, u kterého stojíš
   if(selectedParcelId) renderSelected(selectedParcelId);
   renderJobs();
 }
@@ -9843,7 +9941,21 @@ function nastavPodklad(index){
 
 function initMap(){
   map = L.map('map', {zoomControl:false}).setView(CITY_CENTER, 16);
-  L.control.zoom({position:'bottomleft'}).addTo(map);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+  // Tlačítko „na mě" — vrátí mapu na hráče, když si ji odsuneš.
+  const naMe = L.control({position:'bottomright'});
+  naMe.onAdd = () => {
+    const d = L.DomUtil.create('div', 'leaflet-bar naMeBar');
+    d.innerHTML = '<a href="#" role="button" title="Na mou polohu" aria-label="Na mou polohu">◎</a>';
+    L.DomEvent.disableClickPropagation(d);
+    d.querySelector('a').addEventListener('click', (e) => {
+      e.preventDefault();
+      if(playerPos) map.setView([playerPos.lat, playerPos.lng], Math.max(map.getZoom(), 17));
+      else showToast('Polohu ještě neznám — povol GPS.');
+    });
+    return d;
+  };
+  naMe.addTo(map);
   nastavPodklad(0);
 
   L.marker(CITY_CENTER, {icon: L.divIcon({html:'<div class="parcelMarker p-cityhall">🏛️</div>', className:'', iconSize:[26,26]})})
@@ -10070,6 +10182,9 @@ function updateHeaderStats(){
   const cycle = marketCycleLabel();
   document.getElementById('marketCycleVal').textContent = cycle.label;
   document.getElementById('marketCyclePill').style.color = cycle.color;
+  // Stabilní trh není zpráva — štítek se ukáže, jen když se na trhu něco děje.
+  document.getElementById('marketCyclePill').style.display = /Stabilní/.test(cycle.label) ? 'none' : '';
+  safeCall(() => oznacChat());
   if(currentUser){
     const u = ensureWalkDay(world.users[currentUser.name]);
     if(!u) return; // hráč ještě není načtený (pojistka proti pádu)
@@ -10096,7 +10211,7 @@ function updateHeaderStats(){
         elPocasi.style.display = '';
         document.getElementById('pocasiVal').innerHTML =
           `${pm.emoji} ${POCASI.teplota} °C` +
-          (pm.mult > 1 ? ` <b style="color:var(--accent)">+${Math.round((pm.mult-1)*100)} % za chůzi</b>` : '');
+          (pm.mult > 1 ? ` <b style="color:var(--accent)">+${Math.round((pm.mult-1)*100)} %</b>` : '');
         const stari = Math.round((Date.now() - (POCASI.kdy || 0)) / 60000);
         elPocasi.title = `${pm.popis} — ${pm.mult > 1 ? 'chůze vynáší o ' + Math.round((pm.mult-1)*100) + ' % víc' : 'chůze vynáší jako obvykle'}` +
           ` (načteno ${stari < 1 ? 'právě teď' : 'před ' + stari + ' min'})`;
@@ -10126,7 +10241,7 @@ function updateHeaderStats(){
     // Jinak ho po skončení lhůty překvapí, že mu najednou začaly ubývat peníze.
     if(isNewbieProtected(u)){
       const kde = status === 'owner' ? 'vlastní bydlení' : (status === 'tenant' ? 'v nájmu' : 'bez bydlení');
-      housingEl.textContent = `${kde} — 0 Kč/den, ochranná lhůta ještě ${newbieDaysLeft(u)} ${newbieDaysLeft(u)===1?'den':'dní'}`;
+      housingEl.textContent = `${kde} · zdarma ještě ${newbieDaysLeft(u)} ${newbieDaysLeft(u)===1?'den':'dní'}`;
       housingEl.parentElement.style.color = 'var(--gold)';
       return;
     }
@@ -10134,17 +10249,17 @@ function updateHeaderStats(){
     if(status === 'owner'){
       const slevaPct = Math.round(livingCostDiscountFromUpgrades(currentUser.name) * 100);
       housingEl.textContent = slevaPct > 0
-        ? `vlastní bydlení (${Math.round(dailyCost)} Kč/den, −${slevaPct} % za vylepšení)`
-        : `vlastní bydlení (${Math.round(dailyCost)} Kč/den)`;
+        ? `vlastní · ${Math.round(dailyCost)} Kč/den (−${slevaPct} %)`
+        : `vlastní · ${Math.round(dailyCost)} Kč/den`;
       housingEl.parentElement.style.color = 'var(--accent)';
     } else if(status === 'tenant'){
-      housingEl.textContent = `v nájmu (${Math.round(dailyCost)} Kč/den)`;
+      housingEl.textContent = `nájem · ${Math.round(dailyCost)} Kč/den`;
       housingEl.parentElement.style.color = 'var(--accent2)';
     } else {
       const maPodil = Object.values(world.parcels).some(p => (p.owners?.[currentUser.name] || 0) > 0);
       housingEl.textContent = maPodil
-        ? `podíl, ale bez bydlení (${LIVING_COST} Kč/den)`   // má nemovitost, jen v ní nemůže bydlet
-        : `bez bydlení (${LIVING_COST} Kč/den)`;
+        ? `bez bydlení · ${LIVING_COST} Kč/den (máš jen podíl)`   // má nemovitost, jen v ní nemůže bydlet
+        : `bez bydlení · ${LIVING_COST} Kč/den`;
       housingEl.parentElement.style.color = 'var(--danger)';
     }
   }
@@ -12687,8 +12802,9 @@ function loadAdminFlag(){
   if(!isAdmin){
     try { isAdmin = localStorage.getItem(ADMIN_KLIC) === ADMIN_PASS_HASH; } catch(e){}
   }
-  const btn = document.getElementById('adminRailBtn');
-  if(btn) btn.style.display = isAdmin ? 'flex' : 'none';
+  // Admin je teď položka v menu „Víc" — když je menu zrovna otevřené, překreslit ho.
+  const vic = document.getElementById('tab-vic');
+  if(vic && vic.classList.contains('active')) safeCall(() => renderVic());
 }
 // Odemčení: zadá se heslo. Volá se ze skrytého místa (klepnutí na verzi v profilu).
 async function unlockAdmin(){
@@ -14796,6 +14912,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'17.0', datum:'2026-10-03', body:[
+    ['novinka','Nové rozložení obrazovky. Mapa je zase vidět: nahoře je jedna karta s penězi, dnem a počasím, dole lišta s pěti tlačítky — Mapa, Výzvy, Domy, Chat a Víc. Pod „Víc" najdeš všechno ostatní (banka, práce, tržiště, žebříček, noviny…) rozdělené na Peníze a Město.'],
+    ['novinka','Když stojíš u domu, vyjede nad lištou karta s jeho adresou, volnými podíly a stavem ulice. Jedním klepnutím ho otevřeš.'],
+    ['novinka','Červená tečka u Chatu = nová zpráva, kterou jsi ještě neviděl. Tečka u „Víc" = nové změny ve hře.'],
+    ['novinka','Přiblížení mapy a nové tlačítko ◎ (zpátky na mou polohu) jsou vpravo dole nad lištou.'],
+  ]},
   { verze:'16.3', datum:'2026-10-03', body:[
     ['zmena','☀️ Solární panely nesou polovinu toho, co dřív (15 % férového nájmu místo 30 %). Vydělávaly zhruba 355 % ročně — pětkrát víc než samotný dům, takže se nevyplatilo nic jiného než vylepšovat. Teď je to kolem 178 % ročně a návratnost asi 7 měsíců: pořád nejlepší vylepšení pro prázdný dům, ale v řadě s ostatními. Sleva na účtech za bydlení (−20 %) zůstává.'],
     ['oprava','Úroky se připisují každý den, takže za rok naroste dluh víc, než říká sazba. U půjček i hypoték je teď vidět obojí (40 % → 49 %, 25 % → 28 %). Příklad v nápovědě počítal prostý úrok a sliboval o 92 Kč míň, než kolik bys doopravdy dlužil.'],
@@ -15288,17 +15410,10 @@ function renderZmeny(){
 
 // Ukáže tečku u ikony, když hráč ještě neviděl novinky k aktuální verzi.
 function oznacNoveZmeny(){
-  const btn = document.getElementById('zmenyRailBtn');
-  if(!btn) return;
-  let videno = null;
-  try { videno = localStorage.getItem('bucpoly_zmeny_videno'); } catch(e){}
-  const stara = btn.querySelector('.tecka');
-  if(videno === APP_VERSION){ if(stara) stara.remove(); return; }
-  if(!stara){
-    const t = document.createElement('span');
-    t.className = 'tecka';
-    btn.appendChild(t);
-  }
+  // Nové změny = tečka na „Víc" a u položky „Co je nového" uvnitř.
+  nastavTecku(document.getElementById('navVic'), maNoveZmeny());
+  const vic = document.getElementById('tab-vic');
+  if(vic && vic.classList.contains('active')) renderVic();
 }
 
 function datumCesky(iso){
@@ -15855,7 +15970,7 @@ function renderGuide(){
   `);
 
   html += guideSection('💡','Finanční přehled — tvůj nejlepší pomocník', `
-    <p>V liště vpravo je tlačítko 💡 <b>Finanční přehled</b>. Ukáže ti čtyři nejdůležitější věci:</p>
+    <p>Dole v liště pod ☰ <b>Víc</b> najdeš 💡 <b>Finance</b>. Ukáže ti čtyři nejdůležitější věci:</p>
     <p>📊 <b>Rozpočet</b> — kolik ti denně přiteče a odteče, a jestli náhodou neutrácíš víc, než vyděláváš (to je cesta do dluhů).</p>
     <p>⚖️ <b>Aktiva vs. pasiva</b> — <b>aktivum</b> ti peníze nese (pronájem, firma), <b>pasivum</b> ti je bere (nevyužitý dům s daní, půjčka). Boháči sbírají aktiva.</p>
     <p>🔢 <b>Složený úrok</b> — uvidíš, jak peníze na spoření rostou samy, a jak dluh nabaluje, když nesplácíš.</p>
@@ -17915,7 +18030,7 @@ function tryAutoLogin(){
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
 const SHEET_TITLES = {
   selected:'Vybraný dům', mine:'Moje nemovitosti',
-  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy', zmeny:'🆕 Co je nového'
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy', zmeny:'🆕 Co je nového', vic:'Všechno ve hře'
 };
 
 function openSheet(tabName){
@@ -17928,8 +18043,7 @@ function openSheet(tabName){
   // Zapamatovat otevřený panel. Kdyby appku přesto něco obnovilo (nativní obal APK, pád
   // prohlížeče, aktualizace), hráč se vrátí tam, kde byl — ne na úvodní obrazovku.
   try { localStorage.setItem('bucpoly_panel', JSON.stringify({ tab: tabName, ts: Date.now() })); } catch(e){}
-  document.querySelectorAll('.railBtn').forEach(b => b.classList.toggle('active',
-    b.dataset.tab === (jeDenik ? 'denik' : tabName)));
+  zvyrazniNav(jeDenik ? 'denik' : tabName);
   document.querySelectorAll('.panelContent').forEach(p => p.classList.remove('active'));
   const target = document.getElementById('tab-' + tabName);
   if(target) target.classList.add('active');
@@ -17956,12 +18070,121 @@ function openSheet(tabName){
   if(tabName === 'guide') renderGuide();
   if(tabName === 'admin') renderAdmin();
   if(tabName === 'daily') renderDaily();
+  if(tabName === 'vic') renderVic();
+  if(tabName === 'chat') safeCall(() => oznacChat());
+  safeCall(() => kontextKarta());
+}
+
+// ===== SPODNÍ LIŠTA A MENU „VÍC" =====
+// Které tlačítko lišty svítí: přímé položky samy za sebe, detail domu pod Domy,
+// všechno ostatní pod Víc. Zavřený panel = Mapa.
+const NAV_PRIMO = { daily:'navVyzvy', mine:'navDomy', selected:'navDomy', chat:'navChat' };
+function zvyrazniNav(tab){
+  const aktivni = tab === null ? 'navMapa' : (NAV_PRIMO[tab] || 'navVic');
+  document.querySelectorAll('#spodniLista .navBtn').forEach(b => b.classList.toggle('active', b.id === aktivni));
+}
+const VIC_SKUPINY = [
+  { nazev:'Peníze', polozky:[
+    ['jobs',       '💼', 'Práce',     'směny a plat'],
+    ['bank',       '🏦', 'Banka',     'půjčky a spoření'],
+    ['businesses', '📈', 'Investice', 'podíly ve firmách'],
+    ['market',     '🏷️', 'Tržiště',   'nabídky a aukce'],
+    ['finance',    '💡', 'Finance',   'kam jdou peníze'],
+    ['denik',      '📔', 'Deník',     'co jsi dělal'] ]},
+  { nazev:'Město', polozky:[
+    ['leaderboard','🏆', 'Žebříček',  'jmění, ulice, sezóna'],
+    ['news',       '📰', 'Noviny',    'co se děje'],
+    ['zmeny',      '🆕', 'Co je nového', 'změny ve hře'],
+    ['guide',      '📖', 'Průvodce',  'jak to funguje'],
+    ['profile',    '👤', 'Můj profil', 'avatar, PIN, barva'] ]}
+];
+function renderVic(){
+  const el = document.getElementById('vicContent');
+  if(!el) return;
+  const skupiny = VIC_SKUPINY.map(sk => ({ nazev: sk.nazev, polozky: sk.polozky.slice() }));
+  if(isAdmin) skupiny[1].polozky.push(['admin', '🔧', 'Admin', 'správa hry']);
+  const nove = maNoveZmeny();
+  setHtml(el, skupiny.map(sk => `<div class="vicSkupina">${sk.nazev}</div><div class="vicMrizka">` +
+    sk.polozky.map(([tab, ikona, nazev, popis]) => `<button class="vicPolozka" onclick="otevriZVic('${tab}')">
+      <span class="vicIkona">${ikona}</span>
+      <span style="min-width:0;"><span class="vicNazev">${nazev}</span><span class="vicPopis">${popis}</span></span>
+      ${tab === 'zmeny' && nove ? '<span class="tecka"></span>' : ''}
+    </button>`).join('') + `</div>`).join(''));
+}
+function otevriZVic(tab){
+  if(tab === 'profile') profileViewTarget = null;   // z menu vždycky můj profil
+  openSheet(tab);
+}
+function nastavTecku(el, zapnout){
+  if(!el) return;
+  let t = el.querySelector(':scope > .tecka');
+  if(zapnout && !t){ t = document.createElement('span'); t.className = 'tecka'; el.appendChild(t); }
+  else if(!zapnout && t) t.remove();
+}
+function maNoveZmeny(){
+  let videno = null;
+  try { videno = localStorage.getItem('bucpoly_zmeny_videno'); } catch(e){}
+  return videno !== APP_VERSION;
+}
+// Tečka u Chatu: přišla zpráva od někoho jiného, kterou jsem ještě neviděl.
+function oznacChat(){
+  const btn = document.getElementById('navChat');
+  if(!btn || !currentUser) return;
+  const msgs = asArray(world.chat);
+  let posledni = 0;
+  for(let i = msgs.length - 1; i >= 0; i--){
+    const m = msgs[i];
+    if(m && m.name !== currentUser.name){ posledni = m.ts || 0; break; }
+  }
+  let videno = 0;
+  try { videno = parseInt(localStorage.getItem('bp_chat_videno') || '0', 10) || 0; } catch(e){}
+  const tab = document.getElementById('tab-chat');
+  const otevreny = tab && tab.classList.contains('active') && document.getElementById('bottomSheet').classList.contains('open');
+  if(otevreny && posledni > videno){
+    videno = posledni;
+    try { localStorage.setItem('bp_chat_videno', String(posledni)); } catch(e){}
+  }
+  nastavTecku(btn, posledni > videno);
+}
+
+// ===== KONTEXTOVÁ KARTA =====
+// Dům, u kterého zrovna stojíš, se ukáže v kartě nad lištou — nemusíš hledat značku.
+let kontextSkryto = null;
+function kontextKarta(){
+  const el = document.getElementById('kontextKarta');
+  if(!el) return;
+  const otevreno = document.getElementById('bottomSheet').classList.contains('open');
+  if(!playerPos || !currentUser || otevreno || !world){ el.style.display = 'none'; return; }
+  let nej = null, nd = INTERACTION_RADIUS;
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p || typeof p.lat !== 'number') return;
+    if(Math.abs(p.lat - playerPos.lat) > 0.0008 || Math.abs(p.lng - playerPos.lng) > 0.0012) return;
+    const d = haversine(playerPos, { lat:p.lat, lng:p.lng });
+    if(d < nd){ nd = d; nej = p; }
+  });
+  if(!nej || kontextSkryto === nej.id){ el.style.display = 'none'; return; }
+  const mam = myHousePct(nej), volne = houseFreePct(nej), kdo = houseDecider(nej);
+  const stav = mam > 0 ? `tvůj podíl ${des(mam, 0)} %`
+    : (volne > 0.5 ? `volných ${des(volne, 0)} % · ${Math.round(houseMarketPricePerPercent(nej)).toLocaleString('cs-CZ')} Kč za 1 %`
+    : (kdo ? `patří hráči ${kdo}` : 'všechny podíly rozebrané'));
+  const ul = uliceDomu(nej);
+  const st = ul ? stavUlic()[ul] : null;
+  const ulTxt = st ? ` · ${ul} ${(st.poHracich[currentUser.name] || 0)}/${st.celkem}` : '';
+  const ikona = maProvoz(nej) ? (PROVOZ_TYPY[nej.provoz.typ] || {}).emoji || '🏪'
+    : (nej.useType === 'rental' ? '🏘️' : (houseHasOwner(nej) ? '🏠' : '🏚️'));
+  setHtml(el, `<span class="kkIkona">${ikona}</span>
+    <div class="kkText"><div class="kkNazev">${escapeHtml(domLabel(nej))}</div>
+      <div class="kkPopis">${escapeHtml(stav + ulTxt)}</div></div>
+    <button onclick="selectParcel('${nej.id}')">Otevřít</button>
+    <button class="kkZavrit" aria-label="Skrýt" onclick="kontextSkryto='${nej.id}';kontextKarta()">✕</button>`);
+  el.style.display = 'flex';
 }
 
 function closeSheet(){
   try { localStorage.removeItem('bucpoly_panel'); } catch(e){}
   document.getElementById('bottomSheet').classList.remove('open');
-  document.querySelectorAll('.railBtn').forEach(b => b.classList.remove('active'));
+  zvyrazniNav(null);
+  safeCall(() => kontextKarta());
   // Zrušit i označení panelu — jinak zůstane „aktivní" i po zavření a překreslovací
   // smyčky si myslí, že se na něj hráč pořád dívá.
   document.querySelectorAll('.panelContent').forEach(p => p.classList.remove('active'));
@@ -17993,7 +18216,7 @@ const TUTORIAL_STEPS = [
   {icon:'🚶', title:'1. Choď po městě', text:'Hra se hraje naživo — za nachozené metry dostáváš peníze. K domům a k práci se musíš fyzicky přiblížit. Je potřeba povolit GPS a chodit s telefonem.'},
   {icon:'💼', title:'2. Vydělej první peníze', text:'Dojdi k radnici a nastup do práce (třeba úklid). Každý den si odpracuj směnu a dostaneš plat. To je tvůj jistý příjem na začátek.'},
   {icon:'🏠', title:'3. Kup si bydlení', text:'Dojdi k nějakému domu a kup si podíl (stačí pár %). Vlastní bydlení je nejlevnější — ušetříš na denních nákladech. Pak můžeš dům pronajímat a vydělávat.'},
-  {icon:'📖', title:'Kdykoliv poradím', text:'Nevíš si rady? Vpravo je tlačítko 📖 „Jak to funguje" — vysvětlí všechno o penězích, nájmu i půjčkách. Hodně štěstí!'},
+  {icon:'📖', title:'Kdykoliv poradím', text:'Nevíš si rady? Dole v liště klepni na ☰ Víc → 📖 „Průvodce" — vysvětlí všechno o penězích, nájmu i půjčkách. Hodně štěstí!'},
 ];
 let tutStep = 0;
 
