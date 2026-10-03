@@ -706,6 +706,99 @@
 
   #customToast{ bottom:calc(var(--navH) + 14px); }
   #achievementToast{ top:calc(env(safe-area-inset-top, 0px) + 118px); }
+
+  /* ===== PANELY 17.1: tenčí hlavička, karty bez „závorek", nadpisy vlevo ===== */
+  #sheetHeader{ padding:8px 10px 8px 16px; }
+  #sheetHeader span{ font-size:16px; }
+  #sheetCloseBtn{
+    width:34px;height:34px;min-height:34px;padding:0;border-radius:50%;font-size:14px;
+    display:flex;align-items:center;justify-content:center;box-shadow:none;
+  }
+  /* Obsah panelu měl ještě třídu .empty-state z doby načítání — ta přidávala 20 px nahoře
+     a 10 px po stranách. Jakmile je v panelu skutečný obsah, odsazení zmizí. */
+  .panelContent > .empty-state:has(> *){ padding:0;text-align:left; }
+  .panelContent h3, .panelContent h4{ text-align:left !important; }
+  /* Barevný okraj jen vlevo se na zaobleném rohu ohýbal do „závorky". Rovný proužek. */
+  .panelContent [style*="border-left:3px solid"], .mineDum[data-problem]{
+    border-top-left-radius:4px !important;border-bottom-left-radius:4px !important;
+  }
+
+  /* Noviny: časová osa */
+  .novFiltry{ display:flex;gap:6px;overflow-x:auto;margin:0 0 6px;padding-bottom:2px;scrollbar-width:none; }
+  .novFiltry::-webkit-scrollbar{ display:none; }
+  .novFiltr{
+    flex:0 0 auto;min-height:32px;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:600;
+    background:rgba(255,255,255,0.06);color:var(--muted);border:1px solid rgba(255,255,255,0.10);box-shadow:none;
+  }
+  .novFiltr.active{ background:var(--accent);color:#08130a;border-color:var(--accent); }
+  .novDen{ font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:14px 2px 4px; }
+  .zprava{ display:flex;gap:10px;align-items:flex-start;padding:9px 2px;border-bottom:1px solid rgba(255,255,255,0.06); }
+  .zprava.klik{ cursor:pointer; }
+  .zprava.klik:active{ background:rgba(255,255,255,0.04); }
+  .zpIkona{
+    flex:0 0 34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:17px;
+    background:rgba(255,255,255,0.06);box-shadow:inset 0 0 0 2px var(--zc, transparent);
+  }
+  .zpText{ flex:1;min-width:0;font-size:0.95em;line-height:1.35; }
+  .zpMeta{ font-size:0.78em;color:var(--muted);margin-top:2px; }
+  .zpPin{ flex:0 0 auto;font-size:15px;opacity:0.85;padding:6px 2px 0; }
+
+  /* Výzvy: další krok a zásobování */
+  .krokHlava{ display:flex;align-items:center;gap:10px; }
+  .krokIkona{ font-size:24px; }
+  .krokNadpis{ font-weight:700;font-size:1.02em; }
+  .krokPostup{ font-size:0.8em;color:var(--muted); }
+  .krokTecky{ display:flex;gap:4px;margin:8px 0 6px; }
+  .krokTecky span{ flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,0.10); }
+  .krokTecky span.hotovo{ background:var(--accent); }
+  .ukazatel{ height:8px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden;margin:6px 0 4px; }
+  .ukazatel > div{ height:100%;border-radius:4px;background:var(--gold); }
+
+  /* Moje nemovitosti */
+  .mineHero{ display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:2px 0 8px; }
+  .mineHero .cislo{ font-size:28px;font-weight:800;line-height:1.1; }
+  .mineHero .popis{ font-size:0.82em;color:var(--muted);text-align:right; }
+  .mineIko{ position:relative;width:34px;text-align:center; }
+  .mineIkoOdznak{ position:absolute;right:-6px;bottom:-4px;font-size:0.55em; }
+  .mineSkupina{ margin:4px 0 8px; }
+  .mineSkupina > summary{
+    list-style:none;cursor:pointer;font-size:0.85em;color:var(--muted);padding:8px 4px;display:flex;align-items:center;gap:6px;
+  }
+  .mineSkupina > summary::-webkit-details-marker{ display:none; }
+  .mineSkupina > summary::after{ content:'▾';margin-left:auto;transition:transform .15s; }
+  .mineSkupina[open] > summary::after{ transform:rotate(180deg); }
+  .mineSkupina .mineDum{ opacity:0.85; }
+
+  /* ===== FINANCE 17.2: řádky s částkou vpravo, velká čísla, kompaktní tipy ===== */
+  .fHero{ display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:2px 0 6px; }
+  .fHero .cislo{ font-size:28px;font-weight:800;line-height:1.1;font-variant-numeric:tabular-nums; }
+  .fHero .popis{ font-size:0.8em;color:var(--muted);text-align:right;line-height:1.3; }
+  .fSkup{ font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin:12px 0 2px; }
+  .fR{ display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.05); }
+  .fR:last-child{ border-bottom:none; }
+  .fR .l{ min-width:0;font-size:0.92em; }
+  .fR .l small{ display:block;font-size:0.82em;color:var(--muted);margin-top:1px; }
+  .fR .v{ white-space:nowrap;font-weight:700;font-variant-numeric:tabular-nums; }
+  .fR.soucet{ border-top:1px solid var(--border);border-bottom:none;margin-top:4px;padding-top:7px; }
+  .fR.soucet .l{ font-weight:700; }
+  .fKdy{ display:inline-block;width:1.3em;opacity:0.7;font-size:0.85em; }
+  .fPruh{ height:8px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden;margin:4px 0 2px; }
+  .fPruh > div{ height:100%;border-radius:4px; }
+  .fPozn{ font-size:0.8em;color:var(--muted);margin:6px 0 0; }
+  .tipRadek{ display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer; }
+  .tipRadek:last-child{ border-bottom:none; }
+  .tipRadek:active{ background:rgba(255,255,255,0.04); }
+  .tipRadek .ik{ font-size:20px;flex:none; }
+  .tipRadek .tx{ flex:1;min-width:0; }
+  .tipRadek .nz{ font-weight:700;font-size:0.95em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+  .tipRadek .du{ font-size:0.82em;color:var(--accent); }
+  .tipRadek .ci{ font-size:0.8em;color:var(--muted); }
+  .tipRadek .kde{ flex:none;text-align:right;font-size:0.78em;color:var(--gold);white-space:nowrap; }
+  .graf{ position:relative;display:flex;align-items:flex-end;gap:2px;height:110px;padding:18px 4px 4px;background:rgba(255,255,255,0.03);border-radius:10px; }
+  .graf .sl{ flex:1;min-width:3px;border-radius:3px 3px 0 0; }
+  .graf .st{ position:absolute;left:8px;top:3px;font-size:10.5px;color:var(--muted); }
+  .graf .cara{ position:absolute;left:4px;right:4px;border-top:1px dashed rgba(255,255,255,0.18); }
+  .grafOsa{ display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);margin-top:3px; }
 </style>
 </head>
 <body>
@@ -1070,7 +1163,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '17.0';
+const APP_VERSION = '17.2';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -11145,9 +11238,14 @@ function renderMine(){
   const radek = (popis, v, barva) => `<div style="display:flex;justify-content:space-between;margin:2px 0;">
       <span>${popis}</span><b style="color:${barva}">${v >= 0 ? '+' : '−'}${kc(Math.abs(v))} Kč</b></div>`;
 
-  let html = `<div class="card" style="border-left:3px solid var(--gold);">
-    <h3>📊 Přehled za den</h3>
-    <div style="font-size:0.93em;max-width:340px;margin:0 auto;text-align:left;">
+  // Výsledek dne nahoře velkým písmem — to je to, co hráče zajímá jako první.
+  let html = `<div class="card">
+    <h3>📊 Dnes ti domy vydělají</h3>
+    <div class="mineHero">
+      <span class="cislo" style="color:${cisty >= 0 ? 'var(--gold)' : 'var(--danger)'}">${cisty >= 0 ? '+' : '−'}${kc(Math.abs(cisty))} Kč</span>
+      <span class="popis">čistě, připíše se<br>o půlnoci</span>
+    </div>
+    <div style="font-size:0.9em;text-align:left;">
       ${najem > 0.5 ? radek('🏘️ Nájem z obsazených bytů', najem, 'var(--accent)') : ''}
       ${provozy > 0.5 ? radek('🏪 Provozovny (dnešní tržby)', provozy, 'var(--accent)') : ''}
       ${(() => {
@@ -11166,17 +11264,10 @@ function renderMine(){
       ${radek(`🏛️ Daň z nemovitostí (${des((danSazba(ja).prumer*100), 1)} % ročně)`, -dane, 'var(--orange)')}
       ${danPrijem > 0.5 ? radek(`🏛️ Daň z příjmu (${Math.round(danPrijemCelkem / Math.max(1, hrubyMajetek) * 100)} % z výnosů)`, -danPrijem, 'var(--orange)') : ''}
       ${hypoteky > 0.5 ? radek('🏦 Splátky hypoték', -hypoteky, 'var(--orange)') : ''}
-      <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
-        ${radek('<b>Čistě za den</b>', cisty, cisty >= 0 ? 'var(--gold)' : 'var(--danger)')}</div>
     </div>
-    ${udrzbaCelkem > 0.5 ? `<p style="font-size:0.88em;margin:6px 0 0;">🔧 Na údržbu odlož <b style="color:var(--orange)">${kc(udrzbaCelkem)} Kč/den</b>
-      <span style="color:var(--muted);font-size:0.9em;">— tolik stojí opravy chátrajících bytů. V částce nahoře to není, opravy platíš, až je uděláš.</span></p>` : ''}
-    ${hypoteky > 0.5 ? `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Ze splátek hypoték je jen ${kc(hypoUroky)} Kč úrok — zbytek ${kc(hypoteky - hypoUroky)} Kč snižuje dluh, takže to není ztráta, dům ti tím postupně patří.</p>` : ''}
-    ${usporaBydleni > 0.5 ? `<p style="font-size:0.88em;margin:6px 0 0;">🏠 Navíc <b style="color:var(--accent)">šetříš ${kc(usporaBydleni)} Kč/den</b> na bydlení — platíš ${kc(bydleniTed)} místo ${LIVING_COST} Kč.
-      <span style="color:var(--muted);font-size:0.9em;">Na účet to nepřijde, ale o tolik míň odejde.</span></p>` : ''}
-    <p style="font-size:0.84em;color:var(--muted);margin:6px 0 0;">
+    <p style="font-size:0.84em;color:var(--muted);margin:8px 0 0;">
       ${data.length} ${data.length===1?'dům':(data.length<5?'domy':'domů')} · obsazeno ${obsazenoCelkem} z ${bytuCelkem} bytů ·
-      tvé podíly mají hodnotu ${kc(hodnotaPodilu)} Kč</p>
+      podíly za ${kc(hodnotaPodilu)} Kč${udrzbaCelkem > 0.5 ? ` · údržba ~${kc(udrzbaCelkem)} Kč/den` : ''}${usporaBydleni > 0.5 ? ` · na bydlení šetříš ${kc(usporaBydleni)} Kč/den` : ''}</p>
     ${sProblemem ? `<p style="font-size:0.86em;color:var(--orange);margin:4px 0 0;">⚠️ ${sProblemem} ${sProblemem===1?'dům potřebuje':'domy potřebují'} pozornost — označené níž</p>` : ''}
     ${(() => {
       const nadMez = data.reduce((a, d) => a + (d.p.useType === 'rental' ? d.byty.filter(u => u && u.npc && (u.rentPrice||0) > npcMaxNajem(d.p, u)).length : 0), 0);
@@ -11184,14 +11275,20 @@ function renderMine(){
       return `<p style="font-size:0.86em;color:var(--danger);margin:4px 0 0;">🏃 V ${nadMez} ${nadMez===1?'bytě':'bytech'} máš nájem nad to, co nájemníci unesou.
         ${najemPravidloPlati() ? 'Začnou se stěhovat pryč.' : `Zatím se rozmýšlejí — za ${najemPrechodZbyva()} ${najemPrechodZbyva()===1?'den':'dny'} začnou odcházet.`} Sniž nájem, ať o ně nepřijdeš.</p>`;
     })()}
-    <p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Tohle se připíše o půlnoci.${provozy > 0.5 ? ' Zásoby do provozoven platíš zvlášť, když je doplníš.' : ''} Klepni na dům pro podrobnosti.</p>
+    ${infoBox('Co v tom je a co ne', `
+      <p><b>Připíše se o půlnoci</b> přesně částka nahoře.${provozy > 0.5 ? ' Zásoby do provozoven platíš zvlášť, když je doplníš.' : ''}</p>
+      ${udrzbaCelkem > 0.5 ? `<p>🔧 <b>Údržba ~${kc(udrzbaCelkem)} Kč/den</b> — tolik stojí opravy chátrajících bytů. V částce nahoře není, platíš ji, až opravíš.</p>` : ''}
+      ${hypoteky > 0.5 ? `<p>🏦 Ze splátek hypoték je jen ${kc(hypoUroky)} Kč úrok — zbytek ${kc(hypoteky - hypoUroky)} Kč snižuje dluh, dům ti tím postupně patří.</p>` : ''}
+      ${usporaBydleni > 0.5 ? `<p>🏠 <b>Na bydlení šetříš ${kc(usporaBydleni)} Kč/den</b> — platíš ${kc(bydleniTed)} místo ${LIVING_COST} Kč. Na účet to nepřijde, ale o tolik míň odejde.</p>` : ''}
+      <p>Klepni na dům níž pro podrobnosti.</p>`)}
   </div>`;
 
-  html += data.map(d => {
+  const radekDomu = d => {
     const p = d.p;
     const iDecide = iAmDecider(p);
     const rozhoduje = houseDecider(p);
-    const ikona = d.provoz ? PROVOZ_TYPY[p.provoz.typ].emoji + (p.provoz.prizemi ? '🏘️' : '') : (p.useType === 'rental' ? '🏘️' : (p.useType === 'residence' ? '🏠' : '🏚️'));
+    // Jedna ikona na dům; provozovna v přízemí pod byty dostane malý odznak v rohu.
+    const ikona = d.provoz ? PROVOZ_TYPY[p.provoz.typ].emoji + (p.provoz.prizemi ? '<span class="mineIkoOdznak">🏘️</span>' : '') : (p.useType === 'rental' ? '🏘️' : (p.useType === 'residence' ? '🏠' : '🏚️'));
 
     // --- rozbalený obsah ---
     let detail = '';
@@ -11331,7 +11428,19 @@ function renderMine(){
       </summary>
       <div class="mineDetail">${detail}</div>
     </details>`;
-  }).join('');
+  };
+  // Malé podíly, které nic nevydělávají (třeba v cizím domě, kde majitel bydlí), patří dolů
+  // do sbalené skupiny — nahoře mají být domy, které hráči něco nesou nebo potřebují péči.
+  const hlavni = data.filter(d => d.prijem > 0.5 || d.pct > 50 || d.problemy.length);
+  const vedlejsi = data.filter(d => !hlavni.includes(d));
+  html += hlavni.map(radekDomu).join('');
+  if(vedlejsi.length){
+    const sid = 'blk_mineMensinove';
+    html += `<details class="mineSkupina" id="${sid}"${otevreneBloky.has(sid) ? ' open' : ''}>
+      <summary>Menšinové podíly bez výnosu · ${vedlejsi.length}</summary>
+      ${vedlejsi.map(radekDomu).join('')}
+    </details>`;
+  }
 
   setHtml(el, html
     + infoBox('Jak vydělávat na nemovitostech?', `
@@ -13043,20 +13152,27 @@ function worthChartHtml(u){
   const h = asArray(u.worthHistory);
   if(h.length < 2) return `<p style="font-size:0.85em;color:var(--muted)">Graf se objeví, až budeš mít data aspoň ze dvou dní. Zatím se jen rozkoukej.</p>`;
   const data = h.slice(-30);
-  const max = Math.max(...data.map(x => x.w), 1);
-  const min = Math.min(...data.map(x => x.w), 0);
-  const rozsah = Math.max(1, max - min);
-  const prvni = data[0].w, posledni = data[data.length-1].w;
+  const hodnoty = data.map(x => x.w);
+  const max = Math.max(...hodnoty, 1);
+  const min = Math.min(...hodnoty);
+  // Osa od nuly by z rozdílu pár tisíc udělala neviditelné hrbolky — začínáme kousek pod minimem.
+  const dno = Math.max(0, min - (max - min) * 0.15);
+  const rozsah = Math.max(1, max - dno);
+  const prvni = hodnoty[0], posledni = hodnoty[hodnoty.length - 1];
   const zmena = posledni - prvni;
-  const sloupce = data.map(x => {
-    const vyska = Math.max(2, Math.round((x.w - min) / rozsah * 100));
+  const kc = v => Math.round(v).toLocaleString('cs-CZ');
+  const cara = Math.round((prvni - dno) / rozsah * 100);
+  const sloupce = data.map((x, i) => {
+    const vyska = Math.max(3, Math.round((x.w - dno) / rozsah * 100));
     const barva = x.w >= prvni ? 'var(--accent)' : 'var(--danger)';
-    return `<div title="${x.w.toLocaleString('cs-CZ')} Kč" style="flex:1;min-width:3px;height:${vyska}%;background:${barva};border-radius:2px 2px 0 0;"></div>`;
+    const nej = x.w === max ? 'outline:2px solid var(--gold);outline-offset:1px;' : '';
+    return `<div class="sl" title="${kc(x.w)} Kč" style="height:${vyska}%;background:${barva};${i === data.length - 1 ? '' : 'opacity:0.75;'}${nej}"></div>`;
   }).join('');
-  return `<div style="display:flex;align-items:flex-end;gap:2px;height:90px;padding:4px;background:var(--panel);border-radius:8px;">${sloupce}</div>
-    <p style="font-size:0.85em;color:var(--muted);margin-top:6px;">Posledních ${data.length} ${data.length===1?'den':(data.length<5?'dny':'dní')} ·
-      <b style="color:${zmena>=0?'var(--accent)':'var(--danger)'}">${zmena>=0?'+':''}${Math.round(zmena).toLocaleString('cs-CZ')} Kč</b>
-      (z ${Math.round(prvni).toLocaleString('cs-CZ')} na ${Math.round(posledni).toLocaleString('cs-CZ')} Kč)</p>`;
+  return `<div class="fHero"><span class="cislo" style="color:${zmena >= 0 ? 'var(--accent)' : 'var(--danger)'}">${zmena >= 0 ? '+' : '−'}${kc(Math.abs(zmena))} Kč</span>
+      <span class="popis">za posledních ${data.length} ${data.length < 5 ? 'dny' : 'dní'}</span></div>
+    <div class="graf"><span class="st">nejvýš ${kc(max)} Kč</span>
+      <div class="cara" style="bottom:${4 + Math.round(cara * 0.88)}px;" title="výchozí stav"></div>${sloupce}</div>
+    <div class="grafOsa"><span>${kc(prvni)} Kč</span><span>dnes ${kc(posledni)} Kč</span></div>`;
 }
 
 // ===== REALITNÍ TIPY =====
@@ -13276,6 +13392,17 @@ function renderOnboarding(u){
 // ===== PRVNÍ KROKY =====
 // Hra má dnes patnáct systémů a nováček netuší, čím začít. Tahle karta ukazuje vždycky
 // JEDEN další krok podle toho, kde hráč je — a zmizí, jakmile má práci, bydlení i příjem.
+// Kolik z šesti prvních kroků už hráč má — stejné podmínky a pořadí jako dalsiKrok().
+function postupKroku(u){
+  const moje = Object.values(world.parcels || {}).filter(p => (p.owners?.[u.name] || 0) > 0);
+  const vetsina = moje.filter(p => (p.owners[u.name] || 0) > 50);
+  const pronajem = vetsina.filter(p => p.useType === 'rental');
+  const splneno = [!!u.currentJobId, moje.length > 0, vetsina.length > 0,
+    housingStatus(u.name) !== 'homeless', pronajem.length > 0,
+    pronajem.some(p => asArray(p.units).some(x => x && (x.tenant || x.npc)))];
+  const prvniNe = splneno.indexOf(false);
+  return { hotovo: prvniNe < 0 ? splneno.length : prvniNe, celkem: splneno.length };
+}
 function dalsiKrok(u){
   if(!u) return null;
   const moje = Object.values(world.parcels || {}).filter(p => (p.owners?.[u.name] || 0) > 0);
@@ -13383,18 +13510,22 @@ function renderDaily(){
     const chybiCelkem = moje.reduce((a, p) => a + Math.max(0, 100 - Math.round(p.provoz.zasoby ?? 100)), 0);
     const d = playerPos ? haversine(playerPos, SKLAD) : null;
     const zaBod = Math.round(cenaZaBodSklad(u.name));
-    return `<div class="card" style="text-align:left;">
-      <h3 style="text-align:center;">${SKLAD.emoji} Zásobování</h3>
-      <p style="font-size:0.93em;margin:4px 0;">Neseš <b style="color:${nesu ? 'var(--gold)' : 'var(--muted)'}">${nesu} %</b>${
-        nesu ? ` — ${zboziProMoje(u.name)}. Zanes je do provozovny, tam se doplní zdarma.` : ` (vozíš ${zboziProMoje(u.name)})`}. Uneseš ${ZBOZI_KAPACITA} %.</p>
-      <p style="font-size:0.9em;margin:2px 0;">Tvoje provozovny potřebují dohromady <b>${chybiCelkem} %</b>:</p>
+    // Hlavní informace jako ukazatel: kolik neseš proti tomu, kolik provozovny potřebují.
+    const pomer = chybiCelkem > 0 ? Math.min(100, nesu / chybiCelkem * 100) : 100;
+    return `<div class="card">
+      <h3>${SKLAD.emoji} Zásobování</h3>
+      <div style="display:flex;justify-content:space-between;font-size:0.9em;margin-top:4px;">
+        <span>Neseš <b style="color:${nesu ? 'var(--gold)' : 'var(--text)'}">${nesu} %</b></span>
+        <span style="color:var(--muted);">potřeba <b style="color:var(--text);">${chybiCelkem} %</b> · uneseš ${ZBOZI_KAPACITA} %</span>
+      </div>
+      <div class="ukazatel"><div style="width:${pomer}%;"></div></div>
+      ${nesu ? `<p style="font-size:0.85em;margin:2px 0;">Neseš ${zboziProMoje(u.name)} — zanes je do provozovny, doplní se zdarma.</p>` : ''}
       ${moje.map(x => {
         const chybi = Math.max(0, 100 - Math.round(x.provoz.zasoby ?? 100));
         const t = PROVOZ_TYPY[x.provoz.typ];
-        return chybi < 1 ? '' : `<p style="font-size:0.86em;margin:1px 0 1px 8px;">${t ? t.emoji : '🏪'} ${domKratce(x)} — ${chybi} % ${zboziNazev(x, '2')}</p>`;
+        return chybi < 1 ? '' : `<p style="font-size:0.86em;margin:1px 0;">${t ? t.emoji : '🏪'} ${domKratce(x)} <span style="color:var(--muted);">— chybí ${chybi} % ${zboziNazev(x, '2')}</span></p>`;
       }).join('')}
-      <p style="font-size:0.86em;color:var(--muted);margin:2px 0;">Ve skladu stojí procento ${zaBod} Kč. Dovoz na místo je o ${Math.round(ROZVOZ_PRIRAZKA*100)} % dražší — za pohodlí se platí.</p>
-      ${d !== null ? `<p style="font-size:0.88em;margin:4px 0 0;">🧭 Sklad je ${kudyText(SKLAD, d)}.</p>` : ''}
+      <p style="font-size:0.8em;color:var(--muted);margin:6px 0 0;">${d !== null ? `🧭 Sklad ${kudyText(SKLAD, d)} · ` : ''}${zaBod} Kč za 1 % · dovoz na místo +${Math.round(ROZVOZ_PRIRAZKA*100)} %</p>
       <div class="row" style="margin-top:6px;">
         <button ${d !== null && d <= INTERACTION_RADIUS ? '' : 'disabled'} onclick="naloztZbozi()">📦 Naložit</button>
         <button class="secondary" onclick="ukazSklad()">Na mapě</button>
@@ -13410,11 +13541,14 @@ function renderDaily(){
   const lokStred = (ev && ev.lokalni) ? localEventCenter() : null;
   const lokD = (lokStred && playerPos) ? haversine(playerPos, lokStred) : null;
   // Karta „první kroky" je nahoře — nováček ji musí vidět dřív než cokoliv jiného.
-  let html = krok ? `<div class="card" style="border-left:3px solid var(--accent);">
-    <h3>${krok.ikona} Další krok</h3>
+  // Krok jako postup (krok 2 z 6) — hráč vidí, kolik mu zbývá, a karta nepřebíjí ostatní.
+  const postup = krok ? (safeCall(() => postupKroku(u)) || { hotovo:0, celkem:6 }) : null;
+  let html = krok ? `<div class="card">
+    <div class="krokHlava"><span class="krokIkona">${krok.ikona}</span>
+      <div><div class="krokNadpis">Další krok</div><div class="krokPostup">krok ${postup.hotovo + 1} z ${postup.celkem} · rada zmizí, až budeš mít práci, bydlení a nájem</div></div></div>
+    <div class="krokTecky">${Array.from({ length: postup.celkem }, (_, i) => `<span class="${i < postup.hotovo ? 'hotovo' : ''}"></span>`).join('')}</div>
     <p style="font-size:0.93em;margin:4px 0;">${krok.text}</p>
-    <div class="row"><button onclick="${krok.akce}">${krok.tlacitko}</button></div>
-    <p style="font-size:0.8em;color:var(--muted);margin:6px 0 0;">Tahle rada zmizí, až budeš mít práci, vlastní bydlení a příjem z nájmu.</p>
+    <div class="row"><button class="secondary" onclick="${krok.akce}">${krok.tlacitko} ›</button></div>
   </div>` : '';
 
   html += `<div class="card" style="border-left:3px solid var(--gold);">
@@ -14464,53 +14598,31 @@ function renderStatDetail(which){
     const barva = v => v >= 0 ? 'var(--accent)' : 'var(--danger)';
     const znam = v => (v >= 0 ? '+' : '−') + kc(Math.abs(v));
 
-    html += `<div class="card" style="border-left:3px solid var(--gold);">
+    // Tři čísla se dřív pletla: „o půlnoci přijde +2" (co zatím naskočilo), bilance +128
+    // (odhad za celý den) a +164 v Domech (bez nákladů na bydlení). Tady je to rozepsané
+    // tak, aby bylo jasné, které je které.
+    const r = (l, v, b, cls) => `<div class="fR${cls ? ' ' + cls : ''}"><span class="l">${l}</span><span class="v" style="color:${b || 'var(--text)'}">${v}</span></div>`;
+    html += `<div class="card">
       <h3>📆 Dnešek</h3>
-      <p style="margin:3px 0;">✅ Už máš na účtu: <b style="color:${barva(uzMam)}">${znam(uzMam)} Kč</b>
-        <br><span style="font-size:0.85em;color:var(--muted);">Plat, balíky a odměny za úkoly — ty chodí hned.</span></p>
-      <p style="margin:6px 0 3px;">🕛 O půlnoci ${prijde >= 0 ? 'přijde' : 'odejde'}: <b style="color:${barva(prijde)}">${znam(prijde)} Kč</b>
-        <br><span style="font-size:0.85em;color:var(--muted);">Nájem, firmy a solár minus účty, daně a splátky. Tohle číslo vidíš nahoře vedle zůstatku.</span></p>
-      <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">
-        Dnešní výsledek celkem: <b style="color:${barva(dnesCelkem)}">${znam(dnesCelkem)} Kč</b></p>
-      <p style="font-size:0.82em;color:var(--muted);margin:4px 0 0;">Podrobný rozpis se po půlnoci uloží do deníku jako „Souhrn dne".</p>
+      <div class="fHero"><span class="cislo" style="color:${barva(f.net)}">${znam(f.net)} Kč</span>
+        <span class="popis">za celý den,<br>odhad</span></div>
+      ${r('✅ Už máš na účtu<small>plat, balíky a odměny — chodí hned</small>', `${znam(uzMam)} Kč`, barva(uzMam))}
+      ${r(`🕛 Zatím naskočilo k půlnoční výplatě<small>nájem, firmy a solár minus účty — roste celý den</small>`, `${znam(prijde)} Kč`, barva(prijde))}
+      <p class="fPozn">Rozpis dne se po půlnoci uloží do deníku jako „Souhrn dne".</p>
     </div>`;
 
-    html += `<div class="card"><h3>💰 Kde máš peníze</h3>
-      <p>V hotovosti: <b style="color:var(--gold)">${kc(u.balance)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— můžeš hned utratit</span></p>
-      <p>Na spoření: <b>${kc(u.savings)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— úročí se ${des((SAVINGS_ANNUAL_RATE*100), 0)} % ročně</span></p>
-      <p>V majetku: <b>${kc(maj.trzni)} Kč</b> <span style="font-size:0.85em;color:var(--muted)">— domy a firmy v tržní ceně</span></p>
-      ${dluh > 0 ? `<p>Dluhy: <b style="color:var(--danger)">−${kc(dluh)} Kč</b></p>` : ''}
-      <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">Čisté jmění: <b style="color:var(--gold)">${kc(worth)} Kč</b></p>
-      <p style="font-size:0.82em;color:var(--muted);margin:4px 0 0 0;">
-        Čisté jmění počítá majetek opatrně — za kolik bys ho reálně rychle prodal
-        (${kc(maj.likvidacni)} Kč, tedy 60 % tržní ceny u domů a 70 % u firem), minus dluhy.
-        Do žebříčku se počítá právě tohle číslo, aby se nedalo zbohatnout jen tím, že si někdo
-        napíše u domu vysokou cenu.</p>
+    html += `<div class="card">
+      <h3>💰 Kde máš peníze</h3>
+      ${r('Hotovost<small>můžeš hned utratit</small>', `${kc(u.balance)} Kč`, 'var(--gold)')}
+      ${r(`Spoření<small>úročí se ${des(SAVINGS_ANNUAL_RATE*100, 0)} % ročně</small>`, `${kc(u.savings)} Kč`)}
+      ${r('Majetek<small>domy a firmy v tržní ceně</small>', `${kc(maj.trzni)} Kč`)}
+      ${dluh > 0 ? r('Dluhy', `−${kc(dluh)} Kč`, 'var(--danger)') : ''}
+      ${r('Čisté jmění', `${kc(worth)} Kč`, 'var(--gold)', 'soucet')}
+      <p class="fPozn">Do jmění se majetek počítá výkupní cenou ${kc(maj.likvidacni)} Kč — za kolik bys ho hned prodal.</p>
     </div>`;
-
-    // rozpis toku po položkách
-    let tok = '';
-    f.income.forEach(i => tok += `<p style="margin:2px 0;font-size:0.9em;color:var(--accent)">+ ${i.label}: <b>${kc(i.amount)} Kč</b></p>`);
-    if(!f.income.length) tok += `<p style="margin:2px 0;font-size:0.9em;color:var(--muted)">Zatím žádný příjem.</p>`;
-    f.expense.forEach(e => tok += `<p style="margin:2px 0;font-size:0.9em;color:var(--danger)">− ${e.label}: <b>${kc(e.amount)} Kč</b></p>`);
-    const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
-    html += `<div class="card"><h3>📈 Denní tok peněz</h3>
-      ${tok}
-      <p style="border-top:1px solid var(--border);padding-top:5px;margin-top:5px;">Bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>
-    </div>`;
-
-    // pasivní vs aktivní příjem — jádro finanční gramotnosti
-    html += `<div class="card"><h3>🎯 Jak si vyděláváš</h3>
-      <p>Prací (musíš pro to něco udělat): <b>${kc(aktivni)} Kč/den</b></p>
-      <p>Majetkem (vydělává sám): <b style="color:${pasivni>0?'var(--accent)':'var(--muted)'}">${kc(pasivni)} Kč/den</b></p>
-      <p style="font-size:0.9em;color:var(--muted);margin-top:6px;">${
-        pasivni <= 0
-          ? 'Zatím ti nic nevydělává samo. Prvním pronajatým bytem se to změní — peníze pak chodí, i když zrovna nehraješ.'
-          : (pasivni >= f.totalExpense
-              ? '✅ Majetek ti pokryje všechny výdaje. Tomu se říká finanční nezávislost — pracovat už nemusíš.'
-              : `Kdyby ti majetek vydělával ${kc(f.totalExpense)} Kč/den, uživil by tě sám. Chybí ${kc(f.totalExpense - pasivni)} Kč.`)
-      }</p>
-    </div>`;
+    html += infoBox('Proč jmění počítá výkupní cenu?', `
+      <p>Čisté jmění bere majetek opatrně — za kolik bys ho reálně rychle prodal: <b>60 % tržní ceny u domů</b> a <b>70 % u firem</b>, minus dluhy.</p>
+      <p>Do žebříčku se počítá právě tohle číslo, aby se nedalo zbohatnout jen tím, že si někdo napíše u domu vysokou cenu.</p>`);
 
     if(f.net < 0){
       html += `<div class="card"><h3>⚠️ Utrácíš víc, než vyděláváš</h3>
@@ -14523,7 +14635,7 @@ function renderStatDetail(which){
       </div>`;
     }
 
-    html += `<div class="row"><button class="secondary" onclick="openSheet('finance')">📊 Celý finanční přehled</button></div>`;
+    html += `<div class="row"><button class="secondary" onclick="openSheet('finance')">📊 Celý finanční přehled ›</button></div>`;
   }
 
   else if(which === 'walk'){
@@ -14912,6 +15024,18 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'17.2', datum:'2026-10-03', body:[
+    ['zmena','💡 Finanční přehled je přehlednější: velké číslo denní bilance nahoře, částky zarovnané vpravo, nový ukazatel finanční nezávislosti a rezerva jako ukazatel k cíli dvou týdnů.'],
+    ['zmena','⚖️ Majetek a dluhy jsou rozdělené na tři skupiny: co vydělává, co jen stojí daň (třeba malý podíl v cizím domě) a dluhy. Malé podíly už nejsou mezi „pasivy".'],
+    ['zmena','📈 Graf jmění má popisky — začátek, dnešek, nejvyšší bod a čárkovanou čáru výchozího stavu. Tipy na nákup jsou kompaktní řádky, klepnutím ukážou dům na mapě.'],
+    ['oprava','Detail peněz psal „O půlnoci přijde +2 Kč", ale je to jen to, co zatím dnes naskočilo. Teď je nahoře odhad za celý den a pod ním obě části zvlášť.'],
+  ]},
+  { verze:'17.1', datum:'2026-10-03', body:[
+    ['zmena','Panely jsou přehlednější: tenčí hlavička, žádné prázdné místo nahoře, nadpisy zarovnané vlevo a karty s rovným barevným proužkem.'],
+    ['novinka','📰 Noviny jako časová osa po dnech (Dnes, Včera…) s filtry Obchody · Nájmy · Hráči · Město. Zprávy s 📍 vpravo jdou rozkliknout na mapu.'],
+    ['zmena','🎯 Další krok ukazuje, kolikátý krok z šesti tě čeká. Zásobování má ukazatel místo odstavce textu.'],
+    ['zmena','🏠 V Mých nemovitostech je výsledek dne velkým číslem nahoře, vysvětlivky pod ⓘ a malé podíly bez výnosu ve sbalené skupině dole.'],
+  ]},
   { verze:'17.0', datum:'2026-10-03', body:[
     ['novinka','Nové rozložení obrazovky. Mapa je zase vidět: nahoře je jedna karta s penězi, dnem a počasím, dole lišta s pěti tlačítky — Mapa, Výzvy, Domy, Chat a Víc. Pod „Víc" najdeš všechno ostatní (banka, práce, tržiště, žebříček, noviny…) rozdělené na Peníze a Město.'],
     ['novinka','Když stojíš u domu, vyjede nad lištou karta s jeho adresou, volnými podíly a stavem ulice. Jedním klepnutím ho otevřeš.'],
@@ -15430,22 +15554,41 @@ function renderNews(){
     el.innerHTML = `<div class="empty-state">Zatím se nic nestalo. Až někdo koupí dům, nastoupí do práce nebo se přidá nový hráč, objeví se to tady.</div>`;
     return;
   }
-  let html = `<p style="font-size:0.85em;color:var(--muted);margin-bottom:8px;">Co se děje ve městě — nejnovější nahoře. ${countPlayers()>1?'':'(Až budete hrát víc hráčů, uvidíš tu i jejich akce.)'}</p>`;
-  news.forEach(n => {
-    const st = NEWS_STYLE[n.type] || {color:'var(--text)'};
-    // Zprávu s místem jde rozkliknout — mapa na něj skočí a označí ho. Cíl dáváme do
-    // data-atributů a obsluha má pevné jméno, ať je v souboru dohledatelná.
-    // Starší zprávy (a zprávy z jiných verzí) odkaz na místo uložený nemají — dům se dá
-    // dohledat z adresy v textu. Bez toho by se to, co se změnilo, projevilo až u zpráv,
-    // které teprve vzniknou.
+  // Filtry podle druhu — jak hra roste, v jednom proudu zpráv se nedá nic najít.
+  const kategorie = typ => {
+    for(const [k, typy] of Object.entries(NOVINY_KATEGORIE)) if(typy.includes(typ)) return k;
+    return 'mesto';
+  };
+  const pocty = { vse: news.length };
+  news.forEach(n => { const k = kategorie(n && n.type); pocty[k] = (pocty[k] || 0) + 1; });
+  let html = `<div class="novFiltry">` + NOVINY_FILTRY.map(([k, nazev]) =>
+    `<button class="novFiltr${novinyFiltr === k ? ' active' : ''}" onclick="nastavFiltrNovin('${k}')">${nazev}${pocty[k] ? ` <span style="opacity:0.7;font-weight:400;">${pocty[k]}</span>` : ''}</button>`).join('') + `</div>`;
+  if(countPlayers() <= 1) html += `<p style="font-size:0.82em;color:var(--muted);margin:2px 0 4px;">Až budete hrát víc hráčů, uvidíš tu i jejich akce.</p>`;
+
+  // Časová osa po dnech: nadpis dne jednou, u zprávy už jen „před 2 h".
+  const dnes = world.day || 0;
+  const nazevDne = d => !d ? 'Dřív' : (d === dnes ? 'Dnes' : (d === dnes - 1 ? 'Včera' : `Den ${d}`));
+  const vybrane = news.filter(n => n && (novinyFiltr === 'vse' || kategorie(n.type) === novinyFiltr));
+  if(!vybrane.length) html += `<div class="empty-state">V téhle kategorii zatím nic není.</div>`;
+  let posledniDen = null;
+  vybrane.forEach(n => {
+    const st = NEWS_STYLE[n.type] || {color:'var(--muted)'};
+    // Zprávu s místem jde rozkliknout — mapa na něj skočí a označí ho. Starší zprávy odkaz
+    // uložený nemají, dům se dohledá z adresy v textu.
     const dum = (typeof n.kde === 'string' && world.parcels[n.kde]) ? n.kde : (safeCall(() => domZeZpravy(n.text)) || '');
     const bod = (n.kde && typeof n.kde === 'object' && isFinite(n.kde.lat)) ? n.kde : null;
     const klik = !!(dum || bod);
-    html += `<div class="card" style="border-left:3px solid ${st.color};padding:8px 10px;margin-bottom:6px;${klik ? 'cursor:pointer;' : ''}"${
-      klik ? ` onclick="ukazMistoZpravy(this)" data-dum="${escapeHtml(dum)}" data-lat="${bod ? bod.lat : ''}" data-lng="${bod ? bod.lng : ''}"` : ''}>
-      <p style="margin:0;font-size:0.95em;">${escapeHtml(n.text)}</p>
-      <p style="margin:2px 0 0;font-size:0.75em;color:var(--muted);">${n.day ? 'den '+n.day : ''}${timeAgo(n.ts)}${
-        klik ? ' · <span style="color:var(--accent2)">📍 ukázat na mapě</span>' : ''}</p>
+    const den = nazevDne(n.day);
+    if(den !== posledniDen){ html += `<div class="novDen">${den}</div>`; posledniDen = den; }
+    // Úvodní emoji zprávy přesuneme do kroužku vlevo — text pak začíná zarovnaně.
+    const text = String(n.text || '');
+    const m = text.match(/^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*)\s*/u);
+    const ikona = m ? m[1] : '•';
+    const zbytek = m ? text.slice(m[0].length) : text;
+    html += `<div class="zprava${klik ? ' klik' : ''}"${klik ? ` onclick="ukazMistoZpravy(this)" data-dum="${escapeHtml(dum)}" data-lat="${bod ? bod.lat : ''}" data-lng="${bod ? bod.lng : ''}"` : ''}>
+      <div class="zpIkona" style="--zc:${st.color};">${escapeHtml(ikona)}</div>
+      <div class="zpText">${escapeHtml(zbytek)}<div class="zpMeta">${timeAgo(n.ts).replace(/^ · /, '') || (n.day ? 'den ' + n.day : '')}</div></div>
+      ${klik ? '<span class="zpPin" aria-label="Ukázat na mapě">📍</span>' : ''}
     </div>`;
   });
   html += infoBox('Jaké zprávy se tu objevují?', `
@@ -15456,7 +15599,7 @@ function renderNews(){
     <p>🎪 <b>Městské události</b> — co se dnes ve městě děje a jak to mění ekonomiku.</p>
     <p>🎲 <b>Náhodné události</b> — nečekané výdaje i příjmy (rozbitá pračka, malé dědictví).</p>
     <p>👋 <b>Příchody</b> — kdo se ke hře přidal.</p>
-    <p>📍 <b>Zprávy s místem jdou rozkliknout</b> — mapa skočí k domu, parku, zakázce nebo k místu, kde se to stalo. Poznáš je podle „📍 ukázat na mapě".</p>
+    <p>📍 <b>Zprávy s místem jdou rozkliknout</b> — mapa skočí k domu, parku, zakázce nebo k místu, kde se to stalo. Poznáš je podle 📍 vpravo u zprávy.</p>
     <p style="color:var(--muted)">Místo nemají jen zprávy, které se nikde nestaly — hodnosti, odznaky, dárky, půjčky, souhrn dne a oznámení vedení města.</p>
     <p>📰 <b>Souhrn dne.</b> Po půlnoci přibude jedna zpráva, která shrne celý předchozí den — kolik se obchodovalo, kolik nájemníků se stěhovalo, co se postavilo a komu majetek vydělal nejvíc.</p>
     <p style="color:var(--muted)">Drží se posledních 200 zpráv, starší se automaticky mažou.</p>
@@ -15469,6 +15612,19 @@ function renderNews(){
     <p><b>Náhodné události.</b> Občas tě potká něco nečekaného — rozbitá pračka, malé dědictví. Objeví se i tady, ať máš přehled, kam ti mizí peníze.</p>
   `);
   setHtml(el, html);
+}
+const NOVINY_KATEGORIE = {
+  obchody: ['buy', 'sell', 'sale', 'trade', 'market', 'invest', 'loan', 'bank'],
+  najmy:   ['rental'],
+  hraci:   ['join', 'achievement', 'job']
+};
+const NOVINY_FILTRY = [['vse', 'Vše'], ['obchody', 'Obchody'], ['najmy', 'Nájmy'], ['hraci', 'Hráči'], ['mesto', 'Město']];
+let novinyFiltr = 'vse';
+function nastavFiltrNovin(k){
+  novinyFiltr = k;
+  renderNews();
+  const sb = document.getElementById('sheetBody');
+  if(sb) sb.scrollTop = 0;
 }
 function countPlayers(){ return Object.keys(world.users||{}).length; }
 // "před X min/hod" z timestampu
@@ -15486,160 +15642,123 @@ function renderFinance(){
   if(!currentUser){ el.innerHTML='<div class="empty-state"></div>'; return; }
   const u = world.users[currentUser.name];
   const f = financeBreakdown(currentUser.name);
+  const kc = v => Math.round(v).toLocaleString('cs-CZ');
+  // Malé částky by se zaokrouhlily na „0 Kč/den", což u domu s daní vypadá jako chyba.
+  const tok = v => Math.abs(v) < 1 && Math.abs(v) >= 0.05 ? des(v, 1) : kc(v);
+  const znam = v => (v >= 0 ? '+' : '−') + tok(Math.abs(v));
+  const barva = v => v >= 0 ? 'var(--accent)' : 'var(--danger)';
+  const r = (l, v, b, cls) => `<div class="fR${cls ? ' ' + cls : ''}"><span class="l">${l}</span><span class="v" style="color:${b || 'var(--text)'}">${v}</span></div>`;
+  const kdy = l => /Plat|Spropitné/.test(l) ? '<span class="fKdy" title="chodí hned">⚡</span>' : '<span class="fKdy" title="o půlnoci">🕛</span>';
 
   let html = '';
 
-  // 1) ROZPOČET — příjmy vs výdaje s předpovědí
+  // 1) DENNÍ ROZPOČET — velké číslo, pod ním řádky
+  const prace = f.income.filter(i => /Plat|Spropitné/.test(i.label)).reduce((a, i) => a + i.amount, 0);
+  const pasivni = f.totalIncome - prace;
+  const pokryti = f.totalExpense > 0 ? Math.min(100, pasivni / f.totalExpense * 100) : (pasivni > 0 ? 100 : 0);
   html += `<div class="card">
     <h3>📊 Denní rozpočet</h3>
-    <p style="font-size:0.85em;color:var(--muted)">Kolik ti každý den přiteče a odteče (odhad podle současného stavu).</p>
-    <p style="font-size:0.82em;color:var(--muted);margin:2px 0 6px;">🕛 = vyplácí se najednou o půlnoci · ⚡ = chodí hned, jakmile si to vyděláš</p>`;
-  html += `<p style="margin-top:6px;color:var(--accent)"><b>Příjmy: +${Math.round(f.totalIncome)} Kč/den</b></p>`;
-  if(f.naSporeni > 0.05) html += `<p style="font-size:0.88em;color:var(--muted);margin:2px 0;">🐷 Úrok ze spoření +${des(f.naSporeni, 1)} Kč/den — připisuje se rovnou na spořicí účet, do hotovosti nepřijde.</p>`;
-  // U každé položky značka, kdy se peníze objeví — bez toho hráči nesedělo číslo
-  // v hlavičce s denní bilancí.
-  const kdy = l => /Plat|Spropitné/.test(l) ? '⚡' : '🕛';
-  f.income.forEach(i=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${kdy(i.label)} ${i.label}: +${Math.round(i.amount)} Kč</p>`);
-  if(!f.income.length) html += `<p style="font-size:0.9em;margin-left:10px;color:var(--muted)">zatím žádné — zkus práci nebo pronájem</p>`;
-  html += `<p style="margin-top:6px;color:var(--danger)"><b>Výdaje: −${Math.round(f.totalExpense)} Kč/den</b></p>`;
-  f.expense.forEach(e=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">🕛 ${e.label}: −${Math.round(e.amount)} Kč</p>`);
-  const netColor = f.net>=0 ? 'var(--accent)' : 'var(--danger)';
-  html += `<p style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px;">Denní bilance: <b style="color:${netColor}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
-
-  // předpověď
-  if(f.net >= 0){
-    html += `<p style="font-size:0.9em;color:var(--accent)">✅ Vyděláváš víc, než utrácíš — tvůj majetek roste. Skvělé hospodaření!</p>`;
-  } else if(f.daysUntilBroke !== null){
-    const warn = f.daysUntilBroke <= 5 ? 'var(--danger)' : 'var(--gold)';
-    html += `<p style="font-size:0.9em;color:${warn}">⚠️ Utrácíš víc, než vyděláváš. Když to tak půjde dál (a příjmy ti zůstanou), peníze ti dojdou <b>za ${f.daysUntilBroke} ${f.daysUntilBroke===1?'den':(f.daysUntilBroke<5?'dny':'dní')}</b>. Seber si příjem (práce, pronájem) nebo omez výdaje.</p>`;
-  }
-  html += `</div>`;
-
-  // 2) AKTIVA vs PASIVA
-  html += `<div class="card">
-    <h3>⚖️ Aktiva vs. pasiva</h3>
-    <p style="font-size:0.85em;color:var(--muted)"><b>Aktivum</b> ti peníze nese. <b>Pasivum</b> ti je bere. Boháči hromadí aktiva.</p>`;
-  if(f.assets.length){
-    html += `<p style="color:var(--accent);margin-top:6px;"><b>💚 Aktiva (nesou příjem):</b></p>`;
-    f.assets.forEach(a=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${escapeHtml(a.label)}: hodnota ${Math.round(a.value).toLocaleString('cs-CZ')} Kč · ${a.dayFlow>=0?'+':''}${Math.round(a.dayFlow)} Kč/den</p>`);
-  }
-  if(f.liabilities.length){
-    html += `<p style="color:var(--danger);margin-top:6px;"><b>❤️ Pasiva (berou peníze):</b></p>`;
-    // Malé částky zaokrouhlené na celé koruny vycházely jako „0 Kč/den", což u pasiva vypadá
-    // jako chyba ve výpočtu. Pod korunu proto ukážeme desetinu.
-    const tok = v => (Math.abs(v) < 1 ? v.toFixed(1) : Math.round(v).toLocaleString('cs-CZ'));
-    f.liabilities.forEach(a=> html += `<p style="font-size:0.9em;margin:1px 0 1px 10px;">${escapeHtml(a.label)}: ${a.value<0?'dluh ':''}${Math.round(Math.abs(a.value)).toLocaleString('cs-CZ')} Kč · ${tok(a.dayFlow)} Kč/den${a.label==='Půjčka'?' <span style="color:var(--muted);font-size:0.9em;">(úrok)</span>':''}</p>`);
-  }
-  if(!f.assets.length && !f.liabilities.length) html += `<p style="font-size:0.9em;color:var(--muted);margin-top:6px;">Zatím nevlastníš žádný majetek. Kup podíl v domě nebo firmě a začni budovat aktiva.</p>`;
-  // Dopočet, aby čísla seděla s denní bilancí nahoře. Bez toho si hráč sečte
-  // aktiva a pasiva, nedostane bilanci a myslí si, že hra počítá špatně.
-  if(f.assets.length || f.liabilities.length){
-    const majetekTok = [...f.assets, ...f.liabilities].reduce((s,x) => s + (x.dayFlow||0), 0);
-    const zivot = (f.expense.find(e => e.label && e.label.indexOf('Život') >= 0) || {amount:0}).amount;
-    html += `<p style="border-top:1px solid var(--border);padding-top:6px;margin-top:8px;font-size:0.9em;">
-      Z majetku ti plyne <b style="color:${majetekTok>=0?'var(--accent)':'var(--danger)'}">${majetekTok>=0?'+':''}${Math.round(majetekTok)} Kč/den</b>.</p>
-      ${(() => {
-        // Rozpad musí být POCTIVÝ, ne jen sedět v součtu. Dřív se všechno, co nebylo z majetku
-        // ani ze života, slilo do jednoho řádku — a ten dostal nálepku „Splátky dluhů", i když
-        // v sobě měl schovaný plat (−220 = plat 225 − splátky 450 + úrok 5). Rozepsáno zvlášť.
-        const prace = f.income.filter(i => /Plat|Spropitné/.test(i.label))
-                              .reduce((a, i) => a + i.amount, 0);
-        // Úrok z půjčky je už započítaný výš u pasiva „Půjčka" — tady odečítáme jen jistinu,
-        // aby se nepočítal dvakrát.
-        const splRadek = f.expense.find(e => /Splátky/.test(e.label));
-        const urokVMajetku = asArray(u.loans).reduce((a, l) => a + (l.balance * l.dailyRate), 0);
-        const jistina = splRadek ? Math.max(0, splRadek.amount - urokVMajetku) : 0;
-        let out = '';
-        if(prace > 0.5) out += `<p style="font-size:0.9em;margin:2px 0;">Práce (majetek to není, musíš pro ni chodit): <b style="color:var(--accent)">+${Math.round(prace)} Kč/den</b></p>`;
-        if(jistina > 0.5) out += `<p style="font-size:0.9em;margin:2px 0;">Splátky dluhů (jistina): <b style="color:var(--danger)">−${Math.round(jistina)} Kč/den</b><br><span style="color:var(--muted);font-size:0.88em;">O tuhle část nepřicházíš — snižuje ti dluh.</span></p>`;
-        return out;
-      })()}
-      <p style="font-size:0.9em;margin:2px 0;">Život a bydlení (to majetek není): <b style="color:var(--danger)">−${Math.round(zivot)} Kč/den</b></p>
-      <p style="font-size:0.9em;margin:2px 0;border-top:1px solid var(--border);padding-top:3px;">= denní bilance <b style="color:${f.net>=0?'var(--accent)':'var(--danger)'}">${f.net>=0?'+':''}${Math.round(f.net)} Kč/den</b></p>`;
-  }
-  html += `</div>`;
-
-  // 3) SLOŽENÉ ÚROČENÍ NÁZORNĚ
-  html += `<div class="card">
-    <h3>🔢 Síla složeného úroku</h3>
-    <p style="font-size:0.85em;color:var(--muted)">Peníze (i dluhy) rostou samy — a čím déle, tím rychleji. Podívej:</p>`;
-  // graf: 1000 Kč na spoření vs stejná půjčka, přes 90 dní
-  const startAmt = 1000;
-  const savPts=[], loanPts=[];
-  for(let d=0; d<=90; d+=15){
-    savPts.push(Math.round(startAmt * Math.pow(1+SAVINGS_ANNUAL_RATE/DAYS_PER_YEAR, d)));
-    loanPts.push(Math.round(startAmt * Math.pow(1+LOAN_ANNUAL_RATE/DAYS_PER_YEAR, d)));
-  }
-  html += `<p style="font-size:0.9em;">💰 <b>1000 Kč na spoření</b> (${des((SAVINGS_ANNUAL_RATE*100), 0)} %):</p>
-    <p style="font-size:0.85em;margin-left:10px;color:var(--accent)">za 90 dní → ${savPts[savPts.length-1]} Kč (+${savPts[savPts.length-1]-startAmt} Kč zadarmo)</p>`;
-  html += `<p style="font-size:0.9em;">💵 <b>1000 Kč půjčka</b> (${Math.round(LOAN_ANNUAL_RATE*100)} %), když nesplácíš:</p>
-    <p style="font-size:0.85em;margin-left:10px;color:var(--danger)">za 90 dní → dluh ${loanPts[loanPts.length-1]} Kč (+${loanPts[loanPts.length-1]-startAmt} Kč navíc)</p>`;
-  html += `<p style="font-size:0.85em;color:var(--muted);margin-top:6px;">💡 Proto se vyplatí spořit brzy a splácet dluhy rychle — úrok pracuje pro tebe, nebo proti tobě.</p>`;
-  html += `</div>`;
-
-  // 3b) GRAF VÝVOJE JMĚNÍ
-  html += `<div class="card">
-    <h3>📈 Vývoj tvého jmění</h3>
-    ${worthChartHtml(u)}
+    <div class="fHero"><span class="cislo" style="color:${barva(f.net)}">${znam(f.net)} Kč</span>
+      <span class="popis">denně, odhad<br>podle dnešního stavu</span></div>
+    <div class="fSkup">Příjmy · ${znam(f.totalIncome)} Kč</div>
+    ${f.income.length ? f.income.map(i => r(`${kdy(i.label)}${escapeHtml(i.label)}`, `+${tok(i.amount)} Kč`, 'var(--accent)')).join('')
+      : `<p class="fPozn">Zatím žádné — zkus práci nebo pronájem.</p>`}
+    ${f.naSporeni > 0.05 ? r(`<span class="fKdy">🐷</span>Úrok ze spoření<small>jde rovnou na spořicí účet</small>`, `+${des(f.naSporeni, 1)} Kč`, 'var(--muted)') : ''}
+    <div class="fSkup">Výdaje · −${tok(f.totalExpense)} Kč</div>
+    ${f.expense.map(e => r(`<span class="fKdy">🕛</span>${escapeHtml(e.label)}`, `−${tok(e.amount)} Kč`, 'var(--danger)')).join('')}
+    <div class="fSkup">Finanční nezávislost</div>
+    <div class="fPruh"><div style="width:${pokryti}%;background:${pokryti >= 100 ? 'var(--gold)' : 'var(--accent2)'};"></div></div>
+    <p class="fPozn" style="margin-top:2px;">${pokryti >= 100
+      ? '✅ Majetek ti sám pokryje všechny výdaje — pracovat už nemusíš.'
+      : `Majetek ti pokryje ${Math.round(pokryti)} % výdajů. Chybí ${kc(Math.max(0, f.totalExpense - pasivni))} Kč/den, aby tě uživil sám.`}</p>
+    ${f.net < 0 && f.daysUntilBroke !== null ? `<p class="fPozn" style="color:${f.daysUntilBroke <= 5 ? 'var(--danger)' : 'var(--gold)'}">⚠️ Utrácíš víc, než vyděláváš — peníze ti dojdou za <b>${f.daysUntilBroke} ${f.daysUntilBroke===1?'den':(f.daysUntilBroke<5?'dny':'dní')}</b>.</p>` : ''}
   </div>`;
 
-  // 3c) REALITNÍ TIPY
+  // 2) MAJETEK A DLUHY — co vydělává, co jen stojí daň, co dlužíš
+  const dluhy = f.liabilities.filter(x => x.value < 0);
+  const nevydela = f.liabilities.filter(x => x.value >= 0);
+  const polozka = x => r(`${escapeHtml(x.label)}<small>${x.value < 0 ? 'dluh ' : 'hodnota '}${kc(Math.abs(x.value))} Kč</small>`,
+                         `${znam(x.dayFlow)} Kč/den`, barva(x.dayFlow));
+  html += `<div class="card">
+    <h3>⚖️ Majetek a dluhy</h3>
+    ${f.assets.length ? `<div class="fSkup">💚 Vydělává</div>${f.assets.map(polozka).join('')}` : ''}
+    ${nevydela.length ? `<div class="fSkup">⚪ Nevydělává — platíš jen daň</div>${nevydela.map(polozka).join('')}` : ''}
+    ${dluhy.length ? `<div class="fSkup">❤️ Dluhy — úrok</div>${dluhy.map(polozka).join('')}` : ''}
+    ${!f.assets.length && !f.liabilities.length ? `<p class="fPozn">Zatím nevlastníš žádný majetek. Kup podíl v domě nebo firmě a začni budovat aktiva.</p>` : ''}
+    ${(() => {
+      if(!f.assets.length && !f.liabilities.length) return '';
+      // Dopočet k denní bilanci — rozpad musí být poctivý, ne jen sedět v součtu.
+      const majetekTok = [...f.assets, ...f.liabilities].reduce((s2, x) => s2 + (x.dayFlow || 0), 0);
+      const zivot = (f.expense.find(e => e.label && e.label.indexOf('Život') >= 0) || {amount:0}).amount;
+      const splRadek = f.expense.find(e => /Splátky/.test(e.label));
+      // Úrok je už započítaný u dluhů výš — tady jen jistina, ať se nepočítá dvakrát.
+      const urokVMajetku = asArray(u.loans).reduce((a, l) => a + (l.balance * l.dailyRate), 0);
+      const jistina = splRadek ? Math.max(0, splRadek.amount - urokVMajetku) : 0;
+      return `<div class="fSkup">Jak z toho vyjde bilance</div>
+        ${r('Z majetku', `${znam(majetekTok)} Kč`, barva(majetekTok))}
+        ${prace > 0.5 ? r('Práce<small>majetek to není, musíš pro ni chodit</small>', `+${kc(prace)} Kč`, 'var(--accent)') : ''}
+        ${jistina > 0.5 ? r('Splátky dluhů — jistina<small>o tohle nepřicházíš, snižuje to dluh</small>', `−${kc(jistina)} Kč`, 'var(--danger)') : ''}
+        ${r('Život a bydlení', `−${kc(zivot)} Kč`, 'var(--danger)')}
+        ${r('Denní bilance', `${znam(f.net)} Kč`, barva(f.net), 'soucet')}`;
+    })()}
+  </div>`;
+
+  // 3) VÝVOJ JMĚNÍ
+  html += `<div class="card"><h3>📈 Vývoj tvého jmění</h3>${worthChartHtml(u)}</div>`;
+
+  // 4) TIPY NA NÁKUP — kompaktní řádky, klepnutím na mapu
   const tipy = findDealTips();
   if(tipy.length){
     html += `<div class="card">
       <h3>🔍 Tipy na dobrý nákup</h3>
-      <p style="font-size:0.85em;color:var(--muted)">Domy blízko tebe, kde je nájem vysoký vzhledem k ceně. Čím dřív se dům zaplatí, tím lepší koupě.</p>`;
-    tipy.forEach(t => {
-      html += `<div style="border:1px solid var(--border);border-radius:8px;padding:7px;margin-top:6px;">
-        <p style="margin:0;font-weight:600;">🏠 Dům ${domKratce(t.p)}</p>
-        <p style="margin:2px 0;font-size:0.85em;color:var(--accent);">${t.duvod}</p>
-        <p style="margin:2px 0;font-size:0.83em;color:var(--muted);">Většinový podíl ~${t.zaMe.toLocaleString('cs-CZ')} Kč · nájem ~${Math.round(t.denniNajem)} Kč/den</p>
-        <p style="margin:2px 0;font-size:0.83em;color:var(--gold);">🧭 ${kudyText(t.p, t.d)}${t.orientace ? ` · ${escapeHtml(t.orientace)}` : ''}</p>
-        <div class="row"><button class="secondary" onclick="flyToParcel('${t.p.id}')">Ukázat na mapě</button></div>
-      </div>`;
-    });
-    html += `</div>`;
+      <p class="fPozn" style="margin:0 0 4px;">Domy blízko tebe, kde je nájem vysoký vzhledem k ceně.</p>
+      ${tipy.map(t => `<div class="tipRadek" onclick="flyToParcel('${t.p.id}')">
+        <span class="ik">🏠</span>
+        <div class="tx"><div class="nz">${escapeHtml(domKratce(t.p))}</div>
+          <div class="du">${t.duvod}</div>
+          <div class="ci">většina ~${kc(t.zaMe)} Kč · nájem ~${Math.round(t.denniNajem)} Kč/den</div></div>
+        <div class="kde">📍 ${kudyText(t.p, t.d)}${t.orientace ? `<br><span style="color:var(--muted)">${escapeHtml(t.orientace)}</span>` : ''}</div>
+      </div>`).join('')}
+    </div>`;
   }
 
-  // 4) REZERVA
+  // 5) REZERVA
   const cash = u.balance + (u.savings||0);
   const dailyBurn = f.totalExpense;
-  const daysReserve = dailyBurn>0 ? Math.floor(cash / dailyBurn) : 999;
-  let reserveColor = daysReserve>=14 ? 'var(--accent)' : (daysReserve>=5 ? 'var(--gold)' : 'var(--danger)');
+  const daysReserve = dailyBurn > 0 ? Math.floor(cash / dailyBurn) : 999;
+  const reserveColor = daysReserve >= 14 ? 'var(--accent)' : (daysReserve >= 5 ? 'var(--gold)' : 'var(--danger)');
   html += `<div class="card">
     <h3>🛟 Tvoje rezerva</h3>
-    <p>Hotovost + spoření: <b>${Math.round(cash).toLocaleString('cs-CZ')} Kč</b></p>
-    <p>Kdyby ti <b>vypadly všechny příjmy</b>, vydržíš: <b style="color:${reserveColor}">${daysReserve>=999?'dlouho':daysReserve+' dní'}</b></p>
-    <p style="font-size:0.85em;color:var(--muted)">To je nejhorší možný případ — počítá se s tím, že nic nevyděláváš a jen platíš výdaje (${Math.round(dailyBurn)} Kč/den včetně splátek dluhů).${
-      f.net < -0.5 && f.daysUntilBroke !== null
-        ? ` Když ti příjmy zůstanou, vydržíš déle: <b>${f.daysUntilBroke} dní</b> (viz denní rozpočet nahoře).`
-        : ''
-    }</p>
-    <p style="font-size:0.85em;color:var(--muted)">Chytré je mít rezervu aspoň na 2 týdny — kdyby přišel nečekaný výdaj nebo výpadek příjmu, nemusíš si hned půjčovat.</p>
+    <div class="fHero"><span class="cislo" style="color:${reserveColor}">${daysReserve >= 999 ? 'dlouho' : daysReserve + ' dní'}</span>
+      <span class="popis">vydržíš, kdyby ti<br>vypadly všechny příjmy</span></div>
+    <div class="fPruh"><div style="width:${Math.min(100, daysReserve / 14 * 100)}%;background:${reserveColor};"></div></div>
+    <p class="fPozn" style="margin-top:2px;">Cíl jsou aspoň 2 týdny. Hotovost a spoření ${kc(cash)} Kč, výdaje ${kc(dailyBurn)} Kč/den včetně splátek.${
+      f.net < -0.5 && f.daysUntilBroke !== null ? ` Když ti příjmy zůstanou, vydržíš ${f.daysUntilBroke} dní.` : ''}</p>
   </div>`;
 
-  // Jerry se ptal, KDY vlastně peníze chodí. Nikde to nebylo napsané — hráči čekali
-  // na nějakou výplatu jednou denně a nechápali, proč se zůstatek pořád mění.
+  // 6) VYSVĚTLIVKY — sbalené, kdo chce, rozklikne
+  const startAmt = 1000;
+  const za90 = sazba => Math.round(startAmt * Math.pow(1 + sazba / DAYS_PER_YEAR, 90));
+  html += infoBox('Síla složeného úroku', `
+    <p>Peníze (i dluhy) rostou samy — a čím déle, tím rychleji.</p>
+    <p>💰 <b>1000 Kč na spoření</b> (${des(SAVINGS_ANNUAL_RATE*100, 0)} %) → za 90 dní <b style="color:var(--accent)">${za90(SAVINGS_ANNUAL_RATE)} Kč</b></p>
+    <p>💵 <b>1000 Kč půjčka</b> (${urokText(LOAN_ANNUAL_RATE)}), když nesplácíš → za 90 dní dluh <b style="color:var(--danger)">${za90(LOAN_ANNUAL_RATE)} Kč</b></p>
+    <p>Proto se vyplatí spořit brzy a splácet rychle — úrok pracuje buď pro tebe, nebo proti tobě.</p>`);
+
+  // Jerry se ptal, KDY vlastně peníze chodí. Nikde to nebylo napsané.
   html += infoBox('Kdy se peníze připisují?', `
     <p><b>Jednou denně, o půlnoci.</b> Nájem, výnos z firem i solár se během dne sčítají a připíšou se ti <b>najednou při přechodu na nový den</b> — jako opravdové vyúčtování. Ve stejnou chvíli se strhnou účty: životní náklady, daň z nemovitosti a splátky.</p>
-    <p>Kolik už se dnes nasčítalo, vidíš <b>vedle zůstatku nahoře</b> (▲ 546 dnes). Podrobný rozpis pak najdeš v deníku jako „Souhrn dne".</p>
+    <p>Kolik už se dnes nasčítalo, vidíš <b>pod zůstatkem nahoře</b> (▲ … o půlnoci). Podrobný rozpis pak najdeš v deníku jako „Souhrn dne".</p>
     <div class="ex">Tvůj majetek nese <b>${Math.round(Math.max(0, f.totalIncome))} Kč/den</b>. Přesně tolik ti přijde při nejbližším vyúčtování (mínus účty).</div>
-    <p><b>Když hru zavřeš, peníze běží dál</b> — dokud hraje aspoň někdo jiný. Když nehraje nikdo, čas se zastaví a dopočítá se, až se někdo vrátí (nejvýš však ${Math.round(GAME_DAY_MS*3/GAME_DAY_MS)} dny zpětně).</p>
-    <p><b>Výjimka je plat, balíky a odměny za úkoly</b> — ty dostaneš hned, jakmile si je vyděláš.</p>
-  `);
+    <p><b>Když hru zavřeš, peníze běží dál</b> — dopočítají se, až ji zase otevřeš (nejvýš ${Math.round(GAME_DAY_MS*3/GAME_DAY_MS)} dny zpětně).</p>
+    <p><b>Výjimka je plat, balíky a odměny za úkoly</b> — ty dostaneš hned, jakmile si je vyděláš.</p>`);
 
   html += infoBox('Jak číst finanční přehled?', `
     <p><b>Denní rozpočet.</b> Kolik ti každý den přiteče a odteče. Když je bilance <b>záporná</b>, ubývají ti peníze — a je jedno, kolik jich máš, jednou dojdou.</p>
-    <p><b>Aktiva vs. pasiva.</b> Nejdůležitější rozdíl v celé hře:</p>
-    <p>• <b>Aktivum</b> ti peníze <b>nese</b> — pronajatý byt, podíl ve firmě.<br>
-       • <b>Pasivum</b> ti peníze <b>bere</b> — dům, ve kterém bydlíš, půjčka.</p>
-    <p>Tvoje vlastní bydlení je technicky pasivum (platíš z něj daň a nic nevynáší), i když ti šetří na nákladech. Bohatnou lidé, kteří mají víc aktiv než pasiv.</p>
-    <p><b>Dvě čísla o době přežití.</b> Nejsou v rozporu, jen počítají různé věci:</p>
-    <p>• „<b>peníze dojdou za X dní</b>" — když ti příjmy zůstanou tak, jak jsou teď.<br>
-       • „<b>rezerva vydrží X dní</b>" — kdybys přišel o <b>všechny</b> příjmy naráz. Nejhorší možný případ.</p>
-    <p><b>Graf jmění.</b> Ukazuje, jestli rosteš nebo padáš. Jeden špatný den nic neznamená — dívej se na směr křivky.</p>
-    <p><b>Složené úročení.</b> Peníze (i dluhy) rostou samy ze sebe. Proto se vyplatí <b>spořit brzy</b> a <b>splácet rychle</b> — čas pracuje buď pro tebe, nebo proti tobě.</p>
-  `);
+    <p><b>Finanční nezávislost.</b> Kolik procent výdajů ti pokryje samotný majetek. Na 100 % už nemusíš chodit do práce.</p>
+    <p><b>Majetek a dluhy.</b> Co ti peníze <b>nese</b> (pronájem, provozovna, firma), co jen <b>stojí</b> daň (malý podíl v cizím domě, dům bez využití) a kolik platíš na úrocích.</p>
+    <p><b>Dvě čísla o době přežití.</b> „Peníze dojdou za X dní" počítá s tím, že ti příjmy zůstanou. „Rezerva vydrží X dní" je nejhorší případ — kdybys přišel o všechny příjmy naráz.</p>
+    <p><b>Graf jmění.</b> Jeden špatný den nic neznamená — dívej se na směr. Čárkovaná čára je stav na začátku grafu.</p>`);
 
   setHtml(el, html);
 }
