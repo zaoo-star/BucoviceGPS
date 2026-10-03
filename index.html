@@ -1207,7 +1207,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '17.3';
+const APP_VERSION = '17.5';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -1614,6 +1614,30 @@ function npcNeedsText(npc, p){
 // Co dané vylepšení tomuhle domu konkrétně přinese. Popisky říkaly jen „vydělává ti každý
 // den" — hráč pak nevěděl, jestli se 912 Kč vrátí za měsíc, nebo za rok.
 function upgradePrinos(p, key){
+  const zaklad = upgradePrinosZaklad(p, key);
+  if(p.useType !== 'rental' || !asArray(p.units).length) return zaklad;
+  // U pronájmu se k tomu přidá, co vylepšení udělá s nájmem a s opravami — přesně to, co
+  // hráči chybělo, aby viděli, proč mít víc vylepšení než jedno.
+  const byty = asArray(p.units).filter(u => u && !u.ownerOccupied);
+  const casti = zaklad.popis ? [zaklad.popis] : [];
+  let denne = zaklad.denne || 0;
+  const rozdil = ferovyNajemS(p, key, true) - ferovyNajemS(p, key, false);
+  if(rozdil >= 0.5){
+    const navic = rozdil * byty.length;
+    denne += navic;
+    casti.push(`zvedne férový nájem o ${des(rozdil, 0)} Kč na byt (+${des(navic, 0)} Kč/den za dům)`);
+  }
+  if(key === 'renovation'){
+    const obsazene = byty.filter(u => u.npc || u.tenant).length || byty.length;
+    const uspora = obsazene * RENT_DECAY * cenaOpravyBod() * (1 - RENOVATION_DECAY_MULT);
+    denne += uspora;
+    casti.push(`ušetří ${des(uspora, 0)} Kč/den na opravách`);
+  }
+  if(key === 'insulation') casti.push('byty se po odchodu nájemníka obsadí rychleji');
+  const cena = houseUpgradeCost(p, key);
+  return { denne, dni: denne > 0.05 ? Math.round(cena / denne) : null, popis: casti.join(', ') };
+}
+function upgradePrinosZaklad(p, key){
   const cena = houseUpgradeCost(p, key);
   const bytu = Math.max(1, asArray(p.units).length || p.levels || 1);
   const bydlimTu = asArray(p.units).some(u => u && u.ownerOccupied) || p.useType === 'residence';
@@ -1646,7 +1670,29 @@ function solarBonusForHouse(p){
 
 // Férové (tržní) nájemné bytu ~0,26 % hodnoty domu. Vyladěno tak, aby pronájem dával rozumný výnos
 // (~30-50 % ročně, rychlá hra) a zároveň nájemník ušetřil vs bezdomovec. Vlastník 45 < nájemník < bezdomovec 90.
-const FAIR_RENT_RATIO = 0.0026;   // ~0,26 % hodnoty domu/den za byt (min. 30 Kč)
+const FAIR_RENT_RATIO = 0.0026;   // ~0,26 % hodnoty domu/den za byt (min. NAJEM_MINIMUM)
+const NAJEM_MINIMUM = 35;         // pod tohle férový nájem bytu neklesne…
+// …ale dům jako celek nesmí vynést víc než 1,3× toho, co odpovídá jeho hodnotě. Minimum bez
+// stropu dělalo z levného domu s přístavbami zlatý důl: Plk. Malečka (19 190 Kč, 3 byty)
+// vynášela 240 % ročně, normální dům 95 % — vyplatilo se prodat dobrý dům a koupit levné
+// s víc byty (všimla si Eva). Se stropem je to ~150 %: malé byty mají vyšší výnos jako ve
+// skutečnosti, ale ne dvaapůlkrát.
+const NAJEM_STROP_DOMU = 1.3;
+// Férový nájem bytu, jako by dům vylepšení `key` měl (ma=true) nebo neměl (ma=false).
+// Dřív se „bez vylepšení" jen odhadovalo vydělením procentem hodnoty — u domu, kde nájem
+// stojí na minimu 35 Kč, nebo u klimatizace (ta nájem násobí, ne přes hodnotu) to vycházelo
+// špatně: karta tvrdila „42 místo 40", i když to vylepšení nájem nezvedlo vůbec (Eva).
+function ferovyNajemS(p, key, ma){
+  const meloObj = !!p.upgrades;
+  if(!meloObj) p.upgrades = {};
+  const puvodni = p.upgrades[key];
+  p.upgrades[key] = !!ma;
+  try { return fairRentForHouse(p, spoctiCenuDomu(p)); }
+  finally {
+    if(puvodni === undefined) delete p.upgrades[key]; else p.upgrades[key] = puvodni;
+    if(!meloObj) delete p.upgrades;
+  }
+}
 const EMPTY_DECAY_FACTOR = 0.3;   // prázdný byt chátrá jen na 30 % rychlosti obsazeného
 const PROPERTY_TAX_RATE = 0.04;   // základní daň z nemovitosti: 4 % hodnoty podílu ročně
 // ===== PROGRESIVNÍ DAŇ A ŽIVOTNÍ ÚROVEŇ =====
@@ -5376,14 +5422,16 @@ function provozCistyVynos(p){
   return provozPlnyVynos(p) * (1 - PROVOZ_ZASOBY_PODIL);
 }
 
-function fairRentForHouse(p){
+function fairRentForHouse(p, cenaDomu){
   const numUnits = (p.units && p.units.length) || p.levels || 1;
   // Když je v přízemí provozovna, byty nad ní nesou jen svůj díl domu. Bez tohohle by se
   // nájem přízemí rozpočítal do ostatních bytů a každý by byl dražší, než odpovídá.
   const bytovyDil = (p.provoz && p.provoz.prizemi) ? (1 - 1 / pocetPater(p)) : 1;
   // podlaha 35 Kč zajišťuje, že nájemník (35 + TENANT_LIVING_COST) vždy platí víc než vlastník bydlení,
   // i u vícepatrových domů, kde by se jinak nájem na byt propadl moc nízko
-  let fair = Math.max(35, Math.round(effectiveHousePrice(p) * FAIR_RENT_RATIO * bytovyDil / Math.max(1, numUnits/1)) );
+  const cena = typeof cenaDomu === 'number' ? cenaDomu : effectiveHousePrice(p);
+  const zaklad = cena * FAIR_RENT_RATIO * bytovyDil / Math.max(1, numUnits);
+  let fair = Math.round(Math.min(Math.max(NAJEM_MINIMUM, zaklad), zaklad * NAJEM_STROP_DOMU));
   if(hasUpgrade(p, 'ac')) fair = Math.round(fair * AC_RENT_BONUS); // klimatizace zvedne snesitelný nájem
   return fair;
 }
@@ -6228,6 +6276,37 @@ function ocistiSvet(){
   return vyhozeno;
 }
 
+// Strop nájmu (17.5) srazil férový nájem u levných domů s víc byty. Nájem nastavený podle
+// starého minima by pak byl nad tím, co nájemníci unesou (1,25× férovky), a ti by se přes
+// noc odstěhovali. Takové byty jednou snížíme na novou férovou cenu. Je to idempotentní —
+// když se to spustí na dvou zařízeních nebo znovu po sloučení světa, nic se nezdvojí.
+function prizpusobNajmyStropu(){
+  const zmeneno = {};
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p || p.useType !== 'rental' || !Array.isArray(p.units) || p.units.length < 2) return;
+    const fair = fairRentForHouse(p);
+    const max = Math.floor(fair * NAJEMNIK_TOLERANCE);
+    let zmena = false;
+    p.units.forEach(un => {
+      // Hráčům-nájemníkům nájem neměníme — ti se dohodli a platí, co mají v nájemní smlouvě.
+      if(!un || un.tenant || un.ownerOccupied || !(un.rentPrice > max)) return;
+      un.rentPrice = fair; stampUnit(un); zmena = true;
+    });
+    if(zmena){
+      stampHouse(p);
+      const kdo = houseDecider(p);
+      if(kdo) (zmeneno[kdo] = zmeneno[kdo] || []).push(p);
+    }
+  });
+  // Vlastník se to dozví — jinak by mu klesl příjem a nevěděl proč.
+  if(currentUser && zmeneno[currentUser.name] && !(world.users[currentUser.name] || {}).najemStropOznamen){
+    const domy = zmeneno[currentUser.name];
+    world.users[currentUser.name].najemStropOznamen = true;
+    setTimeout(() => safeCall(() => notifyPlayer('Úprava nájmů',
+      `Levné domy s víc byty vynášely víc, než odpovídá jejich hodnotě. U ${domy.length} ${sklonuj(domy.length, 'tvého domu', 'tvých domů', 'tvých domů')} jsme nájem snížili na novou férovou cenu, aby se nájemníci neodstěhovali.`)), 3000);
+  }
+}
+
 function migrateWorld(){
       // TVRDÁ NORMALIZACE: cokoliv z Firebase (chybějící pole, objekty místo polí, null) opravíme,
       // aby se dál nepracovalo s rozbitou strukturou (to je příčina visících "Načítám" obrazovek).
@@ -6238,6 +6317,7 @@ function migrateWorld(){
       if(!world.jobs || typeof world.jobs !== 'object' || Array.isArray(world.jobs)) world.jobs = {};
       if(!world.listings || typeof world.listings !== 'object' || Array.isArray(world.listings)) world.listings = {};
       safeCall(() => ocistiSvet());
+      safeCall(() => prizpusobNajmyStropu());
       const fresh = generateHouses();
       Object.keys(fresh).forEach(id => {
         if(!world.parcels[id]){
@@ -10977,11 +11057,15 @@ function renderSelected(id){
           has ? '' : ` (≈ ${Math.round(effectiveHousePrice(p) / stavebniMult(p) * VYLEPSENI_HODNOTA[k]).toLocaleString('cs-CZ')} Kč)`}${p.useType === 'rental' ? (() => {
           // Konkrétní koruny místo pouhých procent — Eva hlásila, že po zateplení „se nájem
           // nezměnil": 4 % ze 42 Kč je necelá dvě koruny a v zaokrouhlení to zanikne.
-          const ted = fairRentForHouse(p);
-          const bez = Math.round(ted / (1 + (has ? VYLEPSENI_HODNOTA[k] : 0)));
-          const s = has ? ` — férový nájem je díky němu ${ted} Kč/den místo ${bez} Kč`
-                        : ` — férový nájem ${ted} → ${Math.round(ted * (1 + VYLEPSENI_HODNOTA[k]))} Kč/den`;
-          return s;
+          const s_ = ferovyNajemS(p, k, true), bez = ferovyNajemS(p, k, false);
+          const bytu = asArray(p.units).filter(u => u && !u.ownerOccupied).length || 1;
+          if(s_ - bez < 0.5){
+            return bez <= NAJEM_MINIMUM * (hasUpgrade(p, 'ac') && k !== 'ac' ? AC_RENT_BONUS : 1)
+              ? ` — nájem to nezvedne: byty tu stojí na minimálním nájmu ${NAJEM_MINIMUM} Kč, na který hodnota domu ještě nedosáhla`
+              : ` — nájem se tím zvedne jen o haléře`;
+          }
+          return has ? ` — díky němu je férový nájem <b>${s_}</b> místo ${bez} Kč na byt (+${(s_ - bez) * bytu} Kč/den za dům)`
+                     : ` — férový nájem ${bez} → <b>${s_}</b> Kč na byt (+${(s_ - bez) * bytu} Kč/den za dům)`;
         })() : ''}.</p>` : ''}
         ${(() => {
           // Konkrétní čísla pro TENHLE dům. Bez nich hráč nepozná, jestli se 912 Kč
@@ -11013,6 +11097,9 @@ function renderSelected(id){
     const myShare = collectedTotal * (myPct/100);
     html += `<div class="card"><h3>🏘️ Pronájem — ${p.units.length} ${sklonuj(p.units.length, 'byt', 'byty', 'bytů')}</h3>
       <p>Reálný výběr: <b style="color:var(--gold)">${des(collectedTotal, 0)} Kč/den</b>${myPct>0?` · tvůj podíl (${des(myPct, 1)} %): <b style="color:var(--gold)">${des(myShare, 0)} Kč/den</b>`:''}</p>
+      <p style="font-size:0.92em;">Férový nájem: <b>${fair} Kč</b> na byt × ${p.units.length} = <b style="color:var(--gold)">${fair * p.units.length} Kč/den</b> za dům.</p>
+      ${fair <= Math.round(NAJEM_MINIMUM * (hasUpgrade(p, 'ac') ? AC_RENT_BONUS : 1)) && p.units.length > 1 ? `<p style="font-size:0.84em;color:var(--muted)">
+        Hodnota domu se dělí mezi ${p.units.length} byty, takže na byt vychází málo. Malé byty mají nájem trochu nad hodnotou domu (nejvýš o ${Math.round((NAJEM_STROP_DOMU-1)*100)} %) — na byt je to míň než u domu s jedním bytem, ale celý dům vynese víc.</p>` : ''}
       <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
       ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
     </div>`;
@@ -15135,6 +15222,16 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'17.5', datum:'2026-10-03', body:[
+    ['zmena','⚖️ Levné domy s víc byty už nevynáší dvaapůlkrát víc než ostatní. Minimální nájem 35 Kč na byt zůstává, ale celý dům nevynese víc než 1,3× toho, co odpovídá jeho hodnotě. Malé byty tak mají pořád vyšší výnos (jako ve skutečnosti), jen ne tolik.'],
+    ['info','Kde byl nájem nad tím, co by nájemníci po změně unesli, hra ho jednou snížila na novou férovou cenu — aby se nikdo neodstěhoval. Vlastníci dostanou oznámení.'],
+  ]},
+  { verze:'17.4', datum:'2026-10-03', body:[
+    ['oprava','Vylepšení domu ukazovala špatně, o kolik zvedla nájem — počítalo se jen procento z hodnoty. U domu, kde byty stojí na minimálním nájmu, karta tvrdila „42 místo 40", i když zateplení nájem nezvedlo vůbec, a u klimatizace naopak ukazovala jen korunu místo skutečných +20 %.'],
+    ['novinka','Každé vylepšení teď u pronájmu ukáže, co přinese v korunách: o kolik zvedne férový nájem na byt i za celý dům, kolik ušetří na opravách (rekonstrukce) a za kolik dní se vrátí.'],
+    ['novinka','Po instalaci vylepšení hra nabídne zvednout nájem v bytech na novou férovou cenu. Dřív se zvedla jen férová cena, ale nájem v bytech zůstal stejný — příjem se proto nezměnil.'],
+    ['zmena','U pronájmu je vidět férový nájem na byt i za celý dům. Dům s víc byty má nájem na byt nižší (hodnota se dělí), ale celkem vynese víc.'],
+  ]},
   { verze:'17.3', datum:'2026-10-03', body:[
     ['zmena','🌙 V noci ztmavne jen podklad mapy — domy, místa a kruhy zůstanou jasně vidět.'],
     ['novinka','ⓘ Legenda mapy: tlačítko vpravo dole nad ◎ vysvětlí všechny značky, barvy a kruhy.'],
@@ -17504,10 +17601,12 @@ async function installUpgrade(id, key){
   if(!(await showConfirm(`${up.icon} ${up.name} za ${cost.toLocaleString('cs-CZ')} Kč?\n\n${up.desc}`))) return;
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert('Nemáš dost peněz na vylepšení.'); return; }
+  const ferovyPred = fairRentForHouse(p, spoctiCenuDomu(p));
   me.balance -= cost;
   if(!p.upgrades) p.upgrades = {};
   p.upgrades[key] = true;
   stampHouse(p);
+  const ferovyPo = fairRentForHouse(p, spoctiCenuDomu(p));
   zapisDoDeniku('upgrade', `${up.icon} ${up.name} — dům ${domKratce(p)}`, -cost);
   addNews('rental', `${up.icon} ${currentUser.name} vylepšil dům ${domKratce(p)} — ${up.name}.`, p.id);
   playSound('success');
@@ -17515,7 +17614,23 @@ async function installUpgrade(id, key){
   // vyhodnotila až s novým dnem, takže po koupi dál visela „chci klimatizaci" (hlásil Jerry).
   safeCall(() => resPozadavky());
   saveWorld(); refreshAll();
-  showAlert(`${up.name} nainstalováno. Investice se ti postupně vrátí.`);
+  // Vylepšení zvedne FÉROVÝ nájem, ale nastavený nájem v bytech zůstával stejný — hráč pak
+  // neviděl žádný rozdíl v příjmu a měl pocit, že vylepšení k ničemu nejsou (Eva). Nabídneme
+  // rovnou zdražení bytů, které měly nájem nejvýš na staré férové ceně. Byty, kde bydlí
+  // jiný hráč, necháváme — tomu se nájem mění jen ručně.
+  const kZdrazeni = p.useType === 'rental' && ferovyPo > ferovyPred
+    ? asArray(p.units).filter(un => un && !un.ownerOccupied && !un.tenant && un.condition > 0 && (un.rentPrice || 0) <= ferovyPred)
+    : [];
+  if(kZdrazeni.length && await showConfirm(`${up.icon} ${up.name} — hotovo.\n\nFérový nájem tu stoupl z ${ferovyPred} na ${ferovyPo} Kč/den. ` +
+      `Zvednout nájem v ${kZdrazeni.length} ${sklonuj(kZdrazeni.length, 'bytě', 'bytech', 'bytech')} na ${ferovyPo} Kč? ` +
+      `(+${(ferovyPo - ferovyPred) * kZdrazeni.length} Kč/den za dům)\n\nNájemníci to unesou — je to pořád férová cena.`)){
+    kZdrazeni.forEach(un => { un.rentPrice = ferovyPo; stampUnit(un); });
+    stampHouse(p);
+    saveWorld(); refreshAll();
+    showToast(`Nájem zvednut na ${ferovyPo} Kč/den`);
+    return;
+  }
+  showAlert(`${up.icon} ${up.name} — hotovo. Investice se ti postupně vrátí.`);
 }
 
 async function repairUnit(id, idx){
