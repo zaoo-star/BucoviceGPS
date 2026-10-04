@@ -884,25 +884,27 @@
   body.vynosZap #mapZoomHint{ top:calc(env(safe-area-inset-top, 0px) + 156px) !important; }
 
   /* ===== ZNAČKA HRÁČE ===== */
-  .hracJa{ position:relative;width:56px;height:66px;pointer-events:auto; }
+  /* Značka hráče je jen ukazatel — nesmí chytat klepnutí, jinak zakrývá domy pod sebou. */
+  .hracIkonaObal, .hracIkonaObal *{ pointer-events:none !important; }
+  .hracJa{ position:relative;width:48px;height:58px; }
   .hracKolecko{
-    position:absolute;left:8px;top:8px;width:40px;height:40px;border-radius:50%;z-index:2;
-    display:flex;align-items:center;justify-content:center;font-size:23px;line-height:1;
+    position:absolute;left:7px;top:7px;width:34px;height:34px;border-radius:50%;z-index:2;
+    display:flex;align-items:center;justify-content:center;font-size:19px;line-height:1;
     background:#fff;border:3px solid var(--hb);
     box-shadow:0 0 0 2.5px rgba(255,255,255,0.95), 0 4px 12px rgba(0,0,0,0.5);
   }
   .hracPulz{
-    position:absolute;left:8px;top:8px;width:40px;height:40px;border-radius:50%;z-index:0;
+    position:absolute;left:7px;top:7px;width:34px;height:34px;border-radius:50%;z-index:0;
     background:var(--hb);opacity:0.45;animation:hracPulz 2.2s ease-out infinite;
   }
   @keyframes hracPulz{ 0%{ transform:scale(1);opacity:0.5; } 100%{ transform:scale(2.6);opacity:0; } }
   .hracStitek{
-    position:absolute;left:50%;top:50px;transform:translateX(-50%);z-index:3;white-space:nowrap;
+    position:absolute;left:50%;top:43px;transform:translateX(-50%);z-index:3;white-space:nowrap;
     background:rgba(15,17,21,0.92);color:#fff;border:1.5px solid var(--hb);
     font-size:10.5px;font-weight:800;letter-spacing:0.02em;padding:0 8px;border-radius:999px;line-height:15px;
     box-shadow:0 2px 6px rgba(0,0,0,0.45);
   }
-  .hracSipka{ position:absolute;left:0;top:0;width:56px;height:56px;z-index:1;transition:transform .4s ease; }
+  .hracSipka{ position:absolute;left:0;top:0;width:48px;height:48px;z-index:1;transition:transform .4s ease; }
   .hracSipka::before{
     content:'';position:absolute;left:50%;top:-3px;transform:translateX(-50%);
     border-left:8px solid transparent;border-right:8px solid transparent;border-bottom:13px solid var(--hb);
@@ -1294,7 +1296,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '18.7';
+const APP_VERSION = '18.8';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8869,8 +8871,8 @@ function hracIkona(){
   const b = currentUser ? barvaHrace(currentUser.name) : null;
   const barva = b ? b.hex : '#38bdf8';
   const sipka = hracSmer !== null ? `<div class="hracSipka" style="transform:rotate(${Math.round(hracSmer)}deg)"></div>` : '';
-  return L.divIcon({ className:'', iconSize:[56, 66], iconAnchor:[28, 28], tooltipAnchor:[0, -24],
-    html:`<div class="hracJa" style="--hb:${barva}">${sipka}<div class="hracPulz"></div><div class="hracKolecko">${avatarHtml(currentUser ? currentUser.name : '', av, 34)}</div><div class="hracStitek">Ty</div></div>` });
+  return L.divIcon({ className:'hracIkonaObal', iconSize:[48, 58], iconAnchor:[24, 24],
+    html:`<div class="hracJa" style="--hb:${barva}">${sipka}<div class="hracPulz"></div><div class="hracKolecko">${avatarHtml(currentUser ? currentUser.name : '', av, 28)}</div><div class="hracStitek">Ty</div></div>` });
 }
 function aktualizujHraceIkonu(pos){
   // Směr chůze z posledních dvou bodů — jen při skutečném pohybu, ať šipka neskáče od šumu GPS.
@@ -8891,9 +8893,10 @@ function aktualizujHraceIkonu(pos){
 }
 function updatePlayerMarker(pos, accuracy){
   if(!playerMarker){
-    playerMarker = L.marker([pos.lat, pos.lng], { icon: hracIkona(), zIndexOffset: 3000, keyboard:false })
-      .addTo(map).bindTooltip('Ty jsi tady');
-    playerMarker.on('click', () => map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 17)));
+    // interactive:false — značka je vidět navrchu, ale klepnutí jí PROPADNOU na domy pod ní.
+    // Dřív velká značka zakrývala domy, u kterých hráč stál, a nešlo na ně kliknout.
+    // Na vlastní polohu vrací mapu tlačítko ◎.
+    playerMarker = L.marker([pos.lat, pos.lng], { icon: hracIkona(), zIndexOffset: 3000, keyboard:false, interactive:false }).addTo(map);
     accuracyCircle = L.circle([pos.lat, pos.lng], {radius: accuracy, color:'#38bdf8', weight:1, fillOpacity:0.08}).addTo(map);
     reachCircle = L.circle([pos.lat, pos.lng], {radius: INTERACTION_RADIUS, color:'#4ade80', weight:2, dashArray:'5,5', fillOpacity:0.04}).addTo(map);
   } else {
@@ -16189,6 +16192,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'18.8', datum:'2026-10-03', body:[
+    ['oprava','Tvoje značka na mapě zakrývala domy, u kterých jsi stál, a nešlo na ně klepnout. Teď klepnutí značkou „propadnou" na dům pod ní a značka je o kousek menší. Zpátky na svou polohu tě vrátí tlačítko ◎.'],
+  ]},
   { verze:'18.7', datum:'2026-10-03', body:[
     ['zmena','🍺 Večerní postavy mají novou podobu: podnapilý týpek v mikině s kapucí a půllitrem, který se po mapě motá. Barva mikiny a odznak v rohu prozradí, kdo to je (🎨 sprejer, 🍺 parta, 🔨 vandal, 💰 zloděj).'],
   ]},
