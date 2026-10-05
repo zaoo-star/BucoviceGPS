@@ -1174,7 +1174,23 @@ function zavriDialog(){
 // Výběr klepnutím místo psaní čísla. Hra se dřív ptala „napiš číslo 1–6", což nový hráč
 // vůbec nepochopil — a u provozovny to byla první věc, se kterou se potkal.
 // `volby` = pole { popis, detail, hodnota }. Vrací hodnotu vybrané položky, nebo null.
-function showChoice(message, volby){
+// ===== FRONTA DIALOGŮ =====
+// Hra má jedno dialogové okno. Když se dřív otevřel druhý dialog, zatímco první byl ještě
+// na obrazovce (ranní uvítání + hlášení, oznámení o prodeji při rozepsané nabídce…), přepsal
+// mu text i tlačítka — první zpráva zmizela nepřečtená a akce, která na ni čekala, už nikdy
+// nepokračovala. Teď dialogy čekají ve frontě a ukazují se jeden po druhém.
+let dialogFronta = Promise.resolve();
+function doFronty(fn){
+  const p = dialogFronta.then(() => fn());
+  dialogFronta = p.catch(() => {});
+  return p;
+}
+function showChoice(message, volby){ return doFronty(() => _showChoice(message, volby)); }
+function showPrompt(message, defaultValue, numeric){ return doFronty(() => _showPrompt(message, defaultValue, numeric)); }
+function showConfirm(message){ return doFronty(() => _showConfirm(message)); }
+function showAlert(message){ return doFronty(() => _showAlert(message)); }
+
+function _showChoice(message, volby){
   return new Promise(resolve => {
     otevriDialog();
     const mm = document.getElementById('modalMessage');
@@ -1204,7 +1220,7 @@ function showChoice(message, volby){
   });
 }
 
-function showPrompt(message, defaultValue, numeric){
+function _showPrompt(message, defaultValue, numeric){
   return new Promise(resolve => {
     otevriDialog();
     { const vb = document.getElementById('modalVolby'); if(vb){ vb.innerHTML = ''; vb.style.display = 'none'; } }
@@ -1227,7 +1243,7 @@ function showPrompt(message, defaultValue, numeric){
   });
 }
 
-function showConfirm(message){
+function _showConfirm(message){
   return new Promise(resolve => {
     otevriDialog();
     { const vb = document.getElementById('modalVolby'); if(vb){ vb.innerHTML = ''; vb.style.display = 'none'; } }
@@ -1244,7 +1260,7 @@ function showConfirm(message){
 
 // Důležitá hláška — čeká na potvrzení tlačítkem. Dřív to byla mizející bublina (3,2 s),
 // takže delší text nikdo nestihl dočíst a hráč nevěděl, co se stalo ani co dělat dál.
-function showAlert(message){
+function _showAlert(message){
   return new Promise(resolve => {
     otevriDialog();
     { const vb = document.getElementById('modalVolby'); if(vb){ vb.innerHTML = ''; vb.style.display = 'none'; } }
@@ -1305,7 +1321,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '18.9';
+const APP_VERSION = '19.1';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -2303,21 +2319,46 @@ function notifyPlayer(title, body){
 // dvojnásobek nebo že mu někde stojí nový park.
 let cekaSerie = null;   // odměna za sérii, kterou má ukázat uvítací okno
 
+let uvitaniBezi = false;
 async function denniUvitani(){
+  if(uvitaniBezi) return;
+  uvitaniBezi = true;
+  try { return await denniUvitaniVnitrni(); } finally { uvitaniBezi = false; }
+}
+async function denniUvitaniVnitrni(){
   if(!currentUser) return;
   const u = world.users[currentUser.name];
   if(!u) return;
   const dnes = calendarDay();
   const serie = cekaSerie; cekaSerie = null;
   if(u.uvitaniDen === dnes){
-    // Uvítání dneska už bylo (jiné zařízení, restart appky) — sérii ale zamlčet nesmíme.
-    if(serie){ playSound('coin'); showAlert(`🔥 Série ${serie.streak}. den v řadě!\nOdměna +${serie.reward} Kč.`); }
+    // Uvítání dneska už bylo (jiné zařízení, restart appky) — sérii ale zamlčet nesmíme,
+    // a ani to, co se mezitím stalo (prodej na tržišti, vykradená provozovna).
+    const hl = asArray(u.hlaseni);
+    const casti = [];
+    if(serie) casti.push(`🔥 Série ${serie.streak}. den v řadě!\nOdměna +${serie.reward} Kč.`);
+    if(hl.length){ casti.push(`📬 Mezitím se stalo:\n` + hl.map(h => h.text).join('\n')); u.hlaseni = []; saveWorld(); }
+    if(casti.length){ if(serie) playSound('coin'); showAlert(casti.join('\n\n')); }
     return;
   }
   u.uvitaniDen = dnes;
+  safeCall(() => vyzvedniPlatby());
+  safeCall(() => vyhodnotVecer());   // ať je v uvítání i včerejší večer, i když tick ještě neproběhl
   saveWorld();
 
   const radky = [];
+  // Co se stalo, než jsi hru otevřel: výplata za včerejšek a hlášení (škody, prodeje).
+  const vcera = asArray(u.souhrny).find(sh => sh && sh.ts && dnes - calendarDay(new Date(sh.ts)) <= 1 && !sh.ukazano);
+  if(vcera && isFinite(vcera.vyplaceno)){
+    radky.push(`💰 Výplata za předchozí den: ${vcera.vyplaceno >= 0 ? '+' : '−'}${Math.abs(Math.round(vcera.vyplaceno)).toLocaleString('cs-CZ')} Kč` +
+      (vcera.najem ? ` (nájem ${Math.round(vcera.najem)} Kč)` : ''));
+    vcera.ukazano = true;
+  }
+  const hl = asArray(u.hlaseni);
+  if(hl.length){
+    radky.push(`🌙 Zatímco jsi nebyl ve hře:\n` + hl.map(h => h.text).join('\n'));
+    u.hlaseni = [];
+  }
   if(serie) radky.push(`🔥 Série ${serie.streak}. den v řadě — odměna +${serie.reward} Kč už je na účtu.` +
     (serie.streak < 7 ? `\nZítra to bude ${Math.round(streakReward(serie.streak + 1) * inflationMult())} Kč. Vynechaný den sérii vynuluje.` : ''));
   const ev = todaysCityEvent(world.day);
@@ -8463,6 +8504,15 @@ function skodaStrop(p, majitel){
 
 // Použije noční událost na KONKRÉTNÍ dům (vybraný podle toho, kudy večer šla postava).
 // typ: 'zlodej' → vykradená provozovna, jinak událost `ev` z NOCNI_UDALOSTI.
+// Hlášení pro ranní uvítání: co se stalo, než hráč otevřel hru. Telefonní oznámení
+// (notifyPlayer) dostane jen ten, kdo je povolil — většina hráčů se o škodě dozvěděla jen
+// z deníku nebo novin, pokud je vůbec otevřela.
+function hlaseniProHrace(u, text){
+  if(!u) return;
+  u.hlaseni = asArray(u.hlaseni);
+  u.hlaseni.push({ ts: Date.now(), text: String(text).slice(0, 200) });
+  if(u.hlaseni.length > 8) u.hlaseni = u.hlaseni.slice(-8);
+}
 function nocniUdalostNaDum(u, p, ev, typ){
   if(!u || !p) return;
   if(typ === 'zlodej' && maProvoz(p)){
@@ -8471,6 +8521,7 @@ function nocniUdalostNaDum(u, p, ev, typ){
     stampHouse(p);
     zapisDoDeniku('other', `🥷 Vykradená provozovna ${domKratce(p)} — zmizely zásoby (−${ubylo} %)`, null);
     addNews('rental', `🥷 ${u.name}: někdo večer vykradl provozovnu ${domKratce(p)}.`, p.id);
+    hlaseniProHrace(u, `🥷 Zloděj vykradl provozovnu ${nazevProvozu(p) ? '„' + nazevProvozu(p) + '" ' : ''}v domě ${domKratce(p)} — zásoby −${ubylo} %. Doplň je ve skladu.`);
     notifyPlayer('Vykradená provozovna', `${domLabel(p)} přišla o ${ubylo} % zásob.`);
     return;
   }
@@ -8500,6 +8551,8 @@ function nocniUdalostNaDum(u, p, ev, typ){
     ? ` (stav −${skoda} %, oprava ~${cenaOpravy} Kč${dnyNajmu ? ` = ${des(dnyNajmu, 1)} dne nájmu z tohohle domu` : ''})` : ''),
     poplatek ? -poplatek : null);
   addNews('rental', `${ev.emoji} ${u.name}: ${ev.text.toLowerCase()} Dům ${domKratce(p)}.`, p.id);
+  hlaseniProHrace(u, `${ev.emoji} ${ev.nazev} — ${domKratce(p)}. ${ev.text}` +
+    (skoda ? ` Stav bytu −${skoda} %, oprava asi ${cenaOpravy} Kč.` : '') + (poplatek ? ` Úklid stál ${poplatek} Kč.` : ''));
   notifyPlayer(ev.nazev, `${domLabel(p)}: ${ev.text}` +
     (skoda ? ` Stav bytu klesl o ${skoda} %, oprava vyjde asi na ${cenaOpravy} Kč.` : '') +
     (poplatek ? ` Úklid stál ${poplatek} Kč.` : ''));
@@ -16265,6 +16318,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'19.1', datum:'2026-10-04', body:[
+    ['oprava','Okna s hláškami už se nepřepisují. Když se objevila druhá zpráva, zatímco byla otevřená první (třeba ranní uvítání a do toho oznámení o prodeji), první zmizela nepřečtená. Teď se ukazují jedna po druhé.'],
+  ]},
+  { verze:'19.0', datum:'2026-10-04', body:[
+    ['novinka','🌙 Když otevřeš hru, uvítání ti řekne, co se stalo, zatímco jsi nebyl ve hře: rozbité okno, posprejovaná fasáda, vykradená provozovna, peníze za prodej na tržišti — a kolik ti přišlo za předchozí den. Dřív se to dalo zjistit jen z deníku nebo novin.'],
+    ['oprava','Noviny řadily zprávy pod „Dnes" a „Včera" na přeskáčku. Den se teď bere ze skutečného času zprávy a starší dny mají místo čísla datum (např. „sobota 3. 10.").'],
+  ]},
   { verze:'18.9', datum:'2026-10-03', body:[
     ['novinka','✏️ Provozovny jdou pojmenovat! V detailu domu klepni u provozovny na „Pojmenovat" — může to ten, kdo o domě rozhoduje. Název uvidí všichni: v detailu domu, v Mých nemovitostech, v kartě u domu, v novinách a jako cedulku pod budovou na mapě (při přiblížení). Měnit ho jde jednou denně.'],
   ]},
@@ -16863,8 +16923,17 @@ function renderNews(){
   if(countPlayers() <= 1) html += `<p style="font-size:0.82em;color:var(--muted);margin:2px 0 4px;">Až budete hrát víc hráčů, uvidíš tu i jejich akce.</p>`;
 
   // Časová osa po dnech: nadpis dne jednou, u zprávy už jen „před 2 h".
-  const dnes = world.day || 0;
-  const nazevDne = d => !d ? 'Dřív' : (d === dnes ? 'Dnes' : (d === dnes - 1 ? 'Včera' : `Den ${d}`));
+  // Den se bere ze skutečného času zprávy, ne z herního dne zapsaného u ní. Zpráva vzniklá
+  // na zařízení, které ještě nepřeplo den, měla starý den — a noviny pak ukazovaly
+  // „Dnes, Včera, Dnes, Včera" na přeskáčku (hlášeno ze hry).
+  const dnesKal = calendarDay();
+  const nazevDne = n => {
+    if(!n.ts) return n.day ? `Den ${n.day}` : 'Dřív';
+    const rozdil = dnesKal - calendarDay(new Date(n.ts));
+    if(rozdil <= 0) return 'Dnes';
+    if(rozdil === 1) return 'Včera';
+    return new Date(n.ts).toLocaleDateString('cs-CZ', { weekday:'long', day:'numeric', month:'numeric' });
+  };
   const vybrane = news.filter(n => n && (novinyFiltr === 'vse' || kategorie(n.type) === novinyFiltr));
   if(!vybrane.length) html += `<div class="empty-state">V téhle kategorii zatím nic není.</div>`;
   let posledniDen = null;
@@ -16875,7 +16944,7 @@ function renderNews(){
     const dum = (typeof n.kde === 'string' && world.parcels[n.kde]) ? n.kde : (safeCall(() => domZeZpravy(n.text)) || '');
     const bod = (n.kde && typeof n.kde === 'object' && isFinite(n.kde.lat)) ? n.kde : null;
     const klik = !!(dum || bod);
-    const den = nazevDne(n.day);
+    const den = nazevDne(n);
     if(den !== posledniDen){ html += `<div class="novDen">${den}</div>`; posledniDen = den; }
     // Úvodní emoji zprávy přesuneme do kroužku vlevo — text pak začíná zarovnaně.
     const text = String(n.text || '');
@@ -19400,6 +19469,7 @@ function vyzvedniPlatby(){
     celkem += g.amount;
     vyzvednute.push(g.id);
     zapisDoDeniku(g.amount >= 0 ? 'sell' : 'other', `${g.note || 'Platba'}${g.from ? ' (' + g.from + ')' : ''}`, g.amount);
+    hlaseniProHrace(u, `${g.amount >= 0 ? '💰' : '💸'} ${g.note || 'Platba'}: ${g.amount >= 0 ? '+' : '−'}${Math.abs(g.amount).toLocaleString('cs-CZ')} Kč`);
     if(Math.abs(g.amount) >= 1) notifyPlayer(g.amount >= 0 ? 'Přišly peníze' : 'Strženo z účtu',
       `${g.amount >= 0 ? '+' : '−'}${Math.abs(g.amount).toLocaleString('cs-CZ')} Kč — ${g.note || g.from}`);
   });
