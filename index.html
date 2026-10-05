@@ -930,6 +930,15 @@
   .postavaOdznak{ position:absolute;left:-4px;top:-2px;font-size:13px;line-height:1;
     background:rgba(15,17,21,0.88);border:1.5px solid #a855f7;border-radius:50%;padding:2px; }
   @media (prefers-reduced-motion: reduce){ .postavaZnacka{ animation:none; } }
+
+  /* Cedulka s názvem provozovny pod budovou */
+  .provozCedulka{
+    position:absolute;left:50%;top:100%;transform:translate(-50%, 1px);white-space:nowrap;line-height:1.3;
+    font-size:9.5px;font-weight:700;color:#fff;background:rgba(15,17,21,0.85);border:1px solid rgba(255,255,255,0.25);
+    padding:0 5px;border-radius:6px;pointer-events:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;
+  }
+  .leaflet-container .provozCedulka{ display:none; }
+  .leaflet-container.zblizka .provozCedulka{ display:block; }
 </style>
 </head>
 <body>
@@ -1296,7 +1305,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '18.8';
+const APP_VERSION = '18.9';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6317,6 +6326,10 @@ function ocistiSvet(){
     if(!bezpecnyKlic(k) || !p || typeof p !== 'object'){ vyhod(world.parcels, k); return; }
     p.id = k;
     ocistiVlastniky(p.owners);
+    if(p.provoz && typeof p.provoz === 'object' && p.provoz.nazev != null){
+      p.provoz.nazev = ocistiNazevProvozu(p.provoz.nazev);
+      if(!p.provoz.nazev) delete p.provoz.nazev;
+    }
     asArray(p.units).forEach(un => {
       if(!un) return;
       if(un.tenant != null && !bezpecnyKlic(un.tenant)) un.tenant = null;
@@ -9823,7 +9836,7 @@ function iconKey(p){
           dosah ? 1 : 0, recommendedIds[p.id] ? 1 : 0, b ? b.hex : '-',
           Object.keys(p.upgrades || {}).filter(k => p.upgrades[k]).sort().join(''), ulicniMult(p) > 1 ? 1 : 0,
           pocetPater(p), houseHasOwner(p) ? 1 : 0, p.useType || '-',
-          vynosRezim ? Math.round(vynosDomu(p) || 0) : '-'].join('|');
+          vynosRezim ? Math.round(vynosDomu(p) || 0) : '-', nazevProvozu(p)].join('|');
 }
 
 
@@ -10871,6 +10884,59 @@ function vecerKartaHtml(){
   </div>`;
 }
 
+
+// ===== NÁZVY PROVOZOVEN =====
+// Provozovnu pojmenuje ten, kdo o domě rozhoduje. Název se ukáže v detailu domu, v Mých
+// nemovitostech, v kartě u domu, v novinách a jako cedulka pod budovou na mapě.
+// Měnit jde jednou denně (ať se to nedá zneužít na spam do novin), správce ho může smazat.
+const PROVOZ_NAZEV_MAX = 28;
+function ocistiNazevProvozu(t){
+  return String(t == null ? '' : t).replace(/[<>`"'&\\{}\[\]]/g, '').replace(/[\u0000-\u001f\u007f]/g, '')
+    .replace(/\s+/g, ' ').trim().slice(0, PROVOZ_NAZEV_MAX);
+}
+function nazevProvozu(p){
+  const n = p && p.provoz && p.provoz.nazev;
+  return typeof n === 'string' && n.trim() ? n : '';
+}
+// „Kavárna U Kometky" nebo jen typ, když jméno nemá
+function jmenoProvozu(p){
+  if(!maProvoz(p)) return '';
+  const t = PROVOZ_TYPY[p.provoz.typ] || {};
+  return nazevProvozu(p) ? `„${nazevProvozu(p)}"` : (t.name || 'Provozovna');
+}
+async function pojmenovatProvozovnu(id){
+  const p = world.parcels[id];
+  if(!currentUser || !p || !maProvoz(p)) return;
+  const typ = PROVOZ_TYPY[p.provoz.typ] || { name:'Provozovna', emoji:'🏪' };
+  if(!iAmDecider(p) && !isAdmin){ showAlert('Pojmenovat provozovnu může jen ten, kdo o domě rozhoduje (víc než 50 %).'); return; }
+  if(!isAdmin && nazevProvozu(p) && p.provoz.nazevDen === calendarDay()){
+    showAlert('Název jde měnit jednou denně. Zkus to zase zítra.'); return;
+  }
+  const vstup = await showPrompt(`Jak se bude ${typ.name.toLowerCase()} jmenovat? (2–${PROVOZ_NAZEV_MAX} znaků)`, nazevProvozu(p) || '');
+  if(vstup === null || vstup === undefined) return;
+  const n = ocistiNazevProvozu(vstup);
+  if(n.length < 2){ showAlert(`Název musí mít aspoň 2 znaky (nejvýš ${PROVOZ_NAZEV_MAX}).`); return; }
+  if(n === nazevProvozu(p)) return;
+  const prvni = !nazevProvozu(p);
+  p.provoz.nazev = n;
+  p.provoz.nazevKdo = currentUser.name;
+  p.provoz.nazevDen = calendarDay();
+  stampHouse(p);
+  addNews('invest', prvni
+    ? `${typ.emoji} ${currentUser.name} pojmenoval ${typ.name.toLowerCase()} v domě ${domKratce(p)}: „${n}"`
+    : `${typ.emoji} ${typ.name} v domě ${domKratce(p)} se teď jmenuje „${n}"`, p.id);
+  zapisDoDeniku('other', `${typ.emoji} Provozovna pojmenována: „${n}"`, null);
+  saveWorld(); refreshAll();
+  showToast(`${typ.emoji} „${n}"`);
+}
+async function smazatNazevProvozu(id){
+  const p = world.parcels[id];
+  if(!isAdmin || !p || !maProvoz(p) || !nazevProvozu(p)) return;
+  if(!(await showConfirm(`Smazat název „${nazevProvozu(p)}"?`))) return;
+  delete p.provoz.nazev; delete p.provoz.nazevKdo;
+  stampHouse(p); saveWorld(); refreshAll();
+}
+
 // ===== BARVY HRÁČŮ =====
 // Každý hráč má svou barvu a jeho domy jsou v ní na mapě vidět — svoje i cizí. Mapa tím
 // ukáže, kdo kterou část města drží. Barvy jsou vybrané tak, aby se daly rozlišit i vedle
@@ -11000,6 +11066,7 @@ function iconFor(p){
   const b = allBroken ? null : barvaDomu(p);
   const vychozi = allBroken ? '#f87171' : (p.useType === 'rental' || provoz ? '#38bdf8' : '#4ade80');
   const vyn = vynosRezim ? vynosDomu(p) : null;
+  const cedulka = provoz && nazevProvozu(p) ? `<span class="provozCedulka">${escapeHtml(nazevProvozu(p))}</span>` : '';
   const d = dumSvg({
     patra, fasada: vynosRezim ? barvaVynosu(vyn) : (b ? b.hex : vychozi),
     stitek: vynosRezim && vyn !== null ? `${Math.round(vyn)} %` : '',
@@ -11009,7 +11076,7 @@ function iconFor(p){
     upg: ikonyVylepseni(p)
   });
   // Kotva dole uprostřed — dům „stojí" na svém místě na mapě, místo aby se kolem něj vznášel.
-  return L.divIcon({ html:`<div class="${cls}" style="width:${d.w}px;height:${d.h}px;">${d.html}</div>`,
+  return L.divIcon({ html:`<div class="${cls}" style="width:${d.w}px;height:${d.h}px;">${d.html}${cedulka}</div>`,
     className:'', iconSize:[d.w, d.h], iconAnchor:[d.w / 2, d.h - 2], tooltipAnchor:[0, -d.h + 4], popupAnchor:[0, -d.h + 4] });
 }
 
@@ -11122,6 +11189,8 @@ function initMap(){
   naMe.addTo(map);
   if(map.attributionControl) map.attributionControl.setPosition('bottomleft');
   map.on('zoomend', () => safeCall(() => rozprostriZnacky()));
+  const cedulky = () => map.getContainer().classList.toggle('zblizka', map.getZoom() >= 17);
+  map.on('zoomend', cedulky); cedulky();
   setInterval(() => safeCall(() => rozprostriZnacky()), 4000);   // značky přibývají průběžně
   setInterval(() => safeCall(() => renderPostavy()), 5000);       // postavy se večer pohybují
   safeCall(() => pripravDenNocNaMape());
@@ -11640,7 +11709,7 @@ function renderSelected(id){
   const free = houseFreePct(p);
   const owned = houseHasOwner(p);
 
-  let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>`;
+  let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>${nazevProvozu(p) ? `<p style="margin:-2px 0 4px;font-weight:700;color:var(--gold);">${(PROVOZ_TYPY[p.provoz.typ] || {}).emoji || '🏪'} ${escapeHtml(jmenoProvozu(p))}</p>` : ''}`;
   html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
   html += `<p style="font-size:0.92em;color:var(--muted)">${typDomu(pocetPater(p)).ikona} ${typDomu(pocetPater(p)).nazev} · ${p.levels||1} ${sklonuj(p.levels||1, 'patro', 'patra', 'pater')}${
     pristavebNavic(p) ? ` + ${pristavebNavic(p)} ${pristavebNavic(p)===1?'přístavba':'přístavby'}` : ''} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(houseMarketPricePerPercent(p))} Kč</p>`;
@@ -11687,7 +11756,11 @@ function renderSelected(id){
     const zasobyDenne = Math.round(plne * PROVOZ_ZASOBY_PODIL);
     const cisteDenne = plne - zasobyDenne;
     html += `<div class="card" style="border-left:3px solid var(--accent2);">
-      <h3>${typ.emoji} ${typ.name}${p.provoz.prizemi ? ' <span style="font-weight:400;font-size:0.8em;color:var(--muted)">v přízemí</span>' : ''}</h3>
+      <h3>${typ.emoji} ${nazevProvozu(p) ? escapeHtml(jmenoProvozu(p)) + ` <span style="font-weight:400;font-size:0.8em;color:var(--muted)">${typ.name.toLowerCase()}</span>` : typ.name}${p.provoz.prizemi ? ' <span style="font-weight:400;font-size:0.8em;color:var(--muted)">v přízemí</span>' : ''}</h3>
+      ${iAmDecider(p) || isAdmin ? `<div class="row" style="gap:6px;margin:2px 0 6px;">
+        <button class="secondary" style="flex:0 1 auto;min-height:34px;font-size:0.85em;" onclick="pojmenovatProvozovnu('${p.id}')">✏️ ${nazevProvozu(p) ? 'Přejmenovat' : 'Pojmenovat'}</button>
+        ${isAdmin && nazevProvozu(p) ? `<button class="danger" style="flex:0 1 auto;min-height:34px;font-size:0.85em;" onclick="smazatNazevProvozu('${p.id}')">Smazat název</button>` : ''}
+      </div>` : ''}
       ${p.provoz.prizemi ? `<p style="font-size:0.86em;color:var(--muted);margin:2px 0;">Obchod zabírá přízemí, v ${pocetPater(p) - 1 === 1 ? 'patře nad ním je byt' : `${pocetPater(p) - 1} patrech nad ním jsou byty`}. Přízemí je komerčně nejcennější patro, proto vydělá ${Math.round(provozPodil(p)*100)} % toho, co provozovna přes celý dům.</p>` : ''}
       <p style="font-size:0.88em;color:var(--muted);margin:2px 0;">${typ.popis}</p>
       <p style="margin:4px 0;">Poptávka v okolí: <b style="color:${pop.index>=1.1?'var(--accent)':(pop.index>=0.8?'var(--gold)':'var(--danger)')}">${pop.popis}</b>
@@ -12522,7 +12595,7 @@ function renderMine(){
       const typ = PROVOZ_TYPY[p.provoz.typ];
       const plny = provozPlnyVynos(p);
       const barva = d.zasoby > 60 ? 'var(--accent)' : d.zasoby > 25 ? 'var(--gold)' : 'var(--danger)';
-      detail += `<p class="mineSek">${typ.emoji} ${typ.name}${p.provoz.prizemi ? ' v přízemí' : ''}</p>
+      detail += `<p class="mineSek">${typ.emoji} ${typ.name}${nazevProvozu(p) ? ' ' + escapeHtml(jmenoProvozu(p)) : ''}${p.provoz.prizemi ? ' v přízemí' : ''}</p>
         <p>Poptávka <b>${poptavkaProMisto(p, p.provoz.typ).popis}</b></p>
         ${(() => { const vk = provozVykon(p);
           const b = vk.mult >= 1.1 ? 'var(--accent)' : vk.mult >= 0.9 ? 'var(--muted)' : 'var(--danger)';
@@ -12584,7 +12657,7 @@ function renderMine(){
     return `<details class="mineDum" data-id="${p.id}"${mineOtevrene.has(p.id) ? ' open' : ''} ontoggle="mineToggle(this)"${d.problemy.length ? ' data-problem="1"' : ''}>
       <summary>
         <span class="mineIko">${ikona}</span>
-        <span class="mineJm"><b>${domLabel(p)}</b><br>
+        <span class="mineJm"><b>${nazevProvozu(p) ? escapeHtml(jmenoProvozu(p)) : domLabel(p)}</b>${nazevProvozu(p) ? ` <span style="font-size:0.8em;color:var(--muted);">${domLabel(p)}</span>` : ''}<br>
           <span style="font-size:0.82em;color:var(--muted);">${des(d.pct, 0)} %${iDecide ? ' 👑' : ''}${
             p.useType === 'rental' && d.byty.length ? ` · obsazeno ${d.obsazene.length + d.mojeByty.length}/${d.byty.length}` : ''}${
             d.provoz ? ` · zásoby ${d.zasoby} %` : ''}${d.problemy.length ? ' · <span style="color:var(--orange)">⚠️</span>' : ''}</span></span>
@@ -14691,7 +14764,7 @@ function renderDaily(){
       ${moje.map(x => {
         const chybi = Math.max(0, 100 - Math.round(x.provoz.zasoby ?? 100));
         const t = PROVOZ_TYPY[x.provoz.typ];
-        return chybi < 1 ? '' : `<p style="font-size:0.86em;margin:1px 0;">${t ? t.emoji : '🏪'} ${domKratce(x)} <span style="color:var(--muted);">— chybí ${chybi} % ${zboziNazev(x, '2')}</span></p>`;
+        return chybi < 1 ? '' : `<p style="font-size:0.86em;margin:1px 0;">${t ? t.emoji : '🏪'} ${nazevProvozu(x) ? escapeHtml(jmenoProvozu(x)) + ', ' : ''}${domKratce(x)} <span style="color:var(--muted);">— chybí ${chybi} % ${zboziNazev(x, '2')}</span></p>`;
       }).join('')}
       <p style="font-size:0.8em;color:var(--muted);margin:6px 0 0;">${d !== null ? `🧭 Sklad ${kudyText(SKLAD, d)} · ` : ''}${zaBod} Kč za 1 % · dovoz na místo +${Math.round(ROZVOZ_PRIRAZKA*100)} %</p>
       <div class="row" style="margin-top:6px;">
@@ -16192,6 +16265,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'18.9', datum:'2026-10-03', body:[
+    ['novinka','✏️ Provozovny jdou pojmenovat! V detailu domu klepni u provozovny na „Pojmenovat" — může to ten, kdo o domě rozhoduje. Název uvidí všichni: v detailu domu, v Mých nemovitostech, v kartě u domu, v novinách a jako cedulku pod budovou na mapě (při přiblížení). Měnit ho jde jednou denně.'],
+  ]},
   { verze:'18.8', datum:'2026-10-03', body:[
     ['oprava','Tvoje značka na mapě zakrývala domy, u kterých jsi stál, a nešlo na ně klepnout. Teď klepnutí značkou „propadnou" na dům pod ní a značka je o kousek menší. Zpátky na svou polohu tě vrátí tlačítko ◎.'],
   ]},
@@ -19586,7 +19662,7 @@ function kontextKarta(){
   const ikona = maProvoz(nej) ? (PROVOZ_TYPY[nej.provoz.typ] || {}).emoji || '🏪'
     : (nej.useType === 'rental' ? '🏘️' : (houseHasOwner(nej) ? '🏠' : '🏚️'));
   setHtml(el, `<span class="kkIkona">${ikona}</span>
-    <div class="kkText"><div class="kkNazev">${escapeHtml(domLabel(nej))}</div>
+    <div class="kkText"><div class="kkNazev">${nazevProvozu(nej) ? escapeHtml(jmenoProvozu(nej)) + ' · ' : ''}${escapeHtml(domLabel(nej))}</div>
       <div class="kkPopis">${escapeHtml(stav + ulTxt)}</div></div>
     <button onclick="selectParcel('${nej.id}')">Otevřít</button>
     <button class="kkZavrit" aria-label="Skrýt" onclick="kontextSkryto='${nej.id}';kontextKarta()">✕</button>`);
