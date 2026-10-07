@@ -958,7 +958,8 @@
   .leaflet-container.zblizka18 .domSvg .pUpg{ display:block; }
   /* Cedulka provozovny nad střechou, ať ji nezakryje tvoje značka, když stojíš u svého domu */
   .provozCedulka{ top:auto;bottom:100%;transform:translate(-50%, -3px); }
-  .leaflet-container.zblizka18 .domSvg .pUpg ~ .provozCedulka{ transform:translate(-50%, -14px); }
+  .leaflet-container.zblizka18 .domSvg .pUpg ~ .provozCedulka{ transform:translate(-50%, -12px); }
+  .parcelMarker.domSvg .provozCedulka{ bottom:calc(100% - 4px); }
 </style>
 </head>
 <body>
@@ -1134,8 +1135,8 @@
           <div id="chatNewBadge" onclick="scrollChatToBottom()" style="display:none;position:absolute;left:50%;transform:translateX(-50%);bottom:8px;background:var(--accent);color:#08130a;padding:5px 12px;border-radius:14px;font-size:0.85em;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.4);z-index:5;">↓ nové zprávy</div>
         </div>
         <div id="chatReplyBar" style="display:none;align-items:center;background:var(--panel2);border-left:3px solid var(--accent2);border-radius:6px;padding:4px 6px;margin-bottom:6px;"></div>
-        <div class="row" style="gap:6px;">
-          <input id="chatInput" type="text" maxlength="200" placeholder="Napiš zprávu..." style="flex:1 1 auto;min-width:0;" onkeydown="if(event.key==='Enter')sendChat()">
+        <div class="row" style="gap:6px;flex-wrap:nowrap;align-items:stretch;">
+          <input id="chatInput" type="text" maxlength="200" placeholder="Napiš zprávu..." style="flex:1 1 auto;min-width:0;width:auto;margin:0;" onkeydown="if(event.key==='Enter')sendChat()">
           <button onclick="sendChat()" style="flex:0 0 auto;padding-left:18px;padding-right:18px;" aria-label="Odeslat">➤</button>
         </div>
       </div>
@@ -1341,7 +1342,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '19.6';
+const APP_VERSION = '19.8';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -5265,15 +5266,35 @@ const PROVOZ_TYPY = {
                 popis:'Nejvyšší výnos, nejvyšší nároky na místo i suroviny.' },
   fitko:      { name:'Fitness',      emoji:'🏋️', vynos:1.20, radius:450, investice:1.25,
                 zbozi:'vybavení', zboziPopis:'opotřebené stroje, činky a servis',
-                popis:'Velký spád, ale drahé stroje a hodně citlivé na konkurenci.' }
+                popis:'Velký spád, ale drahé stroje a hodně citlivé na konkurenci.' },
+  // Nápady od Jerryho (v. 19.8). `vahaObyv` / `vahaRuch` říkají, jak moc obor žije z lidí,
+  // kteří bydlí kolem, a jak moc z ruchu (místa zájmu, firmy): zahradnictví potřebuje
+  // rodinné domy se zahradou, klub a kino centrum. `minPater` — bowling ani kino se do
+  // přízemí rodinného domku nevejdou.
+  zahradnictvi:{ name:'Zahradnictví', emoji:'🌱', vynos:1.00, radius:500, investice:0.95,
+                zbozi:'sazenice', zboziPopis:'sazenice, substráty a hnojiva',
+                vahaObyv:1.15, vahaRuch:-0.6, jenRodinne:true,
+                popis:'Žije z rodinných domů se zahradou. V rušném centru mezi činžáky se mu nedaří.' },
+  disco:      { name:'Disco klub',   emoji:'🕺', vynos:1.35, radius:700, investice:1.30,
+                zbozi:'nápoje', zboziPopis:'nápoje, led a světla na parket',
+                vahaObyv:0.5, vahaRuch:1.8,
+                popis:'Lidi se sjedou z daleka, ale jen do centra. Na okraji města nevydělá.' },
+  bowling:    { name:'Bowling',      emoji:'🎳', vynos:1.25, radius:650, investice:1.40, minPater:2,
+                zbozi:'vybavení', zboziPopis:'koule, boty a servis drah',
+                vahaObyv:0.8, vahaRuch:1.3,
+                popis:'Velký spád a stálí hráči. Potřebuje aspoň dvoupatrový dům.' },
+  kino:       { name:'Kino',         emoji:'🎬', vynos:1.30, radius:800, investice:1.50, minPater:2,
+                zbozi:'zásoby', zboziPopis:'popcorn, nápoje a licence na filmy',
+                vahaObyv:0.7, vahaRuch:1.6,
+                popis:'Spád přes celé město, nejdražší zařízení. Potřebuje aspoň dvoupatrový dům.' }
 };
 
 // Název toho, co provozovna spotřebovává (pro texty v detailu a dialozích).
 function zboziNazev(p, pad){
   const t = p && p.provoz ? PROVOZ_TYPY[p.provoz.typ] : null;
   const n = (t && t.zbozi) || 'zásoby';
-  if(pad === '2') return { 'zboží':'zboží', 'suroviny':'surovin', 'materiál':'materiálu', 'vybavení':'vybavení' }[n] || 'zásob';
-  if(pad === '4') return { 'zboží':'zboží', 'suroviny':'suroviny', 'materiál':'materiál', 'vybavení':'vybavení' }[n] || 'zásoby';
+  if(pad === '2') return { 'zboží':'zboží', 'suroviny':'surovin', 'materiál':'materiálu', 'vybavení':'vybavení', 'sazenice':'sazenic', 'nápoje':'nápojů' }[n] || 'zásob';
+  if(pad === '4') return { 'zboží':'zboží', 'suroviny':'suroviny', 'materiál':'materiál', 'vybavení':'vybavení', 'sazenice':'sazenice', 'nápoje':'nápoje' }[n] || 'zásoby';
   return n;
 }
 
@@ -5335,6 +5356,7 @@ function poptavkaVypocet(p, typId){
     if(!q || q === p) return;
     if(Math.abs(q.lat - p.lat) > R/111000 * 1.5) return;   // hrubý předfiltr kvůli výkonu
     if(!vOkoli(q)) return;
+    if(typ.jenRodinne && (q.levels || 1) > 2) return;   // zahradnictví: jen domy se zahradou
     obyvatel += asArray(q.units).length || (q.levels || 1);
   });
 
@@ -5353,7 +5375,7 @@ function poptavkaVypocet(p, typId){
 
   // Měřítka jsou nastavená tak, aby se centrum a okraj od sebe opravdu lišily.
   // Dřív se strop vyčerpal skoro všude a poptávka vycházela stejně dobrá kdekoliv.
-  const zaklad = Math.min(1.00, obyvatel / 120) + Math.min(0.50, ruch / 25);
+  const zaklad = Math.max(0, Math.min(1.00, obyvatel / 120) * (typ.vahaObyv ?? 1) + Math.min(0.50, ruch / 25) * (typ.vahaRuch ?? 1));
   const postih = 1 / (1 + konkurence * 0.55);
   const lok = localEventFor(p);
   const udalost = lok ? (lok.ev.localRentMult || 1) : 1;
@@ -5536,6 +5558,9 @@ function provozVykon(p){
   const t = p.provoz.typ;
   if(prsi && ['kavarna','restaurace','pekarna'].includes(t)){ mult *= 1.15; vlivy.push('🌧️ lidé se schovávají uvnitř'); }
   if(prsi && ['fitko','kadernictvi'].includes(t)){ mult *= 0.88; vlivy.push('🌧️ v dešti se nikomu nechce'); }
+  if(prsi && ['kino','bowling'].includes(t)){ mult *= 1.15; vlivy.push('🌧️ v dešti lidi míří dovnitř'); }
+  if(prsi && t === 'zahradnictvi'){ mult *= 0.85; vlivy.push('🌧️ v dešti se nesází'); }
+  if(hezky && t === 'zahradnictvi'){ mult *= 1.15; vlivy.push('☀️ hezky, lidé pracují na zahradě'); }
   if(hezky && ['fitko','vecerka'].includes(t)){ mult *= 1.1; vlivy.push('☀️ hezky, lidé jsou venku'); }
   // městská událost
   const ev = todaysCityEvent(world.day);
@@ -11137,7 +11162,7 @@ async function smazatNazevProvozu(id){
 // mobilu sekala. Vykreslují se jen domy na obrazovce a jen při přiblížení.
 let PUDORYSY = {};
 let pudorysyStav = 'nic';     // nic | stahuji | hotovo | chyba
-const PUDORYSY_KLIC = 'bp_pudorysy_v1';
+const PUDORYSY_KLIC = 'bp_pudorysy_v2';   // v2: i domy, jejichž bod leží těsně mimo budovu
 const PUDORYSY_ZOOM = 16;
 function nactiPudorysyZPameti(){
   try {
@@ -11146,6 +11171,19 @@ function nactiPudorysyZPameti(){
       PUDORYSY = x.data; pudorysyStav = 'hotovo';
     }
   } catch(e){}
+}
+// Vzdálenost bodu od obrysu budovy v metrech (rovinná aproximace — na pár desítek metrů stačí).
+function vzdalenostOdPolygonu(lat, lng, poly){
+  const ky = 111320, kx = 111320 * Math.cos(lat * Math.PI / 180);
+  let nej = Infinity;
+  for(let i = 0, j = poly.length - 1; i < poly.length; j = i++){
+    const ax = (poly[j][1] - lng) * kx, ay = (poly[j][0] - lat) * ky;
+    const bx = (poly[i][1] - lng) * kx, by = (poly[i][0] - lat) * ky;
+    const dx = bx - ax, dy = by - ay;
+    const t = Math.max(0, Math.min(1, -(ax * dx + ay * dy) / ((dx * dx + dy * dy) || 1)));
+    nej = Math.min(nej, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return nej;
 }
 function bodVPolygonu(lat, lng, poly){
   let uvnitr = false;
@@ -11176,6 +11214,7 @@ async function stahniPudorysy(){
       if(!res.ok) continue;
       const data = await res.json();
       const nove = {}, plochy = {};
+      const vsechny = [];   // pro druhé kolo — domy, jejichž bod leží těsně vedle budovy
       ((data && data.elements) || []).forEach(el => {
         const g = el.geometry;
         if(!Array.isArray(g) || g.length < 4) return;
@@ -11185,6 +11224,7 @@ async function stahniPudorysy(){
         let ps2 = 90, pn = -90, pw = 180, pe = -180;
         poly.forEach(([la, lo]) => { ps2 = Math.min(ps2, la); pn = Math.max(pn, la); pw = Math.min(pw, lo); pe = Math.max(pe, lo); });
         const plocha = (pn - ps2) * (pe - pw);
+        vsechny.push({ poly, s: ps2, n: pn, w: pw, e: pe });
         for(let a = Math.floor(ps2 * 500); a <= Math.floor(pn * 500); a++){
           for(let b = Math.floor(pw * 330); b <= Math.floor(pe * 330); b++){
             (mrizka[a + ':' + b] || []).forEach(p => {
@@ -11195,6 +11235,24 @@ async function stahniPudorysy(){
             });
           }
         }
+      });
+      // Druhé kolo: bod domu ve hře je těžiště z OpenStreetMap a u budov do L nebo do U leží
+      // mimo samotnou budovu (náměstí Vítězství 151 tak zůstal bez půdorysu). Takovým domům
+      // přiřadíme nejbližší budovu do 12 m.
+      const mrizkaBudov = {};
+      vsechny.forEach(b => {
+        for(let a = Math.floor((b.s - 0.0002) * 500); a <= Math.floor((b.n + 0.0002) * 500); a++)
+          for(let c = Math.floor((b.w - 0.0003) * 330); c <= Math.floor((b.e + 0.0003) * 330); c++)
+            (mrizkaBudov[a + ':' + c] = mrizkaBudov[a + ':' + c] || []).push(b);
+      });
+      ps.forEach(p => {
+        if(nove[p.id]) return;
+        let nej = null, nejD = 12;
+        (mrizkaBudov[bunka(p.lat, p.lng)] || []).forEach(b => {
+          const d = vzdalenostOdPolygonu(p.lat, p.lng, b.poly);
+          if(d < nejD){ nejD = d; nej = b.poly; }
+        });
+        if(nej) nove[p.id] = nej;
       });
       if(!Object.keys(nove).length) continue;
       PUDORYSY = nove; pudorysyStav = 'hotovo';
@@ -12364,6 +12422,7 @@ function renderSelected(id){
     if(!maProvoz(p)){
       const pater = pocetPater(p);
       const nejlepsi = Object.entries(PROVOZ_TYPY)
+        .filter(([k, t]) => !t.minPater || pater >= t.minPater)
         .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index * (1 - PROVOZ_ZASOBY_PODIL) }))
         .sort((a, b) => b.denne - a.denne)[0];
       html += `<button class="secondary" ${near?'':'disabled'} onclick="otevritProvozovnu('${p.id}')">🏪 Otevřít provozovnu (od ${provozInvestice(p, pater >= 2).toLocaleString('cs-CZ')} Kč)</button>`;
@@ -16580,6 +16639,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'19.8', datum:'2026-10-05', body:[
+    ['oprava','V chatu se tlačítko Odeslat zalamovalo pod pole na psaní — teď je zase vedle. A místo „před 1 dny" se píše „včera".'],
+    ['novinka','Nové provozovny (nápad od Jerryho): 🌱 zahradnictví, 🕺 disco klub, 🎳 bowling a 🎬 kino. Každá žije z něčeho jiného — zahradnictví z rodinných domů kolem, disco a kino z ruchu v centru. Bowling a kino potřebují aspoň dvoupatrový dům. V dešti se lidem chce do kina a na bowling, zahradnictví naopak vydělá nejvíc za hezkého počasí.'],
+  ]},
+  { verze:'19.7', datum:'2026-10-04', body:[
+    ['oprava','Některé domy neměly půdorys — hlavně budovy do tvaru L nebo U, kde bod domu leží těsně vedle budovy. Teď dostanou nejbližší budovu. Půdorysy se jednou stáhnou znovu.'],
+  ]},
   { verze:'19.6', datum:'2026-10-04', body:[
     ['novinka','🗺️ Na mapě jsou vidět skutečné půdorysy budov obarvené barvou hráče, který o domě rozhoduje — tvoje domy se zlatým okrajem. Při přiblížení tak vidíš, komu patří která část ulice. V mapě výnosů se obarví i volné domy.'],
     ['info','Tvary budov se stáhnou jednou z OpenStreetMap a uloží do telefonu. Na slabším telefonu je jde vypnout v Průvodci → Nastavení.'],
@@ -17282,7 +17348,9 @@ function timeAgo(ts){
   if(s < 60) return ' · před chvílí';
   if(s < 3600) return ` · před ${Math.floor(s/60)} min`;
   if(s < 86400) return ` · před ${Math.floor(s/3600)} h`;
-  return ` · před ${Math.floor(s/86400)} dny`;
+  const dni = Math.floor(s/86400);
+  if(dni === 1) return ' · včera';
+  return ` · před ${dni} dny`;
 }
 
 function renderFinance(){
@@ -18624,7 +18692,7 @@ async function otevritProvozovnu(id){
   let cena = provozInvestice(p, jenPrizemi);
 
   // 2) Obor — s odhadem poptávky PRO TOHLE MÍSTO. Stejná pekárna vydělá jinde třikrát víc.
-  const seznam = Object.entries(PROVOZ_TYPY).map(([k, t]) => {
+  const seznam = Object.entries(PROVOZ_TYPY).filter(([k, t]) => !t.minPater || pater >= t.minPater).map(([k, t]) => {
     const pop = poptavkaProMisto(p, k);
     // Čistě, po zásobách — hrubý odhad by hráče nalákal na čísla, která nikdy neuvidí.
     const denne = Math.round(effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * pop.index * (1 - PROVOZ_ZASOBY_PODIL) * podil);
@@ -18638,7 +18706,7 @@ async function otevritProvozovnu(id){
     seznam.map((x, i) => ({
       popis:`${x.t.emoji} ${x.t.name} — ${x.cenaOboru.toLocaleString('cs-CZ')} Kč`,
       detail:`Poptávka ${x.pop.popis} · ~${x.denne} Kč/den čistě${x.navratnost ? ` · vrátí se za ${x.navratnost} dní` : ''}<br>` +
-        `Doplňuje se ${x.t.zbozi}: ${x.t.zboziPopis}`,
+        `${x.t.popis}<br>Doplňuje se ${x.t.zbozi}: ${x.t.zboziPopis}`,
       hodnota:i
     })));
   if(vyber === null) return;
