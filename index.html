@@ -960,6 +960,24 @@
   .provozCedulka{ top:auto;bottom:100%;transform:translate(-50%, -3px); }
   .leaflet-container.zblizka18 .domSvg .pUpg ~ .provozCedulka{ transform:translate(-50%, -12px); }
   .parcelMarker.domSvg .provozCedulka{ bottom:calc(100% - 4px); }
+
+  /* ===== VÝZVY 20.0 ===== */
+  .dnesMrizka{ display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:8px;margin:6px 0 8px; }
+  .dnesDl{ display:flex;flex-direction:column;gap:1px;padding:9px 10px;border-radius:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);min-width:0; }
+  .dnesDl .ik{ font-size:18px;line-height:1; }
+  .dnesDl .hod{ font-size:18px;font-weight:800;line-height:1.25;font-variant-numeric:tabular-nums; }
+  .dnesDl .pop{ font-size:11px;color:var(--muted);line-height:1.3; }
+  .dnesUdalost{ display:flex;gap:10px;align-items:flex-start;padding:9px 10px;border-radius:12px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);font-size:0.86em;line-height:1.4; }
+  .dnesUdalost .ik{ font-size:20px;line-height:1.2; }
+  .dnesUdalost b{ font-size:1.05em; }
+  .ukolRadek{ display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,0.06); }
+  .ukolRadek .ik{ font-size:20px;flex:none; }
+  .ukolRadek .tx{ flex:1;min-width:0; }
+  .ukolRadek .nz{ font-weight:700;font-size:0.94em; }
+  .ukolRadek .od{ flex:none;text-align:right;display:flex;flex-direction:column;font-size:0.85em; }
+  .ukolRadek .od b{ color:var(--gold); }
+  .ukolRadek .od span{ color:var(--muted);font-size:0.9em; }
+  .ukolRadek.hotovo{ opacity:0.6; }
 </style>
 </head>
 <body>
@@ -1342,7 +1360,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '19.8';
+const APP_VERSION = '20.1';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -11301,6 +11319,242 @@ function renderPudorysy(vynutit){
 }
 nactiPudorysyZPameti();
 
+
+// ===== ATMOSFÉRA — POČASÍ A DENNÍ DOBA NAD MAPOU =====
+// Dřív déšť a sníh byly dva posouvající se pruhované vzory a jinak nic. Teď je nad mapou
+// jedno plátno (canvas) s částicemi podle SKUTEČNÉHO počasí v Bučovicích a času:
+//  · déšť — šikmé kapky podle síly větru a čeřící se louže, v bouřce blesky
+//  · sníh — vločky různé velikosti, které se pohupují ve větru
+//  · mlha — pomalu plující bílé chuchvalce
+//  · oblačnost — stíny mraků, které táhnou přes město po větru
+//  · jasno ve dne — teplá záře slunce z rohu, za svítání a soumraku nízké zlaté světlo
+//  · noc — chladné měsíční světlo a ztmavené okraje
+//  · podzimní vítr — padající listí, jarní vítr — okvětní lístky
+// Výkon: max ~30 snímků za vteřinu, počet částic podle velikosti displeje, při otevřeném
+// panelu nebo schované appce se nekreslí vůbec. Kdo nemá rád pohyb (nastavení telefonu),
+// dostane jen klidné světlo bez částic. Vypíná se v Nastavení → Déšť a sníh na mapě.
+const Atmo = { cv:null, ctx:null, w:0, h:0, dpr:1, stav:null, klic:'', kapky:[], louze:[], vlocky:[], listi:[],
+  mraky:[], mlha:[], zablesk:0, blesk:null, dalsiBlesk:0, posledni:0, cas:0, beh:false, nahled:null, nahledDo:0 };
+function atmoStav(){
+  if(Atmo.nahled && Date.now() < Atmo.nahledDo) return Atmo.nahled;
+  const k = POCASI && typeof POCASI.kod === 'number' ? POCASI.kod : -1;
+  const vitr = POCASI ? (POCASI.vitr || 0) : 0;
+  const h = new Date().getHours();
+  const sez = sezona();
+  const snih = (k >= 71 && k <= 77) || k === 85 || k === 86;
+  const dest = (k >= 51 && k <= 67) || (k >= 80 && k <= 82) || k >= 95;
+  let intenzita = 0;
+  if(dest) intenzita = k >= 95 ? 1 : (k >= 80 ? 0.85 : (k >= 63 ? 0.8 : (k >= 61 ? 0.55 : 0.3)));
+  if(snih) intenzita = (k === 75 || k === 86) ? 1 : (k === 73 ? 0.65 : 0.4);
+  const jasno = k >= 0 && k <= 1;
+  return {
+    srazky: snih ? 'snih' : (dest ? 'dest' : null), intenzita, bourka: k >= 95, mlha: k === 45 || k === 48,
+    oblacnost: k === 3 ? 0.9 : (k === 2 ? 0.55 : (k === 1 ? 0.25 : (dest || snih ? 0.75 : 0))),
+    slunce: jasno && h >= 9 && h < 17, zlata: k >= 0 && k <= 2 && ((h >= 6 && h < 9) || (h >= 17 && h < 20)),
+    noc: h >= 21 || h < 5, vitr,
+    listi: !!(sez && (sez.id === 'podzim' || sez.id === 'dusicky') && vitr >= 10 && !dest && !snih),
+    kvety: !!(sez && sez.id === 'jaro' && vitr >= 10 && !dest && !snih)
+  };
+}
+function atmoPriprav(){
+  if(Atmo.cv) return true;
+  const vrstva = document.getElementById('vrstvaPocasi');
+  if(!vrstva) return false;
+  vrstva.innerHTML = '';
+  const cv = document.createElement('canvas');
+  cv.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;';
+  vrstva.appendChild(cv);
+  const ctx = cv.getContext && cv.getContext('2d');
+  if(!ctx) return false;
+  Atmo.cv = cv; Atmo.ctx = ctx;
+  const velikost = () => {
+    Atmo.dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    Atmo.w = window.innerWidth; Atmo.h = window.innerHeight;
+    cv.width = Math.round(Atmo.w * Atmo.dpr); cv.height = Math.round(Atmo.h * Atmo.dpr);
+    ctx.setTransform(Atmo.dpr, 0, 0, Atmo.dpr, 0, 0);
+    Atmo.klic = '';   // přegenerovat částice pro novou velikost
+  };
+  window.addEventListener('resize', velikost);
+  velikost();
+  return true;
+}
+const nahodne = (a, b) => a + Math.random() * (b - a);
+function atmoNaplnit(st){
+  const plocha = Math.max(0.4, (Atmo.w * Atmo.h) / (400 * 800));
+  const W = Atmo.w, H = Atmo.h;
+  const sikmo = Math.min(0.6, st.vitr / 40);
+  Atmo.kapky = st.srazky === 'dest' ? Array.from({ length: Math.round((40 + 230 * st.intenzita) * plocha) }, () => ({
+    x: nahodne(-W * 0.2, W * 1.1), y: nahodne(-H, H), v: nahodne(900, 1400), d: nahodne(12, 22), sikmo })) : [];
+  Atmo.vlocky = st.srazky === 'snih' ? Array.from({ length: Math.round((50 + 160 * st.intenzita) * plocha) }, () => ({
+    x: nahodne(0, W), y: nahodne(-H, H), r: nahodne(0.9, 3.2), v: nahodne(25, 70), f: nahodne(0, 6.28), a: nahodne(0.55, 0.95) })) : [];
+  Atmo.mraky = st.oblacnost > 0 ? Array.from({ length: Math.round(3 + 4 * st.oblacnost) }, () => ({
+    x: nahodne(-W * 0.3, W * 1.1), y: nahodne(-H * 0.1, H * 1.05), r: nahodne(W * 0.35, W * 0.75), v: nahodne(6, 14) + st.vitr * 0.6 })) : [];
+  Atmo.mlha = st.mlha ? Array.from({ length: 7 }, () => ({ x: nahodne(-W * 0.3, W), y: nahodne(0, H), r: nahodne(W * 0.4, W * 0.9), v: nahodne(4, 10) })) : [];
+  const barvyListi = ['#d97706', '#b45309', '#dc2626', '#ca8a04', '#92400e'];
+  const barvyKvetu = ['#fbcfe8', '#f9a8d4', '#fde2e4', '#ffffff'];
+  Atmo.listi = (st.listi || st.kvety) ? Array.from({ length: Math.round((st.listi ? 18 : 22) * Math.min(1.5, Math.max(0.8, plocha))) }, () => ({
+    x: nahodne(-W * 0.2, W), y: nahodne(-H, H), vx: nahodne(30, 70) + st.vitr * 2, vy: nahodne(30, 60), rot: nahodne(0, 6.28), vr: nahodne(-2, 2),
+    s: st.listi ? nahodne(6, 11) : nahodne(3.5, 6), c: (st.listi ? barvyListi : barvyKvetu)[Math.floor(Math.random() * (st.listi ? 5 : 4))], f: nahodne(0, 6.28) })) : [];
+  Atmo.louze = [];
+}
+function atmoKresli(ted){
+  const ctx = Atmo.ctx, W = Atmo.w, H = Atmo.h, st = Atmo.stav;
+  const dt = Math.min(0.1, (ted - (Atmo.cas || ted)) / 1000);
+  Atmo.cas = ted;
+  ctx.clearRect(0, 0, W, H);
+  const pomalu = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // --- světlo: slunce, zlatá hodina, měsíc ---
+  if(st.slunce){
+    const puls = 0.85 + 0.15 * Math.sin(ted / 4000);
+    const g = ctx.createRadialGradient(W * 0.98, -H * 0.04, 0, W * 0.98, -H * 0.04, Math.max(W, H) * 0.95);
+    g.addColorStop(0, `rgba(255,225,150,${0.42 * puls})`); g.addColorStop(0.4, `rgba(255,210,130,${0.14 * puls})`); g.addColorStop(1, 'rgba(255,210,130,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    // slabé paprsky
+    ctx.save(); ctx.translate(W * 0.98, -H * 0.04);
+    for(let i = 0; i < 4; i++){
+      const u = 1.9 + i * 0.22 + Math.sin(ted / 9000 + i) * 0.03;
+      ctx.rotate(0); ctx.beginPath(); ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(u - 0.04) * H * 1.4, Math.sin(u - 0.04) * H * 1.4); ctx.lineTo(Math.cos(u + 0.04) * H * 1.4, Math.sin(u + 0.04) * H * 1.4);
+      ctx.closePath(); ctx.fillStyle = `rgba(255,235,180,${0.075 * puls})`; ctx.fill();
+    }
+    ctx.restore();
+  }
+  if(st.zlata){
+    const g = ctx.createRadialGradient(W * 0.85, H * 1.08, 0, W * 0.85, H * 1.08, Math.max(W, H) * 0.9);
+    g.addColorStop(0, 'rgba(255,150,70,0.26)'); g.addColorStop(1, 'rgba(255,150,70,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  if(st.noc){
+    const g = ctx.createRadialGradient(W * 0.12, H * 0.14, 0, W * 0.12, H * 0.14, Math.max(W, H) * 0.7);
+    g.addColorStop(0, 'rgba(170,195,255,0.13)'); g.addColorStop(1, 'rgba(170,195,255,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  // ztmavené okraje za tmy a v nepohodě — „atmosféra"
+  if(st.noc || st.srazky || st.mlha){
+    const v = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.75);
+    v.addColorStop(0, 'rgba(0,0,10,0)'); v.addColorStop(1, `rgba(0,0,12,${st.noc ? 0.38 : 0.22})`);
+    ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
+  }
+  // --- stíny mraků ---
+  Atmo.mraky.forEach(m => {
+    if(!pomalu){ m.x += m.v * dt; if(m.x - m.r > W) m.x = -m.r; }
+    const g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
+    g.addColorStop(0, `rgba(15,20,35,${0.16 * st.oblacnost})`); g.addColorStop(1, 'rgba(15,20,35,0)');
+    ctx.fillStyle = g; ctx.fillRect(m.x - m.r, m.y - m.r, m.r * 2, m.r * 2);
+  });
+  // --- mlha ---
+  Atmo.mlha.forEach(m => {
+    if(!pomalu){ m.x += m.v * dt; if(m.x - m.r > W) m.x = -m.r; }
+    const g = ctx.createRadialGradient(m.x, m.y, 0, m.x, m.y, m.r);
+    g.addColorStop(0, 'rgba(225,230,238,0.30)'); g.addColorStop(1, 'rgba(225,230,238,0)');
+    ctx.fillStyle = g; ctx.fillRect(m.x - m.r, m.y - m.r, m.r * 2, m.r * 2);
+  });
+  if(pomalu) return;
+  // --- déšť ---
+  if(Atmo.kapky.length){
+    ctx.strokeStyle = 'rgba(205,228,255,0.62)'; ctx.lineWidth = 1.25; ctx.lineCap = 'round';
+    ctx.beginPath();
+    Atmo.kapky.forEach(k => {
+      k.y += k.v * dt; k.x += k.v * k.sikmo * dt;
+      if(k.y > H){ k.y = nahodne(-60, -10); k.x = nahodne(-W * 0.2, W * 1.1);
+        if(Math.random() < 0.35 && Atmo.louze.length < 40) Atmo.louze.push({ x: nahodne(0, W), y: nahodne(H * 0.15, H), t: 0 }); }
+      ctx.moveTo(k.x, k.y); ctx.lineTo(k.x - k.d * k.sikmo, k.y - k.d);
+    });
+    ctx.stroke();
+    // kroužky na loužích
+    Atmo.louze = Atmo.louze.filter(l => (l.t += dt) < 0.6);
+    Atmo.louze.forEach(l => {
+      const p = l.t / 0.6;
+      ctx.strokeStyle = `rgba(210,230,255,${0.45 * (1 - p)})`; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.ellipse(l.x, l.y, 2 + p * 9, 1 + p * 3.5, 0, 0, 6.283); ctx.stroke();
+    });
+  }
+  // --- bouřka ---
+  if(st.bourka){
+    if(ted > Atmo.dalsiBlesk){
+      Atmo.zablesk = 1; Atmo.dalsiBlesk = ted + nahodne(6000, 18000);
+      let x = nahodne(W * 0.15, W * 0.85), y = 0; const body = [[x, y]];
+      while(y < H * nahodne(0.35, 0.6)){ x += nahodne(-28, 28); y += nahodne(18, 42); body.push([x, y]); }
+      Atmo.blesk = { body, do: ted + 180 };
+    }
+    if(Atmo.zablesk > 0){
+      ctx.fillStyle = `rgba(235,240,255,${0.5 * Atmo.zablesk})`; ctx.fillRect(0, 0, W, H);
+      Atmo.zablesk = Math.max(0, Atmo.zablesk - dt * 3.5);
+    }
+    if(Atmo.blesk && ted < Atmo.blesk.do){
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2.2; ctx.shadowColor = '#cfe0ff'; ctx.shadowBlur = 14;
+      ctx.beginPath(); Atmo.blesk.body.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+      ctx.shadowBlur = 0;
+    }
+  }
+  // --- sníh ---
+  if(Atmo.vlocky.length){
+    Atmo.vlocky.forEach(v => {
+      v.f += dt * 1.2; v.y += v.v * dt; v.x += (Math.sin(v.f) * 18 + st.vitr * 0.8) * dt;
+      if(v.y > H + 5){ v.y = -5; v.x = nahodne(0, W); }
+      if(v.x > W + 5) v.x = -5;
+      ctx.fillStyle = `rgba(255,255,255,${v.a})`;
+      ctx.beginPath(); ctx.arc(v.x, v.y, v.r, 0, 6.283); ctx.fill();
+    });
+  }
+  // --- listí / květy ---
+  Atmo.listi.forEach(l => {
+    l.f += dt * 2; l.x += (l.vx + Math.sin(l.f) * 25) * dt; l.y += (l.vy + Math.cos(l.f) * 10) * dt; l.rot += l.vr * dt;
+    if(l.x > W + 20 || l.y > H + 20){ l.x = nahodne(-W * 0.3, W * 0.5); l.y = -20; }
+    ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rot);
+    ctx.fillStyle = l.c; ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.ellipse(0, 0, l.s, l.s * 0.5, 0, 0, 6.283); ctx.fill();
+    ctx.globalAlpha = 1; ctx.restore();
+  });
+}
+function atmoSmycka(ted){
+  Atmo.beh = false;
+  if(!VZHLED.pocasi || !Atmo.cv){ if(Atmo.ctx) Atmo.ctx.clearRect(0, 0, Atmo.w, Atmo.h); return; }
+  const sheet = document.getElementById('bottomSheet');
+  const skryto = document.hidden || (sheet && sheet.classList.contains('open'));
+  if(!skryto && ted - Atmo.posledni >= 33){
+    Atmo.posledni = ted;
+    const st = atmoStav();
+    const klic = JSON.stringify(st);
+    if(klic !== Atmo.klic){ Atmo.klic = klic; Atmo.stav = st; atmoNaplnit(st); }
+    safeCall(() => atmoKresli(ted));
+  } else if(skryto && Atmo.ctx){ Atmo.ctx.clearRect(0, 0, Atmo.w, Atmo.h); Atmo.cas = 0; }
+  const pomalu = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Klidný režim / nic k animaci: překreslit jen občas.
+  const nicSePohybuje = !Atmo.stav || pomalu || (!Atmo.kapky.length && !Atmo.vlocky.length && !Atmo.listi.length && !Atmo.mraky.length && !Atmo.mlha.length && !Atmo.stav.bourka && !Atmo.stav.slunce);
+  Atmo.beh = true;
+  if(nicSePohybuje || skryto) setTimeout(() => requestAnimationFrame(atmoSmycka), 1500);
+  else requestAnimationFrame(atmoSmycka);
+}
+function atmoSpust(){
+  if(Atmo.beh || !VZHLED.pocasi) return;
+  if(!atmoPriprav()) return;
+  Atmo.beh = true;
+  requestAnimationFrame(atmoSmycka);
+}
+// Správce si může efekty vyzkoušet hned, bez čekání na skutečné počasí.
+const ATMO_NAHLEDY = {
+  dest:   { srazky:'dest', intenzita:0.7, oblacnost:0.8, vitr:12 },
+  bourka: { srazky:'dest', intenzita:1, bourka:true, oblacnost:0.95, vitr:25 },
+  snih:   { srazky:'snih', intenzita:0.8, oblacnost:0.7, vitr:8 },
+  mlha:   { mlha:true, oblacnost:0.3, vitr:2 },
+  slunce: { slunce:true, oblacnost:0.15, vitr:5 },
+  zapad:  { zlata:true, oblacnost:0.2, vitr:5 },
+  noc:    { noc:true, vitr:3 },
+  listi:  { listi:true, oblacnost:0.4, vitr:22 }
+};
+function atmoNahled(typ){
+  const z = ATMO_NAHLEDY[typ];
+  if(!z) return;
+  Atmo.nahled = Object.assign({ srazky:null, intenzita:0, bourka:false, mlha:false, oblacnost:0, slunce:false, zlata:false, noc:false, vitr:0, listi:false, kvety:false }, z);
+  Atmo.nahledDo = Date.now() + 45000;
+  Atmo.dalsiBlesk = 0;
+  if(!VZHLED.pocasi){ VZHLED.pocasi = true; }
+  closeSheet();
+  atmoSpust();
+  showToast('Náhled efektu na 45 vteřin');
+}
+
 // ===== BARVY HRÁČŮ =====
 // Každý hráč má svou barvu a jeho domy jsou v ní na mapě vidět — svoje i cizí. Mapa tím
 // ukáže, kdo kterou část města drží. Barvy jsou vybrané tak, aby se daly rozlišit i vedle
@@ -11642,7 +11896,7 @@ function refreshAll(){
 // zařízení — na starším telefonu můžou animace ubírat výkon a někomu prostě vadí.
 const VZHLED_VOLBY = [
   { id:'denNoc',  nazev:'Denní doba na mapě', popis:'V noci ztmavne, za svítání a soumraku má teplý nádech.' },
-  { id:'pocasi',  nazev:'Déšť a sníh na mapě', popis:'Když v Bučovicích prší nebo sněží, je to vidět i ve hře.' },
+  { id:'pocasi',  nazev:'Počasí a světlo na mapě', popis:'Déšť, sníh, mlha, bouřka, stíny mraků, sluníčko a padající listí podle skutečného počasí v Bučovicích.' },
   { id:'sezony',  nazev:'Sezónní ozdoby',      popis:'Vločka v adventu, listí na podzim, stromeček o Vánocích.' },
   { id:'pudorysy', nazev:'Půdorysy budov',      popis:'Skutečné tvary domů obarvené barvou majitele. Na slabém telefonu jde vypnout.' }
 ];
@@ -11806,19 +12060,13 @@ function prekresliVrstvy(vynutit){
   if(!p) return;
   if(vynutit) p.dataset.stav = 'prekreslit';   // po změně nastavení překreslit i beze změny počasí
   if(!VZHLED.pocasi){
-    if(p.dataset.stav !== ''){ p.dataset.stav = ''; p.innerHTML = ''; }
+    if(p.dataset.stav !== ''){ p.dataset.stav = ''; p.innerHTML = ''; Atmo.cv = null; }
     return;
   }
-  // Kódy počasí z Open-Meteo: 51–67 a 80–82 déšť, 71–77 a 85–86 sníh, 95+ bouřka.
-  const k = POCASI && typeof POCASI.kod === 'number' ? POCASI.kod : -1;
-  const snih  = (k >= 71 && k <= 77) || k === 85 || k === 86;
-  const dest  = (k >= 51 && k <= 67) || (k >= 80 && k <= 82) || k >= 95;
-  const chci = snih ? 'snih' : (dest ? 'dest' : '');
-  if(p.dataset.stav === chci) return;      // nepřekreslovat zbytečně
-  p.dataset.stav = chci;
-  p.innerHTML = chci === 'snih' ? '<div class="srazky sníh1"></div><div class="srazky sníh2"></div>'
-              : chci === 'dest' ? '<div class="srazky déšť1"></div><div class="srazky déšť2"></div>'
-              : '';
+  // Počasí a světlo kreslí plátno (viz ATMOSFÉRA). Tady ho jen nastartovat — samo si hlídá
+  // změnu počasí i denní doby.
+  if(p.dataset.stav !== 'atmo'){ p.dataset.stav = 'atmo'; Atmo.cv = null; Atmo.beh = false; }
+  safeCall(() => atmoSpust());
 }
 
 // Sezónní drobnost podle skutečného data — potvrdí hráči, že hra žije ve stejném čase
@@ -12975,31 +13223,46 @@ function renderMine(){
           const b = vk.mult >= 1.1 ? 'var(--accent)' : vk.mult >= 0.9 ? 'var(--muted)' : 'var(--danger)';
           return `<p style="font-size:0.9em;"><span style="color:${b}">${vk.mult >= 1.1 ? '▲' : vk.mult >= 0.9 ? '▪' : '▼'} ${vk.popis} — ${Math.round(vk.mult*100)} % běžných tržeb</span>${
             vk.vlivy.length ? `<br><span style="color:var(--muted);font-size:0.9em;">${vk.vlivy.join(' · ')}</span>` : ''}</p>`; })()}
-        <p>Dnes utrží <b style="color:var(--gold)">${kc(d.provozDnesKc)} Kč</b>${d.zasoby < 95 ? ` <span style="color:var(--muted)">(se zásobami ${d.zasoby} %)</span>` : ''}</p>
-        <p style="font-size:0.88em;color:var(--muted);">S plnými zásobami: tržby ${kc(plny)} − zásoby ${kc(plny * PROVOZ_ZASOBY_PODIL)} = čistě ${kc(d.provozCisty)} Kč/den</p>
+        <div class="fR"><span class="l">Tržby dnes<small>celá provozovna${d.zasoby < 95 ? `, se zásobami ${d.zasoby} %` : ''}</small></span><span class="v" style="color:var(--gold)">${kc(d.provozDnesKc)} Kč</span></div>
+        <div class="fR"><span class="l">Běžný den s plnými zásobami<small>tržby ${kc(plny)} − zásoby ${kc(plny * PROVOZ_ZASOBY_PODIL)} Kč</small></span><span class="v">${kc(d.provozCisty)} Kč</span></div>
         <p style="font-size:0.88em;color:${barva};">📦 ${zboziNazev(p, '1').charAt(0).toUpperCase() + zboziNazev(p, '1').slice(1)} ${d.zasoby} %${d.zasoby < 30 ? ' — dochází, zajdi doplnit!' : ''}</p>
         <div style="background:var(--panel2);border-radius:4px;height:6px;margin:3px 0;overflow:hidden;">
           <div style="width:${d.zasoby}%;height:100%;background:${barva};"></div></div>`;
     }
 
-    // výnos pro mě
+    // výnos pro mě — řádky s částkou vpravo, součet dole (stejné číslo jako v hlavičce domu)
+    const radekKc = (l, v, b, cls) => `<div class="fR${cls ? ' ' + cls : ''}"><span class="l">${l}</span><span class="v" style="color:${b || 'var(--text)'}">${v}</span></div>`;
+    const pctTxt = d.dil < 0.999 ? `tvůj podíl ${des(d.dil * 100, 0)} %` : '';
     detail += `<p class="mineSek">💰 Co ti to nese</p>`;
+    let pozn = '';
     if(p.useType === 'rental'){
-      detail += `<p>Teď reálně <b style="color:var(--gold)">${kc(d.najemCelkem * d.dil)} Kč/den</b>${d.dil < 0.999 ? ` <span style="color:var(--muted)">(z ${kc(d.najemCelkem)} Kč za celý dům)</span>` : ''}</p>`;
+      detail += radekKc(`Nájem<small>${pctTxt ? pctTxt + ' z ' + kc(d.najemCelkem) + ' Kč za dům' : 'celý dům'}</small>`, `+${kc(d.najemCelkem * d.dil)} Kč`, 'var(--accent)');
       if(d.bonusMult > 1)
-        detail += `<p style="font-size:0.88em;color:var(--accent);">🎉 Dům je plně obsazený — město přihazuje ${Math.round(PLNY_DUM_BONUS*100)} % k nájmu (už je v částce).</p>`;
+        pozn += `<p class="fPozn" style="color:var(--accent);">🎉 Dům je plně obsazený — město přihazuje ${Math.round(PLNY_DUM_BONUS*100)} % k nájmu (už je v částce).</p>`;
       else if(d.najemPlne > 0){
         const kPronajmu = d.byty.filter(u => u && !u.ownerOccupied).length;
         const plneSBonusem = d.najemPlne * (kPronajmu >= 2 ? 1 + PLNY_DUM_BONUS : 1);
         if(plneSBonusem > d.najemCelkem + 0.5)
-          detail += `<p style="font-size:0.88em;color:var(--muted);">Při plném obsazení by to bylo ${kc(plneSBonusem * d.dil)} Kč/den${kPronajmu >= 2 ? ` (včetně bonusu ${Math.round(PLNY_DUM_BONUS*100)} % za plný dům)` : ''}.</p>`;
+          pozn += `<p class="fPozn">Při plném obsazení by nájem byl ${kc(plneSBonusem * d.dil)} Kč/den${kPronajmu >= 2 ? ` (včetně bonusu ${Math.round(PLNY_DUM_BONUS*100)} % za plný dům)` : ''}.</p>`;
       }
     }
-    if(d.provoz) detail += `<p>Provozovna dnes <b style="color:var(--gold)">${kc(d.provozDnesKc * d.dil)} Kč</b>${
-      d.zasoby < 60 ? ` <span style="color:var(--orange)">— doplň zásoby a bude to ${kc(provozPlnyVynos(p) * (100 - PROVOZ_ZASOBY_DEN/2) / 100 * d.dil)} Kč</span>` : ''}</p>`;
-    if(d.solar > 0.5) detail += `<p>Solár <b style="color:var(--gold)">${kc(d.solar * d.dil)} Kč/den</b></p>`;
+    if(d.provoz){
+      detail += radekKc(`Provozovna dnes<small>${pctTxt || 'celá'}${provozVykon(p).mult < 0.9 ? ' · slabý den' : ''}</small>`, `+${kc(d.provozDnesKc * d.dil)} Kč`, 'var(--accent)');
+      // Kolik by to bylo s plnými zásobami — DNES (stejný den, stejná poptávka) a v běžný den.
+      // Dřív se tu ukazovalo jedno číslo bez dnešního výkyvu: „doplň a bude to 118" i ve dni,
+      // kdy s plnými zásobami vychází 42 Kč — hráč pak doplnil a divil se.
+      if(d.zasoby < 60){
+        const dnesPlne = provozPlnyVynos(p) * provozVykon(p).mult * akceMult(p) * d.dil;
+        const bezne = provozPlnyVynos(p) * d.dil;
+        pozn += `<p class="fPozn" style="color:var(--orange);">📦 S plnými zásobami by provozovna dnes vynesla ${kc(dnesPlne)} Kč, v běžný den ${kc(bezne)} Kč (tvůj podíl, před zásobami).</p>`;
+      }
+    }
+    if(d.solar > 0.5) detail += radekKc(`Solár${pctTxt ? '<small>' + pctTxt + '</small>' : ''}`, `+${kc(d.solar * d.dil)} Kč`, 'var(--accent)');
+    if(d.dan > 0.05) detail += radekKc('Daň z nemovitosti', `−${des(d.dan, d.dan < 10 ? 1 : 0)} Kč`, 'var(--danger)');
+    if(d.hypoSplatka > 0.05) detail += radekKc('Splátka hypotéky', `−${kc(d.hypoSplatka)} Kč`, 'var(--danger)');
     const poVsem = d.prijem - d.dan - d.hypoSplatka;
-    detail += `<p style="font-size:0.88em;">Po dani${d.hypo ? ' a splátce hypotéky' : ''} <b style="color:${poVsem >= 0 ? 'var(--accent)' : 'var(--danger)'}">${poVsem >= 0 ? '+' : '−'}${kc(Math.abs(poVsem))} Kč/den</b></p>`;
+    detail += radekKc('Celkem za den', `${poVsem >= 0 ? '+' : '−'}${kc(Math.abs(poVsem))} Kč`, poVsem >= 0 ? 'var(--gold)' : 'var(--danger)', 'soucet');
+    detail += pozn;
     if(d.hypo){
       detail += `<p class="mineSek">🏦 Hypotéka</p>
         <p>Dluh <b>${kc(d.hypo.balance)} Kč</b> · splátka <b style="color:var(--orange)">${kc(d.hypoSplatka)} Kč/den</b></p>
@@ -13035,7 +13298,8 @@ function renderMine(){
           <span style="font-size:0.82em;color:var(--muted);">${des(d.pct, 0)} %${iDecide ? ' 👑' : ''}${
             p.useType === 'rental' && d.byty.length ? ` · obsazeno ${d.obsazene.length + d.mojeByty.length}/${d.byty.length}` : ''}${
             d.provoz ? ` · zásoby ${d.zasoby} %` : ''}${d.problemy.length ? ' · <span style="color:var(--orange)">⚠️</span>' : ''}</span></span>
-        <span class="mineKc" style="color:${d.prijem > 0.5 ? 'var(--gold)' : 'var(--muted)'}">${d.prijem > 0.5 ? '+' + kc(d.prijem) : '0'}<small> Kč</small></span>
+        ${(() => { const cist = d.prijem - d.dan - d.hypoSplatka;   // stejné číslo jako „Celkem po dani" v detailu
+          return `<span class="mineKc" style="color:${cist > 0.5 ? 'var(--gold)' : (cist < -0.5 ? 'var(--danger)' : 'var(--muted)')}">${cist > 0.5 ? '+' + kc(cist) : (cist < -0.5 ? '−' + kc(-cist) : '0')}<small> Kč</small></span>`; })()}
       </summary>
       <div class="mineDetail">${detail}</div>
     </details>`;
@@ -15016,7 +15280,7 @@ function postupKroku(u){
     housingStatus(u.name) !== 'homeless', pronajem.length > 0,
     pronajem.some(p => asArray(p.units).some(x => x && (x.tenant || x.npc)))];
   const prvniNe = splneno.indexOf(false);
-  return { hotovo: prvniNe < 0 ? splneno.length : prvniNe, celkem: splneno.length };
+  return { hotovo: prvniNe < 0 ? splneno.length : prvniNe, celkem: splneno.length, splneno: splneno.filter(Boolean).length };
 }
 function dalsiKrok(u){
   if(!u) return null;
@@ -15106,14 +15370,19 @@ function renderDaily(){
         <div class="sadaSeznam">${seznam}</div>
       </details>`;
     }).join('');
-    return `<div class="card" style="text-align:left;">
-      <h3 style="text-align:center;">🗺️ Sbírka míst — ${mam}/${celkem}</h3>
-      ${radky}
-      ${nej ? `<p style="font-size:0.9em;margin:8px 0 0;">📍 Nejblíž máš k <b>${escapeHtml(nej.m.nazev)}</b> — ${kudyText(nej.m, nej.d)}.
-        <span style="color:var(--muted)">Za návštěvu ${Math.round(MISTO_ODMENA * inflationMult())} Kč.</span></p>
-        <div class="row" style="margin-top:6px;"><button class="secondary" onclick="ukazMisto('${nej.m.id}')">Ukázat na mapě</button></div>`
-        : `<p style="font-size:0.9em;color:var(--gold);margin:8px 0 0;">🎉 Navštívil jsi všechna místa ve městě!</p>`}
-      <p style="font-size:0.8em;color:var(--muted);margin:6px 0 0;">👆 Klepni na sadu a uvidíš všechna její místa — co to je, kde to je a jak daleko. Stačí k místu dojít na ${MISTO_RADIUS} metrů. Každé se počítá jednou, za celou sadu je bonus ${Math.round(MISTO_SADA_BONUS * inflationMult())} Kč.</p>
+    const sid = 'blk_sbirkaSady';
+    return `<div class="card">
+      <h3>🗺️ Sbírka míst <span style="font-weight:400;color:var(--muted);">${mam}/${celkem}</span></h3>
+      <div class="fPruh"><div style="width:${Math.round(mam / celkem * 100)}%;background:var(--accent);"></div></div>
+      ${nej ? `<div class="tipRadek" onclick="ukazMisto('${nej.m.id}')">
+          <span class="ik">📍</span>
+          <div class="tx"><div class="nz">Nejblíž: ${escapeHtml(nej.m.nazev)}</div><div class="ci">za návštěvu ${Math.round(MISTO_ODMENA * inflationMult())} Kč</div></div>
+          <div class="kde">${kudyText(nej.m, nej.d)}</div></div>`
+        : `<p style="font-size:0.9em;color:var(--gold);margin:6px 0 0;">🎉 Navštívil jsi všechna místa ve městě!</p>`}
+      <details class="mineSkupina" id="${sid}"${otevreneBloky.has(sid) ? ' open' : ''}>
+        <summary>Všechny sady a místa · bonus ${Math.round(MISTO_SADA_BONUS * inflationMult())} Kč za celou sadu</summary>
+        ${radky}
+      </details>
     </div>`;
   })();
 
@@ -15148,206 +15417,154 @@ function renderDaily(){
     </div>`;
   })();
 
-  // --- první kroky (dokud hráč nemá práci, bydlení a příjem) ---
-  const krok = safeCall(() => dalsiKrok(u));
+  // ===== SKLADBA PANELU (20.0) =====
+  // Dřív tu bylo pod sebou až 12 karet stejné váhy (počasí, série, úkoly, místa zájmu,
+  // připomenutí…) a důležité věci se ztrácely. Teď: nahoře jen to, co je časově důležité
+  // (souhrn týdne, večer, akce), pak jedna karta „Dnes" s přehledem v dlaždicích, pak úkoly
+  // s místy zájmu, pak věci, na které se dá reagovat (zásobování, postavy), a dole sbírka.
+  let html = '';
+  if(u.walkBlocked){
+    html += `<div class="card" style="border-left:3px solid var(--danger);"><h3 style="color:var(--danger)">⚠️ Chůze pozastavena</h3>
+      <p style="font-size:0.9em;">Poloha skákala nesmyslně rychle (auto, vlak nebo falešná GPS), takže se dnes za chůzi neplatí. Zítra se to samo obnoví.</p></div>`;
+  }
+  html += (safeCall(() => souhrnTydneHtml()) || '') + (safeCall(() => vecerKartaHtml()) || '') + (safeCall(() => akceKartaHtml()) || '');
 
-  // --- dnešní událost ve městě ---
+  // --- první kroky: jen pro nováčky ---
+  // Ukazovalo se i zkušeným hráčům („krok 1 z 6 — vezmi si práci" hráči s pěti domy
+  // a provozovnou), protože postup se počítal k PRVNÍMU nesplněnému kroku. Teď se počítá,
+  // kolik kroků už hráč má, a od čtyř splněných karta zmizí.
+  const krok = safeCall(() => dalsiKrok(u));
+  const postup = krok ? (safeCall(() => postupKroku(u)) || { hotovo:0, celkem:6, splneno:0 }) : null;
+  if(krok && postup.splneno < 4){
+    html += `<div class="card">
+      <div class="krokHlava"><span class="krokIkona">${krok.ikona}</span>
+        <div><div class="krokNadpis">Další krok</div><div class="krokPostup">máš ${postup.splneno} z ${postup.celkem} · rada zmizí, až se rozjedeš</div></div></div>
+      <div class="krokTecky">${Array.from({ length: postup.celkem }, (_, i) => `<span class="${i < postup.splneno ? 'hotovo' : ''}"></span>`).join('')}</div>
+      <p style="font-size:0.93em;margin:4px 0;">${krok.text}</p>
+      <div class="row"><button class="secondary" onclick="${krok.akce}">${krok.tlacitko} ›</button></div>
+    </div>`;
+  }
+
+  // --- DNES: přehled v dlaždicích + událost ve městě ---
   const ev = todaysCityEvent();
   const lokStred = (ev && ev.lokalni) ? localEventCenter() : null;
   const lokD = (lokStred && playerPos) ? haversine(playerPos, lokStred) : null;
-  // Karta „první kroky" je nahoře — nováček ji musí vidět dřív než cokoliv jiného.
-  // Krok jako postup (krok 2 z 6) — hráč vidí, kolik mu zbývá, a karta nepřebíjí ostatní.
-  const postup = krok ? (safeCall(() => postupKroku(u)) || { hotovo:0, celkem:6 }) : null;
-  let html = krok ? `<div class="card">
-    <div class="krokHlava"><span class="krokIkona">${krok.ikona}</span>
-      <div><div class="krokNadpis">Další krok</div><div class="krokPostup">krok ${postup.hotovo + 1} z ${postup.celkem} · rada zmizí, až budeš mít práci, bydlení a nájem</div></div></div>
-    <div class="krokTecky">${Array.from({ length: postup.celkem }, (_, i) => `<span class="${i < postup.hotovo ? 'hotovo' : ''}"></span>`).join('')}</div>
-    <p style="font-size:0.93em;margin:4px 0;">${krok.text}</p>
-    <div class="row"><button class="secondary" onclick="${krok.akce}">${krok.tlacitko} ›</button></div>
-  </div>` : '';
-
-  html += `<div class="card" style="border-left:3px solid var(--gold);">
-    <h3>${ev.emoji} Dnes ve městě: ${ev.name}</h3>
-    <p style="font-size:0.9em;margin:2px 0;">${ev.desc}</p>
-    ${lokStred ? `<p style="font-size:0.88em;margin:4px 0 0;color:var(--gold)">📍 Týká se okolí ${escapeHtml(lokStred.nazev || 'jednoho místa')}${lokD !== null ? ` — ${kudyText(lokStred, lokD)}` : ''}. Na mapě je to vyznačené kruhem.</p>` : ''}
-  </div>`;
-
-  html += skladHtml;
-  html = (safeCall(() => souhrnTydneHtml()) || '') + (safeCall(() => vecerKartaHtml()) || '') + (safeCall(() => akceKartaHtml()) || '') + html;
-  html += sbirkaHtml;
-
-  // POČASÍ — skutečné, z Bučovic. Ovlivňuje výdělek z chůze.
-  if(POCASI){
-    const pm = pocasiMult();
-    const lepsi = pm.mult > 1;
-    html += `<div class="card" style="border-left:3px solid ${lepsi ? 'var(--accent)' : 'var(--border)'};cursor:pointer;" onclick="obnovPocasi()">
-      <h3>${pm.emoji} Počasí v Bučovicích — ${POCASI.teplota} °C</h3>
-      <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">${pm.popis}${POCASI.vitr ? ` · vítr ${POCASI.vitr} km/h` : ''}</p>
-      ${lepsi
-        ? `<p style="margin:4px 0;">Za chůzi dostáváš <b style="color:var(--accent)">o ${Math.round((pm.mult-1)*100)} % víc</b> — venku je nepohoda, tak ať to stojí za to.</p>`
-        : `<p style="margin:4px 0;color:var(--muted);">Hezky. Za chůzi dostáváš běžnou sazbu — bonus je jen za nepohodu.</p>`}
-      <p style="font-size:0.82em;color:var(--muted);margin:2px 0 0;">Klepnutím načteš znovu · Načteno ${(() => {
-        const m = Math.round((Date.now() - (POCASI.kdy || 0)) / 60000);
-        return m < 1 ? 'právě teď' : `před ${m} min`;
-      })()} · obnovuje se každých 15 minut.</p>
-    </div>`;
-  }
-
-  // MĚSTSKÉ POSTAVY — každá umí něco jiného a chodí po vlastní trase.
-  {
-    const karty = NPC_DEFS.map(def => {
-      const p = npcKde(def.id);
-      if(!p) return '';
-      const hotovo = npcPotkan(u, def.id);
-      const d = playerPos ? haversine(playerPos, { lat:p.lat, lng:p.lng }) : null;
-      const blizko = canInteract(p.lat, p.lng, EVA_RADIUS);
-      return `<div class="card" style="border-left:3px solid ${def.barva};${hotovo?'opacity:0.6;':''}">
-        <h3>${def.emoji} ${def.jmeno} <span style="font-weight:400;color:var(--muted);font-size:0.85em;">— ${def.role}</span>
-          ${hotovo ? '<span class="badge badge-res">dnes hotovo</span>' : ''}</h3>
-        <p style="font-size:0.9em;color:var(--muted);margin:2px 0;">${def.popis}</p>
-        ${d !== null ? `<p style="font-size:0.88em;color:var(--gold);margin:2px 0;">🧭 ${kudyText(p, d)}${
-          p.kde ? ' · stojí u ' + escapeHtml(p.kde) : (p.miriK ? ' · míří k ' + escapeHtml(p.miriK) : '')}</p>` : ''}
-        ${hotovo && def.id === 'eva' && u.evaRada ? `<p style="font-size:0.9em;color:var(--accent2);margin:4px 0;">💡 „${escapeHtml(u.evaRada)}"</p>` : ''}
-        ${hotovo ? '<p style="font-size:0.85em;color:var(--muted);margin:2px 0;">Zítra bude zase někde jinde.</p>' : `<div class="row">
-          <button ${blizko?'':'disabled'} onclick="potkatNpc('${def.id}')">${blizko?'Promluvit si':'Musíš být blíž'}</button>
-          <button class="secondary" onclick="ukazNpc('${def.id}')">Kde je</button>
-        </div>`}
-      </div>`;
-    }).filter(Boolean).join('');
-    if(karty) html += karty;
-  }
-
-  // --- poslední náhodné setkání ---
-  // `lastEvent` se dosud jen zapisoval a nikdo ho nikdy neviděl. Ukážeme ho v den, kdy nastal —
-  // hráč tak má zpětnou vazbu, co mu to vlastně na ulici přineslo (nebo vzalo).
-  if(u.lastEvent && u.lastEvent.day === world.day){
-    const castka = u.lastEvent.amount || 0;
-    const barva = castka >= 0 ? 'var(--accent)' : 'var(--danger)';
-    html += `<div class="card" style="border-left:3px solid ${barva};">
-      <h3>🎲 Dnešní setkání</h3>
-      <p style="font-size:0.92em;margin:2px 0;">${escapeHtml(u.lastEvent.txt || '')}</p>
-      ${castka ? `<p style="margin:2px 0 0 0;"><b style="color:${barva}">${castka > 0 ? '+' : ''}${Math.round(castka).toLocaleString('cs-CZ')} Kč</b></p>` : ''}
-    </div>`;
-  }
-
-  // --- průvodce pro nováčka (jen dokud není hotový) ---
-  html += renderOnboarding(u);
-
-  // --- série ---
   const streak = u.streak || 0;
-  const dots = [];
-  for(let i=1;i<=STREAK_MAX_DAYS;i++){
-    const on = i <= Math.min(streak, STREAK_MAX_DAYS);
-    dots.push(`<span style="font-size:1.1em;opacity:${on?1:0.25}">${on?'🔥':'○'}</span>`);
-  }
+  const done = u.questDone.length, total = u.quests.length;
+  const lms = allLandmarks();
+  const pm = POCASI ? pocasiMult() : null;
+  const dlazdice = [
+    { ik:'🔥', hod:`${streak} ${streak === 1 ? 'den' : (streak < 5 ? 'dny' : 'dní')}`, pop:`série · zítra +${Math.round(streakReward(streak + 1) * inflationMult())} Kč` },
+    { ik:'🎯', hod:`${done}/${total}`, pop:`úkolů · všechny = +${Math.round(QUEST_ALL_BONUS * inflationMult())} Kč`, barva: done === total ? 'var(--accent)' : '' },
+    { ik:'📍', hod:`${got.length}/${lms.length}`, pop:`míst zájmu · ${Math.round(LANDMARK_REWARD * inflationMult())} Kč za každé` },
+    pm ? { ik:pm.emoji, hod:`${POCASI.teplota} °C`, pop: pm.mult > 1 ? `chůze +${Math.round((pm.mult - 1) * 100)} % · ${pm.popis.toLowerCase()}` : `${pm.popis.toLowerCase()} · běžná chůze`, klik:'obnovPocasi()' }
+       : { ik:'🚶', hod:`${Math.round(u.walkToday || 0)} m`, pop:'dnes ušlo' }
+  ];
   html += `<div class="card">
-    <h3>🔥 Série přihlášení</h3>
-    <p style="margin:4px 0;font-size:1.4em;font-weight:700;color:var(--gold)">${streak} ${streak===1?'den':'dní'} v řadě</p>
-    <div style="display:flex;gap:6px;margin:6px 0;">${dots.join('')}</div>
-    <p style="font-size:0.85em;color:var(--muted)">Zítra dostaneš <b>${Math.round(streakReward(streak+1)*inflationMult())} Kč</b>, když hru zase otevřeš. Vynechaný den sérii vynuluje.${u.streakBest?` Nejdelší série: <b>${u.streakBest}</b>.`:''}</p>
+    <h3>📅 Dnes</h3>
+    <div class="dnesMrizka">${dlazdice.map(d => `<div class="dnesDl"${d.klik ? ` onclick="${d.klik}" style="cursor:pointer;"` : ''}>
+      <span class="ik">${d.ik}</span><span class="hod"${d.barva ? ` style="color:${d.barva}"` : ''}>${d.hod}</span><span class="pop">${d.pop}</span></div>`).join('')}</div>
+    <div class="dnesUdalost">
+      <span class="ik">${ev.emoji}</span>
+      <div><b>${ev.name}</b><div>${ev.desc}${lokStred ? ` <span style="color:var(--gold)">📍 okolí ${escapeHtml(lokStred.nazev || 'jednoho místa')}${lokD !== null ? ` — ${kudyText(lokStred, lokD)}` : ''}</span>` : ''}</div></div>
+    </div>
   </div>`;
 
-  // --- denní úkoly ---
-  const done = u.questDone.length, total = u.quests.length;
+  // --- ÚKOLY + MÍSTA ZÁJMU (dřív dvě karty, které se překrývaly) ---
   html += `<div class="card">
-    <h3>🎯 Dnešní úkoly <span class="badge">${done}/${total}</span></h3>`;
+    <h3>🎯 Dnešní úkoly <span style="font-weight:400;color:var(--muted);">${done}/${total}</span></h3>`;
   u.quests.forEach(qid => {
     const q = questById(qid);
     if(!q) return;
     const prog = Math.min(q.prog(u), q.goal);
     const hotovo = u.questDone.includes(qid);
-    const pct = Math.round(prog / q.goal * 100);
-    // Odměny rostou s inflací, proto nejsou kulaté (230 → 231). Bez vysvětlení to vypadá
-    // jako chyba ve výpočtu.
-    const odmenaDnes = Math.round(q.reward * inflationMult());
-    html += `<div style="border:1px solid var(--border);border-radius:10px;padding:8px;margin-top:6px;${hotovo?'opacity:0.65;':''}">
-      <p style="margin:0;font-weight:600;">${q.icon} ${q.name} ${hotovo?'<span style="color:var(--accent)">✓ splněno</span>':''}</p>
-      <div style="background:var(--panel);border-radius:6px;height:8px;margin:6px 0;overflow:hidden;">
-        <div style="width:${pct}%;height:100%;background:${hotovo?'var(--accent)':'var(--accent2)'};"></div>
-      </div>
-      <p style="margin:0;font-size:0.82em;color:var(--muted)">${prog} / ${q.goal} ${q.unit} · odměna <b style="color:var(--gold)">${odmenaDnes} Kč</b>${
-        odmenaDnes !== q.reward ? ` <span style="opacity:0.75">(${q.reward} Kč + inflace)</span>` : ''}</p>
+    html += `<div class="ukolRadek${hotovo ? ' hotovo' : ''}">
+      <span class="ik">${hotovo ? '✅' : q.icon}</span>
+      <div class="tx"><div class="nz">${q.name}</div>
+        <div class="fPruh" style="margin:4px 0 0;"><div style="width:${Math.round(prog / q.goal * 100)}%;background:${hotovo ? 'var(--accent)' : 'var(--accent2)'};"></div></div></div>
+      <div class="od"><b>${Math.round(q.reward * inflationMult())} Kč</b><span>${prog}/${q.goal}</span></div>
     </div>`;
   });
-  html += `<p style="font-size:0.85em;color:var(--muted);margin-top:8px;">Splníš všechny tři? Bonus <b>${Math.round(QUEST_ALL_BONUS*inflationMult())} Kč</b>. Úkoly se mění každý den o půlnoci.</p>
-  </div>`;
+  if(lms.length){
+    html += `<div class="fSkup">📍 Místa zájmu — každé jednou denně, do ${LANDMARK_VISIT_RADIUS} m</div>` +
+      lms.map(lm => {
+        const visited = got.includes(lm.id);
+        const dst = playerPos ? Math.round(haversine(playerPos, { lat:lm.lat, lng:lm.lng })) : null;
+        return `<div class="fR"${visited ? ' style="opacity:0.55;"' : ''}><span class="l">${lm.emoji || '📍'} ${escapeHtml(lm.name)}${lm.desc ? `<small>${escapeHtml(lm.desc)}</small>` : ''}</span>
+          <span class="v" style="color:${visited ? 'var(--accent)' : 'var(--gold)'};font-weight:600;">${visited ? '✓ dnes' : (dst !== null ? (dst < 1000 ? dst + ' m' : (dst / 1000).toFixed(1).replace('.', ',') + ' km') : '')}</span></div>`;
+      }).join('');
+  }
+  html += `<p class="fPozn">Splníš všechny tři? Bonus <b>${Math.round(QUEST_ALL_BONUS * inflationMult())} Kč</b>. Úkoly se mění o půlnoci.</p></div>`;
 
-  // --- místa zájmu ---
-  const lms = allLandmarks();
-  html += `<div class="card">
-    <h3>📍 Místa zájmu <span class="badge">${got.length}/${lms.length}</span></h3>
-    <p style="font-size:0.85em;color:var(--muted)">Dojdi k místu (do ${LANDMARK_VISIT_RADIUS} m) a dostaneš ${Math.round(LANDMARK_REWARD*inflationMult())} Kč. Každé místo 1× denně.</p>`;
-  if(!lms.length) html += `<p style="color:var(--muted)">Zatím tu žádná místa nejsou.</p>`;
-  lms.forEach(lm => {
-    const visited = got.includes(lm.id);
-    const dst = playerPos ? Math.round(haversine(playerPos, {lat:lm.lat, lng:lm.lng})) : null;
-    html += `<div style="display:flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:10px;padding:7px;margin-top:6px;${visited?'opacity:0.6;':''}">
-      <span style="font-size:1.3em;">${lm.emoji||'📍'}</span>
-      <div style="flex:1;">
-        <p style="margin:0;font-weight:600;">${escapeHtml(lm.name)} ${visited?'<span style="color:var(--accent);font-size:0.85em;">✓ dnes hotovo</span>':''}</p>
-        <p style="margin:0;font-size:0.8em;color:var(--muted)">${lm.desc?escapeHtml(lm.desc)+' · ':''}${dst!==null?(dst<1000?dst+' m odtud':(dst/1000).toFixed(1).replace('.',',')+' km odtud'):'vzdálenost neznámá'}</p>
-      </div>
-    </div>`;
-  });
-  html += `</div>`;
-
-  // --- čekající platby (dárky od admina) ---
+  // --- čekající platby (dárky od správce) ---
   const pending = asArray(world.gifts && world.gifts[u.name]);
   const claimedIds = asArray(u.claimedGifts);
-  const toClaim = pending.filter(g => g && !claimedIds.includes(g.id));
+  const toClaim = pending.filter(g => g && !g.auto && !claimedIds.includes(g.id));
   if(toClaim.length){
-    const sum = toClaim.reduce((s,g)=>s+(g.amount||0),0);
-    html += `<div class="card" style="border:1px solid var(--accent);">
+    const sum = toClaim.reduce((s2, g) => s2 + (g.amount || 0), 0);
+    html += `<div class="card" style="border-left:3px solid var(--accent);">
       <h3>🎁 Čeká na tebe platba</h3>
-      <p style="font-size:1.2em;font-weight:700;color:var(--gold);margin:4px 0;">+${sum.toLocaleString('cs-CZ')} Kč</p>`;
-    toClaim.forEach(g => {
-      html += `<p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${g.amount.toLocaleString('cs-CZ')} Kč od ${escapeHtml(g.from||'?')}${g.note?' — '+escapeHtml(g.note):''}</p>`;
-    });
-    html += `<div class="row"><button onclick="claimGiftsNow()">Vyzvednout</button></div>
+      <div class="fHero"><span class="cislo" style="color:var(--gold)">+${sum.toLocaleString('cs-CZ')} Kč</span></div>
+      ${toClaim.map(g => `<p class="fPozn" style="margin:2px 0;">${g.amount.toLocaleString('cs-CZ')} Kč od ${escapeHtml(g.from || '?')}${g.note ? ' — ' + escapeHtml(g.note) : ''}</p>`).join('')}
+      <div class="row"><button onclick="claimGiftsNow()">Vyzvednout</button></div>
     </div>`;
   }
 
-  // --- upozornění ---
-  const supported = (typeof Notification !== 'undefined');
-  html += `<div class="card">
-    <h3>🔔 Připomenutí</h3>`;
-  if(!supported){
-    html += `<p style="font-size:0.9em;color:var(--muted)">Tahle appka/prohlížeč upozornění nepodporuje.</p>`;
-  } else if(notifyEnabled){
-    html += `<p style="font-size:0.9em;">Upozornění jsou <b style="color:var(--accent)">zapnutá</b>. Dám vědět, když splníš úkol nebo začne nový den.</p>
-      <div class="row"><button class="secondary" onclick="disableNotifications()">Vypnout upozornění</button></div>`;
-  } else {
-    html += `<p style="font-size:0.9em;">Zapni si upozornění na splněné úkoly a nový den.</p>
-      <div class="row"><button onclick="enableNotifications()">🔔 Zapnout upozornění</button></div>`;
+  // --- na co se dá reagovat: zásobování, postavy ve městě ---
+  html += skladHtml;
+  NPC_DEFS.forEach(def => {
+    const p = npcKde(def.id);
+    if(!p) return;
+    const hotovo = npcPotkan(u, def.id);
+    const d = playerPos ? haversine(playerPos, { lat:p.lat, lng:p.lng }) : null;
+    const blizko = canInteract(p.lat, p.lng, EVA_RADIUS);
+    html += `<div class="card"${hotovo ? ' style="opacity:0.65;"' : ''}>
+      <div class="tipRadek" style="cursor:default;border:none;padding:0;">
+        <span class="ik">${def.emoji}</span>
+        <div class="tx"><div class="nz">${def.jmeno} <span style="font-weight:400;color:var(--muted);">— ${def.role}</span></div>
+          <div class="ci">${hotovo ? 'Dnes už jste se potkali — zítra bude jinde.' : def.popis}</div></div>
+        ${d !== null && !hotovo ? `<div class="kde">${kudyText(p, d)}</div>` : ''}
+      </div>
+      ${hotovo && def.id === 'eva' && u.evaRada ? `<p style="font-size:0.9em;color:var(--accent2);margin:6px 0 0;">💡 „${escapeHtml(u.evaRada)}"</p>` : ''}
+      ${hotovo ? '' : `<div class="row" style="margin-top:8px;">
+        <button ${blizko ? '' : 'disabled'} onclick="potkatNpc('${def.id}')">${blizko ? 'Promluvit si' : 'Musíš být blíž'}</button>
+        <button class="secondary" onclick="ukazNpc('${def.id}')">Kde je</button></div>`}
+    </div>`;
+  });
+  if(u.lastEvent && u.lastEvent.day === world.day){
+    const castka = u.lastEvent.amount || 0;
+    html += `<div class="card"><div class="fR"><span class="l">🎲 ${escapeHtml(u.lastEvent.txt || 'Dnešní setkání')}</span>
+      ${castka ? `<span class="v" style="color:${castka >= 0 ? 'var(--accent)' : 'var(--danger)'}">${castka > 0 ? '+' : ''}${Math.round(castka).toLocaleString('cs-CZ')} Kč</span>` : ''}</div></div>`;
   }
-  html += `<p style="font-size:0.8em;color:var(--muted);margin-top:6px;">Pozn.: upozornění chodí, jen když je hra spuštěná (i na pozadí). Úplně zavřené appce je poslat nejde.</p>
-  </div>`;
+  html += renderOnboarding(u);
+  html += sbirkaHtml;
+
+  // --- upozornění: jen řádek, ne celá karta ---
+  if(typeof Notification !== 'undefined'){
+    html += notifyEnabled
+      ? `<p class="fPozn" style="text-align:center;margin:10px 0;">🔔 Upozornění jsou zapnutá · <a href="#" onclick="disableNotifications();return false;" style="color:var(--muted);">vypnout</a></p>`
+      : `<div class="card"><div class="fR" style="align-items:center;"><span class="l">🔔 Upozornění na splněné úkoly a nový den<small>chodí, jen když je hra spuštěná (i na pozadí)</small></span>
+          <button style="flex:none;min-height:36px;padding:6px 12px;font-size:0.85em;" onclick="enableNotifications()">Zapnout</button></div></div>`;
+  }
 
   html += infoBox('Kdo jsou kolemjdoucí na mapě?', `
     <p>Oranžové značky jsou lidé s nabídkou. Dojdi k nim a rozhodni se — <b>přijmout nemusíš</b>.</p>
     <p>🧳 <b>Kupec</b> koupí tvůj podíl za nadstandardní cenu · 🔑 <b>Zájemce</b> se nastěhuje za vyšší nájem · 💪 <b>Brigáda</b> je práce navíc mimo směnu · 🎒 <b>Peněženka</b> je volba mezi penězi a poctivostí · 🗺️ <b>Znalec</b> poradí dobrý dům ve svém okolí.</p>
     <p style="color:var(--muted)">Denně ${ENCOUNTER_COUNT} setkání, s každým mluvíš jednou. Po půlnoci přijdou nová.</p>
   `);
-
   html += infoBox('Jaké úkoly se můžou objevit?', `
     <p>Každý den dostaneš tři z těchhle úkolů — vybírají se náhodně, ale pro všechny hráče stejně:</p>
     ${QUEST_DEFS.map(q => `<p style="margin:3px 0;">${q.icon} <b>${q.name}</b> — ${q.goal} ${q.unit} · odměna ${Math.round(q.reward*inflationMult())} Kč</p>`).join('')}
-    <p style="color:var(--muted);margin-top:6px;">O víkendu se nezadává úkol na práci (podniky mají zavřeno). Za splnění všech tří je bonus ${Math.round(QUEST_ALL_BONUS*inflationMult())} Kč navíc.</p>
+    <p style="color:var(--muted);margin-top:6px;">O víkendu se nezadává úkol na práci (podniky mají zavřeno). Za splnění všech tří je bonus ${Math.round(QUEST_ALL_BONUS*inflationMult())} Kč navíc. Odměny rostou s inflací, proto nejsou kulaté.</p>
   `);
-
   html += infoBox('Jak fungují denní výzvy?', `
     <p><b>🔥 Série.</b> Za každý den, kdy hru otevřeš, dostaneš odměnu — a ta roste, čím delší sérii máš (až do sedmého dne). Když den vynecháš, začíná se od začátku.</p>
-    <p><b>🎯 Úkoly.</b> Každý den dostaneš tři, stejné pro všechny hráče. Odměna se připíše <b>sama</b>, jakmile úkol splníš — nemusíš nic potvrzovat. Za splnění všech tří je bonus navíc.</p>
+    <p><b>🎯 Úkoly.</b> Každý den dostaneš tři, stejné pro všechny hráče. Odměna se připíše <b>sama</b>, jakmile úkol splníš. Za splnění všech tří je bonus navíc.</p>
     <p><b>📍 Místa zájmu.</b> Fialové body na mapě u skutečných míst v Bučovicích. Dojdi k nim (do ${LANDMARK_VISIT_RADIUS} m) a dostaneš odměnu — každé místo jednou denně.</p>
+    <p><b>☁️ Počasí.</b> Skutečné počasí v Bučovicích. V nepohodě dostáváš za chůzi víc. Klepnutím na dlaždici ho načteš znovu.</p>
     <p><b>💰 Balíky peněz.</b> Žluté body na mapě. Sbírají se automaticky, když k nim dojdeš na ${PICKUP_COLLECT_RADIUS} m. Každý den se objeví na nových místech.</p>
     <p><b>Vše se obnovuje o půlnoci</b> — nové úkoly, nové balíky, místa jde zase navštívit.</p>
-    <p><b>Proč to tu je.</b> Aby se vyplatilo vyjít ven i ve dnech, kdy zrovna nemáš na nákup domu. Denní výzvy jsou nejrychlejší způsob, jak si přivydělat na začátku.</p>
   `);
-
-  if(u.walkBlocked){
-    html += `<div class="card"><h3 style="color:var(--danger)">⚠️ Chůze pozastavena</h3>
-      <p style="font-size:0.9em;">Poloha skákala nesmyslně rychle (auto, vlak nebo falešná GPS), takže se dnes za chůzi neplatí. Zítra se to samo obnoví.</p></div>`;
-  }
 
   setHtml(el, html);
 }
@@ -15410,6 +15627,13 @@ function renderAdmin(){
       adresyStav === 'stahuji' ? ' · <span style="color:var(--gold)">stahuje se…</span>'
       : (adresyStav === 'chyba' ? ' · <span style="color:var(--danger)">stažení selhalo</span>' : '')}</p>
     <div class="row"><button class="secondary" onclick="adminNactiAdresy()">Načíst adresy znovu</button></div>
+  </div>
+
+  <div class="card">
+    <h3>🌦️ Náhled efektů počasí</h3>
+    <p style="font-size:0.9em;color:var(--muted);">Vyzkoušej, jak vypadá mapa v jiném počasí — na 45 vteřin, jen u tebe.</p>
+    <div class="row" style="flex-wrap:wrap;gap:6px;">${Object.keys(ATMO_NAHLEDY).map(t => `<button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="atmoNahled('${t}')">${
+      { dest:'🌧️ Déšť', bourka:'⛈️ Bouřka', snih:'❄️ Sníh', mlha:'🌫️ Mlha', slunce:'☀️ Slunce', zapad:'🌇 Západ', noc:'🌙 Noc', listi:'🍂 Listí' }[t]}</button>`).join('')}</div>
   </div>
 
   <div class="card">
@@ -16639,6 +16863,19 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'20.1', datum:'2026-10-05', body:[
+    ['novinka','🌦️ Živé počasí na mapě podle skutečného počasí v Bučovicích: šikmý déšť podle větru s kroužky na loužích, v bouřce blesky, poletující sníh, plující mlha, stíny mraků táhnoucí přes město, za jasna sluneční záře, ráno a večer zlaté světlo, v noci měsíční svit. Na podzim ve větru padá listí, na jaře okvětní lístky.'],
+    ['info','Efekty se při otevřeném panelu nekreslí (šetří baterii). Vypnout jdou v Průvodci → Nastavení → Počasí a světlo na mapě.'],
+  ]},
+  { verze:'20.0', datum:'2026-10-05', body:[
+    ['zmena','🎯 Denní výzvy jsou přehlednější: nahoře karta „Dnes" se čtyřmi dlaždicemi (série, úkoly, místa zájmu, počasí) a dnešní událostí ve městě. Úkoly a místa zájmu jsou v jedné kartě, sbírka míst je sbalená a upozornění jsou jen řádek.'],
+    ['oprava','„Další krok — krok 1 z 6, vezmi si práci" se ukazoval i zkušeným hráčům s pěti domy. Teď se počítá, kolik kroků už máš, a od čtyř splněných rada zmizí.'],
+  ]},
+  { verze:'19.9', datum:'2026-10-05', body:[
+    ['oprava','V Mých nemovitostech ukazovala hlavička domu jiné číslo než detail (+54 nahoře, +52 dole) — nahoře bylo před daní. Teď je všude stejné „Celkem za den" po dani.'],
+    ['oprava','Rada „doplň zásoby a bude to 118 Kč" nepočítala s dnešním výkyvem tržeb — ve slabý den by to bylo mnohem méně. Teď ukazuje obojí: kolik by provozovna vynesla dnes a kolik v běžný den.'],
+    ['zmena','„Co ti to nese" je přehledný rozpis s částkami vpravo (nájem, provozovna, solár, daň, hypotéka) a součtem dole. U provozovny je jasně odlišené, co jsou tržby celé provozovny a co tvůj podíl.'],
+  ]},
   { verze:'19.8', datum:'2026-10-05', body:[
     ['oprava','V chatu se tlačítko Odeslat zalamovalo pod pole na psaní — teď je zase vedle. A místo „před 1 dny" se píše „včera".'],
     ['novinka','Nové provozovny (nápad od Jerryho): 🌱 zahradnictví, 🕺 disco klub, 🎳 bowling a 🎬 kino. Každá žije z něčeho jiného — zahradnictví z rodinných domů kolem, disco a kino z ruchu v centru. Bowling a kino potřebují aspoň dvoupatrový dům. V dešti se lidem chce do kina a na bowling, zahradnictví naopak vydělá nejvíc za hezkého počasí.'],
