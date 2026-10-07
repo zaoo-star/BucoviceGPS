@@ -1048,6 +1048,13 @@
   @media (prefers-reduced-motion: reduce){ .mistoPin.pulz .pinIk{ animation:none; } }
   /* Co je nového: starší verze sbalené */
   .zmenaVerze h3{ display:flex;align-items:baseline;gap:8px;flex-wrap:wrap; }
+
+  /* Návod se zvýrazněním skutečného prvku */
+  #tutorialOverlay.sCilem{ background:transparent; }
+  #tutSpot{ display:none;position:fixed;border-radius:16px;border:2px solid var(--accent);pointer-events:none;
+    box-shadow:0 0 0 9999px rgba(10,12,16,0.82), 0 0 18px 4px rgba(74,222,128,0.6);transition:all .3s ease;z-index:0; }
+  #tutorialOverlay .tutBox{ position:relative;z-index:1; }
+  #tutText b{ color:var(--text); }
 </style>
 </head>
 <body>
@@ -1430,7 +1437,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.2';
+const APP_VERSION = '21.3';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -2435,6 +2442,11 @@ async function denniUvitani(){
   try { return await denniUvitaniVnitrni(); } finally { uvitaniBezi = false; }
 }
 async function denniUvitaniVnitrni(){
+  // Návod běží nebo se teprve chystá (nový hráč) — uvítání se ukáže, až skončí (endTutorial).
+  if(safeCall(() => tutorialBezi())) return;
+  let navodHotovy = true;
+  try { navodHotovy = localStorage.getItem('bucovice_tutorial_done') === '1'; } catch(e){}
+  if(!navodHotovy) return;
   if(!currentUser) return;
   const u = world.users[currentUser.name];
   if(!u) return;
@@ -17283,6 +17295,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.3', datum:'2026-10-07', body:[
+    ['zmena','👋 Nový úvodní návod: ukazuje přímo na skutečná místa na obrazovce (peníze nahoře, tvoje značka, Výzvy, Domy, legenda) a řekne i o domě zdarma, ochranné lhůtě a balících peněz. Spustit znovu jde v ☰ Víc → 📖 Průvodce.'],
+  ]},
   { verze:'21.2', datum:'2026-10-07', body:[
     ['info','Pro správce: v Admin panelu jsou testovací náhledy — denní doba, mráz, večerní postavy hned, živá zpráva, konfety, zlatá vlna, ohňostroj a „Co je nového" očima vracejícího se hráče.'],
   ]},
@@ -20558,7 +20573,10 @@ function doLogin(name, pinHash){
       joinedRealDate: Date.now(), joinedGameDay: world.day, peakWorth: START_BALANCE, avatar: '🧑', savings: 0, starterHomeAvailable: true, pinHash: pinHash || null};
     addNews('join', `👋 ${name} se přidal do města!`);
     saveWorld();
-    setTimeout(() => showAlert(`🎁 Vítej! Máš nárok na první nemovitost ZDARMA v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč.\n\nDojdi k volnému domu a v jeho detailu klepni na „Vzít zdarma". U levnějšího domu (do ${(STARTER_HOME_VALUE*2).toLocaleString('cs-CZ')} Kč) dostaneš většinu a budeš v něm rovnou bydlet — to ti srazí denní náklady. U drahého domu dostaneš jen menšinový podíl a bydlení z toho nebude.\n\nNárok máš jen jednou, tak si dům vyber.`), 800);
+    // Když poběží úvodní návod, dům zdarma vysvětlí on — hláška by se jinak ukázala přes něj.
+    let navodHotovy = false;
+    try { navodHotovy = localStorage.getItem('bucovice_tutorial_done') === '1'; } catch(e){}
+    if(navodHotovy) setTimeout(() => showAlert(`🎁 Vítej! Máš nárok na první nemovitost ZDARMA v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč.\n\nDojdi k volnému domu a v jeho detailu klepni na „Vzít zdarma". U levnějšího domu (do ${(STARTER_HOME_VALUE*2).toLocaleString('cs-CZ')} Kč) dostaneš většinu a budeš v něm rovnou bydlet — to ti srazí denní náklady. U drahého domu dostaneš jen menšinový podíl a bydlení z toho nebude.\n\nNárok máš jen jednou, tak si dům vyber.`), 800);
   }
   currentUser = {name};
   const u = world.users[name];
@@ -20824,36 +20842,84 @@ document.getElementById('modalInput').addEventListener('keydown', (e) => { if(e.
 document.getElementById('retryGpsBtn').addEventListener('click', (e) => { e.stopPropagation(); startGeoTracking(); });
 
 // ===== TUTORIÁL PRO NOVÉ HRÁČE =====
+// ===== ÚVODNÍ NÁVOD =====
+// Dřív pět textových karet uprostřed obrazovky. Chyběly v nich důležité věci (dům zdarma,
+// ochranná lhůta, balíky peněz) a hráč neviděl, KDE na obrazovce co je. Teď návod ukazuje
+// přímo na skutečné prvky — zbytek obrazovky ztmavne a zvýrazněný prvek svítí.
+// `cil` = CSS selektor prvku, na který krok ukazuje; `kdy` = podmínka, jestli krok ukázat.
 const TUTORIAL_STEPS = [
-  {icon:'👋', title:'Vítej v Bučpoly!', text:'Bučovice zůstaly bez majitelů. Tvůj úkol: zbohatnout a nasbírat co nejvíc nemovitostí. Ukážu ti to ve třech krocích.'},
-  {icon:'🚶', title:'1. Choď po městě', text:'Hra se hraje naživo — za nachozené metry dostáváš peníze. K domům a k práci se musíš fyzicky přiblížit. Je potřeba povolit GPS a chodit s telefonem.'},
-  {icon:'💼', title:'2. Vydělej první peníze', text:'Dojdi k radnici a nastup do práce (třeba úklid). Každý den si odpracuj směnu a dostaneš plat. To je tvůj jistý příjem na začátek.'},
-  {icon:'🏠', title:'3. Kup si bydlení', text:'Dojdi k nějakému domu a kup si podíl (stačí pár %). Vlastní bydlení je nejlevnější — ušetříš na denních nákladech. Pak můžeš dům pronajímat a vydělávat.'},
-  {icon:'📖', title:'Kdykoliv poradím', text:'Nevíš si rady? Dole v liště klepni na ☰ Víc → 📖 „Průvodce" — vysvětlí všechno o penězích, nájmu i půjčkách. Hodně štěstí!'},
+  { icon:'👋', title:'Vítej v Bučpoly!',
+    text:`Bučovice zůstaly bez majitelů — kupuj domy, pronajímej je a zbohatni. Hraje se naživo: chodíš po skutečném městě s telefonem.<br><br>🛡️ První ${NEWBIE_FREE_DAYS} dny neplatíš žádné životní náklady, máš čas se rozkoukat.` },
+  { icon:'💰', title:'Tvoje peníze', cil:'#hudKarta',
+    text:'Nahoře je tvůj zůstatek. Zelené <b>▲ číslo</b> je to, co ti dnes naskočilo — připíše se o půlnoci. Klepnutím na kterékoli číslo se dozvíš víc.' },
+  { icon:'🚶', title:'Choď a sbírej', cil:'.hracIkonaObal',
+    text:'Tohle jsi ty. Za chůzi dostáváš peníze a na mapě jsou <b>balíky 💰</b> s číslem odměny — seberou se samy, když k nim dojdeš. Zelený kruh kolem tebe je dosah, ve kterém můžeš kupovat domy.' },
+  { icon:'🏠', title:'Dům zdarma', kdy: () => { const u = currentUser && world.users[currentUser.name]; return !!(u && u.starterHomeAvailable); },
+    text:`Máš nárok na <b>první dům zdarma</b> v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč — jen jednou, tak si vyber. Dojdi k volnému domu (šedý obrys), klepni na něj a zvol <b>„🎁 Vzít zdarma"</b>.<br><br>Tip: u levnějšího domu (do ${(STARTER_HOME_VALUE * 2).toLocaleString('cs-CZ')} Kč) dostaneš většinu a rovnou v něm budeš bydlet — to ti srazí denní náklady.` },
+  { icon:'🎯', title:'Co dělat dál', cil:'#navVyzvy',
+    text:'Ve <b>Výzvách</b> najdeš další krok, dnešní úkoly za odměny a seznam <b>„Kam dojít pro peníze"</b> — od nejbližšího.' },
+  { icon:'🏘️', title:'Tvoje domy', cil:'#navDomy',
+    text:'V <b>Domech</b> je všechno, co vlastníš, a kolik ti to denně vydělá. Nejjistější příjem na začátek je práce — najdeš ji pod ☰ Víc → 💼 Práce.' },
+  { icon:'ⓘ', title:'Co je co na mapě', cil:'#legendaBtn',
+    text:'Nevíš, co znamená která značka nebo barva? Klepni na <b>ⓘ</b> a ukáže se legenda.' },
+  { icon:'🍀', title:'Hodně štěstí!', cil:'#navVic',
+    text:'Kdykoli si nebudeš vědět rady, je tu <b>☰ Víc → 📖 Průvodce</b> — a odtud jde tenhle návod spustit znovu. Ptát se můžeš i ostatních v 💬 Chatu.' },
 ];
-let tutStep = 0;
+let tutStep = 0, tutKroky = TUTORIAL_STEPS;
 
 function startTutorial(){
+  tutKroky = TUTORIAL_STEPS.filter(k => !k.kdy || safeCall(() => k.kdy()));
   tutStep = 0;
+  closeSheet();
   document.getElementById('tutorialOverlay').style.display = 'block';
   showTutStep();
 }
 function showTutStep(){
-  const s = TUTORIAL_STEPS[tutStep];
+  const s = tutKroky[tutStep];
+  const ov = document.getElementById('tutorialOverlay');
   document.getElementById('tutIcon').textContent = s.icon;
   document.getElementById('tutTitle').textContent = s.title;
-  document.getElementById('tutText').textContent = s.text;
-  document.getElementById('tutNextBtn').textContent = (tutStep === TUTORIAL_STEPS.length-1) ? 'Začít hrát ▸' : 'Další ▸';
-  document.getElementById('tutDots').innerHTML = TUTORIAL_STEPS.map((_,i)=>`<div class="tutDot ${i===tutStep?'on':''}"></div>`).join('');
+  document.getElementById('tutText').innerHTML = s.text;
+  document.getElementById('tutNextBtn').textContent = (tutStep === tutKroky.length - 1) ? 'Začít hrát ▸' : 'Další ▸';
+  document.getElementById('tutDots').innerHTML = tutKroky.map((_, i) => `<div class="tutDot ${i === tutStep ? 'on' : ''}"></div>`).join('');
+  // zvýraznění skutečného prvku na obrazovce
+  let spot = document.getElementById('tutSpot');
+  if(!spot){ spot = document.createElement('div'); spot.id = 'tutSpot'; ov.insertBefore(spot, ov.firstChild); }
+  const box = ov.querySelector('.tutBox');
+  const cil = s.cil ? document.querySelector(s.cil) : null;
+  const r = cil && cil.getBoundingClientRect();
+  if(r && r.width > 0 && r.height > 0){
+    const okraj = 8;
+    spot.style.cssText = `display:block;left:${r.left - okraj}px;top:${r.top - okraj}px;width:${r.width + okraj * 2}px;height:${r.height + okraj * 2}px;`;
+    ov.classList.add('sCilem');
+    // okno s textem na druhou stranu obrazovky než zvýrazněný prvek
+    const dole = r.top + r.height / 2 > innerHeight / 2;
+    box.style.margin = '0';
+    box.style.position = 'absolute';
+    box.style.left = '50%';
+    box.style.transform = 'translateX(-50%)';
+    if(dole){ box.style.top = ''; box.style.bottom = `${innerHeight - r.top + 18}px`; }
+    else { box.style.bottom = ''; box.style.top = `${r.bottom + 18}px`; }
+  } else {
+    spot.style.display = 'none';
+    ov.classList.remove('sCilem');
+    box.style.cssText = '';
+  }
 }
 function nextTutStep(){
   tutStep++;
-  if(tutStep >= TUTORIAL_STEPS.length){ endTutorial(); return; }
+  if(tutStep >= tutKroky.length){ endTutorial(); return; }
   showTutStep();
 }
 function endTutorial(){
   document.getElementById('tutorialOverlay').style.display = 'none';
   try { localStorage.setItem('bucovice_tutorial_done', '1'); } catch(e){}
+  // Ranní uvítání počkalo, až návod skončí (jinak by se ukázalo přes něj).
+  setTimeout(() => safeCall(() => denniUvitani()), 600);
+}
+function tutorialBezi(){
+  const ov = document.getElementById('tutorialOverlay');
+  return !!(ov && ov.style.display === 'block');
 }
 function maybeShowTutorial(){
   let done = false;
