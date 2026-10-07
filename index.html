@@ -978,6 +978,76 @@
   .ukolRadek .od b{ color:var(--gold); }
   .ukolRadek .od span{ color:var(--muted);font-size:0.9em; }
   .ukolRadek.hotovo{ opacity:0.6; }
+
+  /* ===== ŽIVÉ MĚSTO 21.0 ===== */
+  .domSvg .kour, .domSvg .zakaznik, .domSvg .zavrenoCedule, .domSvg .stavbaJerab, .domSvg .stavbaPrach,
+  .domSvg .dyne, .domSvg .svetylka, .domSvg .snehulak{ display:none;position:absolute;pointer-events:none; }
+  .leaflet-container.zblizka .domSvg .kour, .leaflet-container.zblizka .domSvg .zakaznik, .leaflet-container.zblizka .domSvg .zavrenoCedule,
+  .leaflet-container.zblizka .domSvg .stavbaJerab, .leaflet-container.zblizka .domSvg .stavbaPrach,
+  .leaflet-container.zblizka .domSvg .dyne, .leaflet-container.zblizka .domSvg .svetylka, .leaflet-container.zblizka .domSvg .snehulak{ display:block; }
+  /* kouř z komína */
+  .domSvg .kour{ left:68%;top:-4px;width:12px;height:30px; }
+  .domSvg .kour i{ position:absolute;left:2px;bottom:0;width:8px;height:8px;border-radius:50%;background:rgba(220,224,232,0.7);
+    animation:kourStoupa 3.2s ease-out infinite;animation-delay:calc(var(--zp) + var(--i, 0s));opacity:0; }
+  .domSvg .kour i:nth-child(2){ --i:1.05s; } .domSvg .kour i:nth-child(3){ --i:2.1s; }
+  @keyframes kourStoupa{ 0%{ transform:translate(0,0) scale(0.6);opacity:0; } 15%{ opacity:0.75; }
+    100%{ transform:translate(7px,-26px) scale(1.8);opacity:0; } }
+  /* zákazníci u otevřené provozovny */
+  .domSvg .zakaznik{ left:-10px;bottom:4px;font-size:11px;opacity:0;animation:zakaznik var(--zr, 3.4s) ease-out infinite;animation-delay:var(--zp); }
+  @keyframes zakaznik{ 0%{ transform:translate(0,0);opacity:0; } 15%{ opacity:1; } 70%{ opacity:1; } 100%{ transform:translate(-6px,-22px);opacity:0; } }
+  .domSvg .zavrenoCedule{ left:50%;bottom:-11px;transform:translateX(-50%);font-size:8px;font-weight:700;line-height:1.3;white-space:nowrap;
+    color:#e5e7eb;background:rgba(15,17,21,0.82);padding:0 4px;border-radius:4px;letter-spacing:0.03em; }
+  .domSvg.zavrenoDum svg, .domSvg:has(.zavrenoCedule) svg{ filter:saturate(0.45) brightness(0.85) drop-shadow(0 1px 1.5px rgba(0,0,0,0.45)); }
+  /* stavba */
+  .domSvg .stavbaJerab{ right:-14px;top:-12px;font-size:15px;animation:jerab 3s ease-in-out infinite;transform-origin:50% 100%; }
+  @keyframes jerab{ 0%,100%{ transform:rotate(-4deg); } 50%{ transform:rotate(4deg); } }
+  .domSvg .stavbaPrach{ left:20%;bottom:0;width:24px;height:10px;border-radius:50%;background:rgba(214,196,160,0.75);filter:blur(2px);
+    animation:prach 2.4s ease-out infinite; }
+  @keyframes prach{ 0%{ transform:scale(0.4);opacity:0.8; } 100%{ transform:translate(-6px,-6px) scale(1.6);opacity:0; } }
+  /* sezóna */
+  .domSvg .dyne{ left:-8px;bottom:-2px;font-size:12px;animation:dyne 2.4s ease-in-out infinite; }
+  @keyframes dyne{ 0%,100%{ filter:drop-shadow(0 0 2px rgba(251,146,60,0.6)); } 50%{ filter:drop-shadow(0 0 6px rgba(251,146,60,1)); } }
+  .domSvg .snehulak{ right:-12px;bottom:-2px;font-size:13px; }
+  .domSvg .svetylka{ left:2px;right:2px;top:8px;display:none;justify-content:space-between; }
+  .leaflet-container.zblizka .domSvg .svetylka{ display:flex; }
+  .domSvg .svetylka i{ width:4px;height:4px;border-radius:50%;background:#f87171;box-shadow:0 0 4px 1px currentColor;animation:blik 1.2s infinite; }
+  .domSvg .svetylka i:nth-child(2){ background:#fbbf24;color:#fbbf24;animation-delay:0.3s; } .domSvg .svetylka i:nth-child(3){ background:#4ade80;color:#4ade80;animation-delay:0.6s; }
+  .domSvg .svetylka i:nth-child(4){ background:#38bdf8;color:#38bdf8;animation-delay:0.9s; } .domSvg .svetylka i:nth-child(1){ color:#f87171; } .domSvg .svetylka i:nth-child(5){ background:#f472b6;color:#f472b6;animation-delay:0.45s; }
+  @keyframes blik{ 0%,100%{ opacity:1; } 50%{ opacity:0.25; } }
+  .stromecek{ font-size:40px;line-height:1;filter:drop-shadow(0 0 10px rgba(251,191,36,0.85));animation:dyne 2s ease-in-out infinite; }
+  /* oslavy */
+  #oslavy{ position:fixed;inset:0;pointer-events:none;z-index:900;overflow:hidden; }
+  .konfeta{ position:absolute;width:7px;height:10px;border-radius:2px;animation:konfeta 1.3s cubic-bezier(.15,.7,.3,1) forwards; }
+  @keyframes konfeta{ 0%{ transform:translate(0,0) rotate(0);opacity:1; }
+    70%{ opacity:1; } 100%{ transform:translate(var(--dx), calc(var(--dy) + 60px)) rotate(var(--rot));opacity:0; } }
+  .zlataVlnaKruh{ width:60px;height:60px;border-radius:50%;border:3px solid #fbbf24;box-shadow:0 0 14px #fbbf24;animation:vlna 1.2s ease-out forwards; }
+  @keyframes vlna{ 0%{ transform:scale(0.2);opacity:1; } 100%{ transform:scale(1.4);opacity:0; } }
+  /* živé zprávy */
+  #zivaZprava{ position:absolute;left:50%;bottom:calc(var(--navH) + 74px);transform:translate(-50%, 20px);z-index:455;max-width:86%;
+    padding:8px 14px;border-radius:14px;font-size:12.5px;line-height:1.35;text-align:center;color:var(--text);
+    background:rgba(18,21,28,0.92);border:1px solid rgba(255,255,255,0.14);box-shadow:0 6px 16px rgba(0,0,0,0.4);
+    opacity:0;transition:opacity .35s, transform .35s;pointer-events:none; }
+  #zivaZprava.videt{ opacity:1;transform:translate(-50%, 0);pointer-events:auto;cursor:pointer; }
+  .zivyPulz{ width:70px;height:70px;border-radius:50%;border:3px solid #38bdf8;animation:vlna 1.1s ease-out 3;box-shadow:0 0 12px #38bdf8; }
+  @media (prefers-reduced-motion: reduce){
+    .domSvg .kour i, .domSvg .zakaznik, .domSvg .stavbaJerab, .domSvg .stavbaPrach, .domSvg .dyne, .domSvg .svetylka i, .stromecek{ animation:none; }
+    .domSvg .zakaznik{ opacity:1; }
+  }
+
+  /* Jednotné značky „dojdi pro odměnu" */
+  .mistoPin{ position:relative;width:34px;height:44px;display:flex;flex-direction:column;align-items:center; }
+  .mistoPin .pinIk{ width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;
+    background:rgba(18,21,28,0.88);border:2.5px solid var(--pc);box-shadow:0 0 0 2px rgba(255,255,255,0.85), 0 3px 8px rgba(0,0,0,0.45); }
+  .mistoPin .pinOdm{ margin-top:-5px;font-size:9.5px;font-weight:800;line-height:1.35;padding:0 5px;border-radius:7px;color:#0f1115;
+    background:var(--pc);box-shadow:0 1px 3px rgba(0,0,0,0.45);white-space:nowrap; }
+  .mistoPin.hotovo{ opacity:0.55; }
+  .mistoPin.hotovo .pinIk{ border-color:#9ca3af;filter:grayscale(0.8); }
+  .mistoPin.hotovo .pinOdm{ background:#9ca3af; }
+  .mistoPin.pulz .pinIk{ animation:akcePulz 1.8s infinite; }
+  body.jeNoc .mistoPin:not(.hotovo) .pinIk{ box-shadow:0 0 0 2px rgba(255,255,255,0.85), 0 0 12px 3px var(--pc); }
+  @media (prefers-reduced-motion: reduce){ .mistoPin.pulz .pinIk{ animation:none; } }
+  /* Co je nového: starší verze sbalené */
+  .zmenaVerze h3{ display:flex;align-items:baseline;gap:8px;flex-wrap:wrap; }
 </style>
 </head>
 <body>
@@ -1360,7 +1430,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '20.1';
+const APP_VERSION = '21.2';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -7650,6 +7720,8 @@ function hlidejRank(){
     zapisDoDeniku('other', `${r.rank.emoji} Nová hodnost: ${r.rank.nazev}`, null);
     notifyPlayer(`Nová hodnost: ${r.rank.nazev}`, `${r.rank.emoji} ${r.rank.popis}`);
     playSound('coin');
+    safeCall(() => ohnostroj());
+    showFlash(`${r.rank.emoji} Nová hodnost: ${r.rank.nazev}`);
     const el = document.getElementById('userInfo');
     if(el) el.innerHTML = userInfoHtml(u.name);
     saveWorld();
@@ -9149,6 +9221,25 @@ function renderOtherPlayers(){
 }
 
 
+// Jednotná značka pro všechno, kam se chodí pro peníze: balíky, místa zájmu, sbírka a akce.
+// Dřív měl každý druh jiný tvar a barvu a hráč nevěděl, co je co a kolik dostane. Teď je to
+// vždy stejný kulatý „pin" s ikonou a pod ním štítek s odměnou (nebo ✓). Barva okraje jen
+// jemně odliší druh. Pravidla zůstávají — balíky se seberou samy, místa zájmu jednou denně,
+// sbírka jednou za hru, akce jednou za akci.
+const PIN_DRUHY = {
+  balik:  { barva:'#fbbf24', nazev:'Balík peněz',   kdy:'každý den nové' },
+  zajem:  { barva:'#a855f7', nazev:'Místo zájmu',   kdy:'jednou denně' },
+  sbirka: { barva:'#38bdf8', nazev:'Místo ze sbírky', kdy:'jednou za hru' },
+  akce:   { barva:'#f97316', nazev:'Akce ve městě', kdy:'jednou za akci' }
+};
+function pinHtml(druh, emoji, odmena, hotovo){
+  const d = PIN_DRUHY[druh] || PIN_DRUHY.zajem;
+  return `<div class="mistoPin${hotovo ? ' hotovo' : ''}${druh === 'akce' && !hotovo ? ' pulz' : ''}" style="--pc:${d.barva}">
+    <span class="pinIk">${emoji}</span><span class="pinOdm">${hotovo ? '✓' : '+' + Math.round(odmena)}</span></div>`;
+}
+function pinIkona(druh, emoji, odmena, hotovo){
+  return L.divIcon({ html: pinHtml(druh, emoji, odmena, hotovo), className:'', iconSize:[34, 44], iconAnchor:[17, 17], tooltipAnchor:[0, -16] });
+}
 let pickupMarkers = {};
 function renderPickupMarkers(){
   if(!map || !currentUser) return;
@@ -9161,8 +9252,8 @@ function renderPickupMarkers(){
     const emoji = pk.bonus ? '🎁' : '💰';
     if(!pickupMarkers[pk.id]){
       pickupMarkers[pk.id] = L.marker([pk.lat, pk.lng], {
-        icon: L.divIcon({ html:`<div class="pickupMarker">${emoji}</div>`, className:'', iconSize:[30,30] })
-      }).addTo(map).bindTooltip(pk.bonus ? 'Bonusový balík — dojdi pro odměnu!' : 'Balík peněz — dojdi pro odměnu!');
+        icon: pinIkona('balik', emoji, pk.reward * inflationMult() * eventMult('pickupMult'), false)
+      }).addTo(map).bindTooltip(pk.bonus ? 'Bonusový balík — sebere se sám, když k němu dojdeš' : 'Balík peněz — sebere se sám, když k němu dojdeš');
     }
   });
   // odstranit markery bodů, které už neexistují nebo jsou sebrané
@@ -9565,7 +9656,7 @@ function renderMistaMarkery(){
     if(mistaMarkery[m.id] && mistaMarkery[m.id]._klic === klic) return;
     if(mistaMarkery[m.id] && map.hasLayer(mistaMarkery[m.id])) map.removeLayer(mistaMarkery[m.id]);
     const znacka = L.marker([m.lat, m.lng], {
-      icon: L.divIcon({ html:`<div class="mistoMarker${mam ? ' mam' : ''}">${sada ? sada.emoji : '📍'}</div>`, className:'', iconSize:[26,26] })
+      icon: pinIkona('sbirka', sada ? sada.emoji : '📍', MISTO_ODMENA * inflationMult(), mam)
     }).addTo(map).bindTooltip(mam ? `${escapeHtml(m.nazev)} — už navštíveno ✓`
       : `${escapeHtml(m.nazev)} — dojdi na ${MISTO_RADIUS} m, +${Math.round(MISTO_ODMENA * inflationMult())} Kč`);
     znacka._klic = klic;
@@ -9585,8 +9676,8 @@ function renderLandmarkMarkers(){
       delete landmarkMarkers[lm.id];
     }
     landmarkMarkers[lm.id] = L.marker([lm.lat, lm.lng], {
-      icon: L.divIcon({ html:`<div class="${cls}">${escapeHtml(lm.emoji || '📍')}</div>`, className:'', iconSize:[30,30] })
-    }).addTo(map).bindTooltip(visited ? `${escapeHtml(lm.name)} — dnes navštíveno ✓` : `${escapeHtml(lm.name)} — dojdi pro odměnu`);
+      icon: pinIkona('zajem', escapeHtml(lm.emoji || '📍'), LANDMARK_REWARD * inflationMult() * eventMult('landmarkMult'), visited)
+    }).addTo(map).bindTooltip(visited ? `${escapeHtml(lm.name)} — dnes navštíveno ✓` : `${escapeHtml(lm.name)} — místo zájmu, odměna jednou denně`);
   });
   Object.keys(landmarkMarkers).forEach(id => {
     if(!seen[id]){ if(map.hasLayer(landmarkMarkers[id])) map.removeLayer(landmarkMarkers[id]); delete landmarkMarkers[id]; }
@@ -9957,7 +10048,7 @@ function iconKey(p){
           dosah ? 1 : 0, recommendedIds[p.id] ? 1 : 0, b ? b.hex : '-',
           Object.keys(p.upgrades || {}).filter(k => p.upgrades[k]).sort().join(''), ulicniMult(p) > 1 ? 1 : 0,
           pocetPater(p), houseHasOwner(p) ? 1 : 0, p.useType || '-',
-          vynosRezim ? Math.round(vynosDomu(p) || 0) : '-', nazevProvozu(p)].join('|');
+          vynosRezim ? Math.round(vynosDomu(p) || 0) : '-', nazevProvozu(p), safeCall(() => dekorKlic(p, owned)) || ''].join('|');
 }
 
 
@@ -10075,6 +10166,7 @@ function hlidejUlice(){
     addNews('achievement', `👑 ${u.name} ovládl ulici ${nazev}${st && st.cela ? ' — celou!' : ''}`);
     notifyPlayer('Ulice je tvoje', `${nazev}: tvoje domy tu teď nesou vyšší nájem.`);
     playSound('success');
+    safeCall(() => zlataVlna(nazev));
   });
   ztracene.forEach(nazev => notifyPlayer('Přišel jsi o ulici', `${nazev}: už v ní nemáš většinu, bonus k nájmu skončil.`));
   u.ulice = ted;
@@ -10237,7 +10329,7 @@ function renderAkceMarkery(){
     if(akceZnacky[a.id] && akceZnacky[a.id]._klic === klic) return;
     if(akceZnacky[a.id]) map.removeLayer(akceZnacky[a.id]);
     akceZnacky[a.id] = L.marker([a.lat, a.lng], {
-      icon: L.divIcon({ html:`<div class="akceMarker${byl ? ' byl' : ''}">${escapeHtml(a.emoji || '🎪')}</div>`, className:'', iconSize:[34,34] })
+      icon: pinIkona('akce', escapeHtml(a.emoji || '🎪'), AKCE_ODMENA * inflationMult(), byl)
     }).addTo(map).bindTooltip(byl ? `${escapeHtml(a.nazev)} — už jsi tu byl ✓` : `${escapeHtml(a.nazev)} — dojdi sem pro ${Math.round(AKCE_ODMENA * inflationMult())} Kč`);
     akceZnacky[a.id]._klic = klic;
   });
@@ -10550,6 +10642,7 @@ function zpracujNabidky(){
         nabidkaVidena(n.id + ':konec', true);
         zapisDoDeniku('buy', `🤝 ${n.komu} přijal nabídku: ${des(n.pct, 1)} % ${cilNabidky(n)}`, null);
         notifyPlayer('Nabídka přijata!', `${n.komu} ti prodal ${des(n.pct, 1)} % ${cilNabidky(n)} za ${n.cena.toLocaleString('cs-CZ')} Kč.`);
+        safeCall(() => { const c = n.houseId ? world.parcels[n.houseId] : (world.businesses || {})[n.bizId]; if(c) oslavaNakup(c.lat, c.lng); });
         hlaseniProHrace(u, `🤝 ${n.komu} přijal tvou nabídku: ${des(n.pct, 1)} % ${cilNabidky(n)}.`);
         playSound('success');
       }
@@ -10881,7 +10974,9 @@ const POSTAVY_TYPY = {
 // Postavička opilce v mikině s kapucí a půllitrem v ruce, která se při chůzi motá.
 // Mikina má barvu podle druhu, v rohu odznak (🎨 sprejer, 🍺 parta, 🔨 vandal, 💰 zloděj).
 function postavaSvg(typ){
-  const t = POSTAVY_TYPY[typ] || POSTAVY_TYPY.parta;
+  let t = POSTAVY_TYPY[typ] || POSTAVY_TYPY.parta;
+  // O Dušičkách chodí v kostýmech: oranžovo-černé mikiny a odznak duch/dýně
+  if(VZHLED.sezony && (sezona() || {}).id === 'dusicky') t = Object.assign({}, t, { mikina: typ === 'zlodej' ? '#111827' : '#ea580c', emoji: typ === 'parta' ? '🎃' : '👻' });
   return `<svg width="40" height="52" viewBox="0 0 40 52" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
     <ellipse cx="20" cy="49" rx="13" ry="3" fill="rgba(168,85,247,0.55)"/>
     <path d="M17 36 L13 48 M23 36 L27 47" stroke="#1f2937" stroke-width="3.4" stroke-linecap="round"/>
@@ -10982,17 +11077,17 @@ function polohaPostavy(po, ted){
 }
 function klicPostavy(vecerId, i){ return 'v' + vecerId + '_' + i; }
 function dnesniVecerId(){ return calendarDay(new Date()); }
-function jeVecer(){ const h = new Date().getHours(); return h >= VECER_OD && h < VECER_DO; }
+function jeVecer(){ if(testVecerAktivni()) return true; const h = hodinaTed(); return h >= VECER_OD && h < VECER_DO; }
 let postavyZnacky = {};
 function renderPostavy(){
   if(!map) return;
   const ted = Date.now();
   const vecerId = dnesniVecerId();
-  const trasy = jeVecer() ? pripravVecer(vecerId) : null;
+  const trasy = testVecerAktivni() && testTrasy ? testTrasy : (jeVecer() ? pripravVecer(vecerId) : null);
   const vidim = new Set();
   if(trasy) trasy.postavy.forEach((po, i) => {
     const k = klicPostavy(vecerId, i);
-    if(world.zahnani && world.zahnani[k]) return;
+    if(testVecerAktivni() ? testZahnani[k] : (world.zahnani && world.zahnani[k])) return;
     const pos = polohaPostavy(po, ted);
     if(!pos) return;
     vidim.add(k);
@@ -11008,6 +11103,18 @@ function renderPostavy(){
 }
 function checkPostavy(){
   if(!currentUser || !playerPos || !jeVecer()) return;
+  if(testVecerAktivni() && testTrasy){
+    // náhled: postava zmizí a ukáže se oslava, ale žádné peníze ani zápis do světa
+    testTrasy.postavy.forEach((po, i) => {
+      const k = klicPostavy(dnesniVecerId(), i);
+      const pos = polohaPostavy(po, Date.now());
+      if(testZahnani[k] || !pos || haversine(playerPos, pos) > POSTAVA_DOSAH) return;
+      testZahnani[k] = true;
+      showFlash(`🚨 (test) ${(POSTAVY_TYPY[po.typ] || {}).nazev || 'Postava'} zahnán`);
+      safeCall(() => renderPostavy());
+    });
+    return;
+  }
   const vecerId = dnesniVecerId();
   const trasy = pripravVecer(vecerId);
   if(!trasy) return;
@@ -11100,7 +11207,7 @@ function vykradenaPokladna(u, biz){
   notifyPlayer('Vykradená pokladna', `${biz.name}: tvůj podíl přišel o ${ztrata} Kč.`);
 }
 function vecerKartaHtml(){
-  if(!jeVecer()) return '';
+  if(!jeVecer() || testVecerAktivni()) return '';
   const vecerId = dnesniVecerId();
   const trasy = pripravVecer(vecerId);
   if(!trasy) return '';
@@ -11339,7 +11446,7 @@ function atmoStav(){
   if(Atmo.nahled && Date.now() < Atmo.nahledDo) return Atmo.nahled;
   const k = POCASI && typeof POCASI.kod === 'number' ? POCASI.kod : -1;
   const vitr = POCASI ? (POCASI.vitr || 0) : 0;
-  const h = new Date().getHours();
+  const h = hodinaTed();
   const sez = sezona();
   const snih = (k >= 71 && k <= 77) || k === 85 || k === 86;
   const dest = (k >= 51 && k <= 67) || (k >= 80 && k <= 82) || k >= 95;
@@ -11383,8 +11490,12 @@ function atmoNaplnit(st){
   const plocha = Math.max(0.4, (Atmo.w * Atmo.h) / (400 * 800));
   const W = Atmo.w, H = Atmo.h;
   const sikmo = Math.min(0.6, st.vitr / 40);
-  Atmo.kapky = st.srazky === 'dest' ? Array.from({ length: Math.round((40 + 230 * st.intenzita) * plocha) }, () => ({
-    x: nahodne(-W * 0.2, W * 1.1), y: nahodne(-H, H), v: nahodne(900, 1400), d: nahodne(12, 22), sikmo })) : [];
+  // Kapky padají šikmo — za celou výšku obrazovky uletí do strany o `sikmo × H`. Musí proto
+  // startovat i daleko vlevo za okrajem, jinak levý dolní roh zůstal bez deště (hlášeno:
+  // „počasí jen přes půl obrazovky").
+  Atmo.kapkyOd = -W * 0.1 - sikmo * H;
+  Atmo.kapky = st.srazky === 'dest' ? Array.from({ length: Math.round((40 + 230 * st.intenzita) * plocha * (1 + sikmo)) }, () => ({
+    x: nahodne(Atmo.kapkyOd, W * 1.05), y: nahodne(-H, H), v: nahodne(900, 1400), d: nahodne(12, 22), sikmo })) : [];
   Atmo.vlocky = st.srazky === 'snih' ? Array.from({ length: Math.round((50 + 160 * st.intenzita) * plocha) }, () => ({
     x: nahodne(0, W), y: nahodne(-H, H), r: nahodne(0.9, 3.2), v: nahodne(25, 70), f: nahodne(0, 6.28), a: nahodne(0.55, 0.95) })) : [];
   Atmo.mraky = st.oblacnost > 0 ? Array.from({ length: Math.round(3 + 4 * st.oblacnost) }, () => ({
@@ -11393,7 +11504,7 @@ function atmoNaplnit(st){
   const barvyListi = ['#d97706', '#b45309', '#dc2626', '#ca8a04', '#92400e'];
   const barvyKvetu = ['#fbcfe8', '#f9a8d4', '#fde2e4', '#ffffff'];
   Atmo.listi = (st.listi || st.kvety) ? Array.from({ length: Math.round((st.listi ? 18 : 22) * Math.min(1.5, Math.max(0.8, plocha))) }, () => ({
-    x: nahodne(-W * 0.2, W), y: nahodne(-H, H), vx: nahodne(30, 70) + st.vitr * 2, vy: nahodne(30, 60), rot: nahodne(0, 6.28), vr: nahodne(-2, 2),
+    x: nahodne(-W * 0.2, W), y: nahodne(0, H), vx: nahodne(30, 70) + st.vitr * 2, vy: nahodne(30, 60), rot: nahodne(0, 6.28), vr: nahodne(-2, 2),
     s: st.listi ? nahodne(6, 11) : nahodne(3.5, 6), c: (st.listi ? barvyListi : barvyKvetu)[Math.floor(Math.random() * (st.listi ? 5 : 4))], f: nahodne(0, 6.28) })) : [];
   Atmo.louze = [];
 }
@@ -11456,7 +11567,7 @@ function atmoKresli(ted){
     ctx.beginPath();
     Atmo.kapky.forEach(k => {
       k.y += k.v * dt; k.x += k.v * k.sikmo * dt;
-      if(k.y > H){ k.y = nahodne(-60, -10); k.x = nahodne(-W * 0.2, W * 1.1);
+      if(k.y > H || k.x > W + 30){ k.y = nahodne(-60, -10); k.x = nahodne(Atmo.kapkyOd, W * 1.05);
         if(Math.random() < 0.35 && Atmo.louze.length < 40) Atmo.louze.push({ x: nahodne(0, W), y: nahodne(H * 0.15, H), t: 0 }); }
       ctx.moveTo(k.x, k.y); ctx.lineTo(k.x - k.d * k.sikmo, k.y - k.d);
     });
@@ -11492,7 +11603,7 @@ function atmoKresli(ted){
     Atmo.vlocky.forEach(v => {
       v.f += dt * 1.2; v.y += v.v * dt; v.x += (Math.sin(v.f) * 18 + st.vitr * 0.8) * dt;
       if(v.y > H + 5){ v.y = -5; v.x = nahodne(0, W); }
-      if(v.x > W + 5) v.x = -5;
+      if(v.x > W + 5){ v.x = -5; v.y = nahodne(0, H); }
       ctx.fillStyle = `rgba(255,255,255,${v.a})`;
       ctx.beginPath(); ctx.arc(v.x, v.y, v.r, 0, 6.283); ctx.fill();
     });
@@ -11500,7 +11611,11 @@ function atmoKresli(ted){
   // --- listí / květy ---
   Atmo.listi.forEach(l => {
     l.f += dt * 2; l.x += (l.vx + Math.sin(l.f) * 25) * dt; l.y += (l.vy + Math.cos(l.f) * 10) * dt; l.rot += l.vr * dt;
-    if(l.x > W + 20 || l.y > H + 20){ l.x = nahodne(-W * 0.3, W * 0.5); l.y = -20; }
+    // Vítr nese listí šikmo doprava — vracet ho shora i z levého okraje, jinak by spodní
+    // levá část obrazovky zůstala prázdná.
+    if(l.x > W + 20 || l.y > H + 20){
+      if(Math.random() < 0.5){ l.x = nahodne(-W * 0.2, W); l.y = -20; } else { l.x = -20; l.y = nahodne(H * 0.3, H); }
+    }
     ctx.save(); ctx.translate(l.x, l.y); ctx.rotate(l.rot);
     ctx.fillStyle = l.c; ctx.globalAlpha = 0.9;
     ctx.beginPath(); ctx.ellipse(0, 0, l.s, l.s * 0.5, 0, 0, 6.283); ctx.fill();
@@ -11553,6 +11668,247 @@ function atmoNahled(typ){
   closeSheet();
   atmoSpust();
   showToast('Náhled efektu na 45 vteřin');
+}
+
+
+// ===== ŽIVÉ MĚSTO (21.0) =====
+// Dekorace domů: kouř z komínů, otevírací doba provozoven se zákazníky, lešení při stavbě,
+// sezónní výzdoba. Všechno jsou jen malé prvky v značce domu (CSS animace), ukazují se až
+// při přiblížení a nemění ekonomiku — tržby se počítají za celý den jako dřív.
+const PROVOZ_HODINY = {
+  vecerka:[6, 22], pekarna:[6, 18], kavarna:[7, 20], kadernictvi:[8, 18], restaurace:[11, 23], fitko:[6, 22],
+  zahradnictvi:[8, 18], disco:[20, 4], bowling:[14, 24], kino:[15, 24]
+};
+function provozOtevreno(p, hod){
+  if(!maProvoz(p)) return false;
+  const h = typeof hod === 'number' ? hod : hodinaTed();
+  const [od, d] = PROVOZ_HODINY[p.provoz.typ] || [8, 18];
+  return od < d ? (h >= od && h < d) : (h >= od || h < d);   // přes půlnoc (disco)
+}
+function hashId(id){ let x = 0; for(const c of String(id)) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x; }
+let SEZONA_NAHLED = null, SEZONA_NAHLED_DO = 0;
+function dekorDomu(p, obydleny){
+  const casti = [];
+  const zblizka = '';
+  // kouř z komínů, když je zima
+  if(obydleny && teplotaTed() !== null && teplotaTed() < 8 && !maProvoz(p))
+    casti.push(`<span class="kour" style="--zp:${(hashId(p.id) % 30) / 10}s"><i></i><i></i><i></i></span>`);
+  // provozovna: zákazníci, nebo zavřeno
+  if(maProvoz(p)){
+    if(provozOtevreno(p)){
+      const pop = safeCall(() => poptavkaProMisto(p, p.provoz.typ).index) || 1;
+      if(pop >= 0.8 && (p.provoz.zasoby ?? 100) > 15)
+        casti.push(`<span class="zakaznik" style="--zp:${(hashId(p.id) % 40) / 10}s;--zr:${pop >= 1.3 ? 2.4 : 3.6}s">${p.provoz.typ === 'disco' ? '💃' : (p.provoz.typ === 'kino' ? '🍿' : '🛍️')}</span>`);
+    } else casti.push(`<span class="zavrenoCedule">zavřeno</span>`);
+  }
+  // stavba běží
+  if(p.project) casti.push(`<span class="stavbaJerab">🏗️</span><span class="stavbaPrach"></span>`);
+  // sezónní výzdoba
+  if(VZHLED.sezony && obydleny){
+    const sez = sezona();
+    if(sez && sez.id === 'dusicky') casti.push(`<span class="dyne">🎃</span>`);
+    if(sez && (sez.id === 'advent' || sez.id === 'vanoce')) casti.push(`<span class="svetylka"><i></i><i></i><i></i><i></i><i></i></span>`);
+    const m = new Date().getMonth() + 1;
+    if((m === 12 || m <= 2) && hashId(p.id) % 6 === 0 && teplotaTed() !== null && teplotaTed() <= 2) casti.push(`<span class="snehulak">⛄</span>`);
+  }
+  return casti.join('');
+}
+function dekorKlic(p, obydleny){
+  const sez = VZHLED.sezony ? (sezona() || {}).id : '';
+  return [obydleny && teplotaTed() !== null && teplotaTed() < 8 ? 'k' : '', maProvoz(p) ? (provozOtevreno(p) ? 'o' : 'z') : '', p.project ? 's' : '', sez || ''].join('');
+}
+
+// ===== OSLAVY =====
+let oslavyVrstva = null;
+function oslavyEl(){
+  if(!oslavyVrstva){
+    oslavyVrstva = document.createElement('div');
+    oslavyVrstva.id = 'oslavy';
+    document.body.appendChild(oslavyVrstva);
+  }
+  return oslavyVrstva;
+}
+function pomaleAnimace(){ return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; }
+// Výbuch konfet v daném bodě obrazovky.
+function konfety(x, y, pocet, barvy){
+  if(pomaleAnimace()) return;
+  const el = oslavyEl();
+  const B = barvy || ['#fbbf24', '#4ade80', '#38bdf8', '#f472b6', '#a78bfa', '#f87171'];
+  for(let i = 0; i < (pocet || 26); i++){
+    const k = document.createElement('i');
+    const uhel = Math.random() * Math.PI * 2, d = 40 + Math.random() * 90;
+    k.className = 'konfeta';
+    k.style.cssText = `left:${x}px;top:${y}px;background:${B[i % B.length]};--dx:${Math.cos(uhel) * d}px;--dy:${Math.sin(uhel) * d - 30}px;--rot:${Math.random() * 720 - 360}deg;animation-delay:${Math.random() * 0.08}s;`;
+    el.appendChild(k);
+    setTimeout(() => k.remove(), 1500);
+  }
+}
+function bodNaObrazovce(lat, lng){
+  if(!map) return { x: innerWidth / 2, y: innerHeight / 2 };
+  const pt = map.latLngToContainerPoint([lat, lng]);
+  const r = map.getContainer().getBoundingClientRect();
+  return { x: r.left + pt.x, y: r.top + pt.y - 18 };
+}
+function oslavaNakup(lat, lng){
+  if(typeof lat !== 'number') return;
+  const b = bodNaObrazovce(lat, lng);
+  konfety(b.x, b.y, 30);
+  playSound('success');
+}
+// Ohňostroj přes obrazovku — při nové hodnosti.
+function ohnostroj(){
+  if(pomaleAnimace()) return;
+  for(let i = 0; i < 5; i++) setTimeout(() => {
+    konfety(innerWidth * (0.2 + Math.random() * 0.6), innerHeight * (0.2 + Math.random() * 0.35), 34,
+      [['#fbbf24', '#fde68a'], ['#f472b6', '#fbcfe8'], ['#38bdf8', '#bae6fd'], ['#4ade80', '#bbf7d0'], ['#a78bfa', '#ddd6fe']][i]);
+  }, i * 380);
+}
+// Zlatá vlna přes všechny domy ovládnuté ulice.
+function zlataVlna(nazevUlice){
+  if(!map || pomaleAnimace()) return;
+  const ids = (seznamUlic() || {})[nazevUlice] || [];
+  const domy = ids.map(id => world.parcels[id]).filter(Boolean);
+  if(!domy.length) return;
+  const prvni = domy[0];
+  domy.sort((a, b) => haversine(prvni, a) - haversine(prvni, b));
+  domy.forEach((p, i) => setTimeout(() => {
+    const m = L.marker([p.lat, p.lng], { icon: L.divIcon({ className:'', iconSize:[60, 60], iconAnchor:[30, 30], html:'<div class="zlataVlnaKruh"></div>' }), interactive:false, zIndexOffset:2500 }).addTo(map);
+    setTimeout(() => map.hasLayer(m) && map.removeLayer(m), 1300);
+  }, i * 90));
+}
+
+// ===== ŽIVÉ ZPRÁVY NA MAPĚ =====
+// Když někdo jiný něco udělá, ukáže se dole bublina a nad místem krátce blikne kruh.
+// Dřív se to dalo zjistit jen z novin — teď je vidět, že ostatní hrají právě teď.
+const zpravyVidene = new Set();
+let zpravyPripraveno = false, zpravyFronta = [], zpravaBezi = false;
+const klicZpravy = n => (n && (n.ts + '|' + n.text)) || '';
+function zkontrolujZiveZpravy(){
+  const news = asArray(world.news);
+  if(!zpravyPripraveno){ news.forEach(n => zpravyVidene.add(klicZpravy(n))); zpravyPripraveno = true; return; }
+  news.forEach(n => {
+    const k = klicZpravy(n);
+    if(!n || zpravyVidene.has(k)) return;
+    zpravyVidene.add(k);
+    if(Date.now() - (n.ts || 0) > 3 * 60000) return;   // stará zpráva z dohánění — neukazovat
+    zpravyFronta.push(n);
+  });
+  if(zpravyFronta.length > 4) zpravyFronta = zpravyFronta.slice(-4);
+  dalsiZivaZprava();
+}
+function dalsiZivaZprava(){
+  if(zpravaBezi || !zpravyFronta.length) return;
+  const sheet = document.getElementById('bottomSheet');
+  if(sheet && sheet.classList.contains('open')) return;   // při otevřeném panelu počkat
+  const n = zpravyFronta.shift();
+  zpravaBezi = true;
+  let el = document.getElementById('zivaZprava');
+  if(!el){ el = document.createElement('div'); el.id = 'zivaZprava'; (document.getElementById('app') || document.body).appendChild(el); }
+  el.innerHTML = escapeHtml(n.text);
+  el.classList.add('videt');
+  // kde se to stalo
+  let bod = null;
+  if(n.kde && typeof n.kde === 'object' && isFinite(n.kde.lat)) bod = n.kde;
+  else { const id = (typeof n.kde === 'string' && world.parcels[n.kde]) ? n.kde : safeCall(() => domZeZpravy(n.text)); if(id && world.parcels[id]) bod = world.parcels[id]; }
+  if(bod && map){
+    const m = L.marker([bod.lat, bod.lng], { icon: L.divIcon({ className:'', iconSize:[70, 70], iconAnchor:[35, 35], html:'<div class="zivyPulz"></div>' }), interactive:false, zIndexOffset:2600 }).addTo(map);
+    setTimeout(() => map.hasLayer(m) && map.removeLayer(m), 3200);
+    el.onclick = () => map.setView([bod.lat, bod.lng], Math.max(map.getZoom(), 17));
+  } else el.onclick = null;
+  setTimeout(() => {
+    el.classList.remove('videt');
+    setTimeout(() => { zpravaBezi = false; dalsiZivaZprava(); }, 400);
+  }, 4500);
+}
+
+// ===== SEZÓNNÍ ZNAČKY VE MĚSTĚ =====
+let sezonniZnacky = [];
+function renderSezonniZnacky(){
+  if(!map) return;
+  sezonniZnacky.forEach(m => map.removeLayer(m)); sezonniZnacky = [];
+  if(!VZHLED.sezony) return;
+  const sez = sezona();
+  if(!sez || (sez.id !== 'advent' && sez.id !== 'vanoce')) return;
+  const nam = asArray(typeof LANDMARK_DEFS !== 'undefined' ? LANDMARK_DEFS : []).find(l => /Svobody/.test(l.name || '')) || { lat: CITY_CENTER[0], lng: CITY_CENTER[1] };
+  sezonniZnacky.push(L.marker([nam.lat + 0.00012, nam.lng + 0.00018], { icon: L.divIcon({ className:'', iconSize:[44, 52], iconAnchor:[22, 50], html:'<div class="stromecek">🎄</div>' }), interactive:false }).addTo(map));
+}
+function nahledSezony(id){
+  SEZONA_NAHLED = id; SEZONA_NAHLED_DO = Date.now() + 120000;
+  closeSheet();
+  Object.keys(markers || {}).forEach(k => { const m = markers[k], p = world.parcels[k]; if(m && p && map.hasLayer(m)){ m._ikonaKlic = iconKey(p); m.setIcon(iconFor(p)); } });
+  safeCall(() => renderSezonniZnacky());
+  safeCall(() => renderPostavy());
+  showToast('Náhled sezóny na 2 minuty');
+}
+
+
+// ===== TESTOVACÍ NÁHLEDY PRO SPRÁVCE =====
+// Všechno, co se ve hře ukazuje jen za určitých podmínek (večer, mráz, noc, cizí hráč něco
+// udělá…), jde tady vyvolat hned. Náhled běží JEN v tomhle telefonu, nic se neukládá do
+// světa a nedávají se za něj peníze. Po pár minutách se sám vypne.
+let TEST = { hodina:null, teplota:null, vecer:false, do:0 };
+function testAktivni(){ return Date.now() < TEST.do; }
+function hodinaTed(){ return testAktivni() && TEST.hodina !== null ? TEST.hodina : new Date().getHours(); }
+function teplotaTed(){
+  if(testAktivni() && TEST.teplota !== null) return TEST.teplota;
+  return POCASI && typeof POCASI.teplota === 'number' ? POCASI.teplota : null;
+}
+function testVecerAktivni(){ return testAktivni() && TEST.vecer; }
+function testPrekresliMapu(){
+  Object.keys(markers || {}).forEach(k => { const m = markers[k], p = world.parcels[k]; if(m && p && map && map.hasLayer(m)){ m._ikonaKlic = iconKey(p); m.setIcon(iconFor(p)); } });
+  safeCall(() => prekresliVrstvy(true));
+  Atmo.klic = '';
+  safeCall(() => renderPostavy());
+}
+function testNastav(zmena, minut, zprava){
+  TEST = Object.assign({ hodina:null, teplota:null, vecer:false }, TEST.do > Date.now() ? TEST : {}, zmena, { do: Date.now() + (minut || 3) * 60000 });
+  closeSheet();
+  testPrekresliMapu();
+  showToast(`🧪 ${zprava} — náhled ${minut || 3} min, jen u tebe`);
+  clearTimeout(testNastav._t);
+  testNastav._t = setTimeout(() => { TEST = { hodina:null, teplota:null, vecer:false, do:0 }; testPrekresliMapu(); showToast('🧪 Náhled skončil'); }, (minut || 3) * 60000 + 500);
+}
+function testKonec(){ clearTimeout(testNastav._t); TEST = { hodina:null, teplota:null, vecer:false, do:0 }; closeSheet(); testPrekresliMapu(); showToast('🧪 Náhledy vypnuté'); }
+// Večerní postavy hned: dnešní trasy, ale posunuté tak, že postavy vyrazí právě teď.
+let testTrasy = null;
+function testPostavy(){
+  const vecerId = dnesniVecerId();
+  const ostre = pripravVecer(vecerId);
+  if(!ostre){ showAlert('Postavy chodí kolem domů hráčů — ve městě zatím nikdo žádný dům nemá.'); return; }
+  const ted = Date.now();
+  testTrasy = { ts: ted, postavy: ostre.postavy.map((po, i) => Object.assign({}, po, { start: ted - 30000 + i * 45000 })) };
+  testZahnani = {};
+  testNastav({ vecer:true }, 5, 'Večerní postavy');
+  if(map && testTrasy.postavy[0]) map.setView([testTrasy.postavy[0].body[0].lat, testTrasy.postavy[0].body[0].lng], 17);
+}
+let testZahnani = {};
+function testZiveZpravy(){
+  const ja = currentUser ? currentUser.name : 'Hráč';
+  const p = Object.values(world.parcels).find(q => houseHasOwner(q)) || Object.values(world.parcels)[0];
+  const n = { type:'buy', text:`🏠 Testovací hráč právě koupil 25 % domu ${domKratce(p)}`, ts: Date.now(), kde: p.id };
+  closeSheet();
+  zpravyFronta.push(n);
+  dalsiZivaZprava();
+}
+function testKonfety(){
+  closeSheet();
+  const bod = playerPos || (map ? map.getCenter() : null);
+  if(bod) setTimeout(() => oslavaNakup(bod.lat, bod.lng), 300);
+}
+function testZlataVlna(){
+  closeSheet();
+  const ja = currentUser && currentUser.name;
+  const ulice = Object.values(stavUlic() || {});
+  const moje = ulice.find(st => ja && st.poHracich[ja]) || ulice[0];
+  if(!moje){ showAlert('Ulice se ukážou, až se načtou adresy domů.'); return; }
+  const prvni = world.parcels[(seznamUlic()[moje.nazev] || [])[0]];
+  if(prvni && map) map.setView([prvni.lat, prvni.lng], 17);
+  setTimeout(() => zlataVlna(moje.nazev), 500);
+  showToast(`👑 ${moje.nazev}`);
+}
+function testCoJeNoveho(){
+  try { localStorage.setItem('bucpoly_zmeny_videno', ZMENY[Math.min(4, ZMENY.length - 1)].verze); } catch(e){}
+  openSheet('zmeny');
 }
 
 // ===== BARVY HRÁČŮ =====
@@ -11695,7 +12051,7 @@ function iconFor(p){
     upg: ikonyVylepseni(p)
   });
   // Kotva dole uprostřed — dům „stojí" na svém místě na mapě, místo aby se kolem něj vznášel.
-  return L.divIcon({ html:`<div class="${cls}" style="width:${d.w}px;height:${d.h}px;">${d.html}${cedulka}</div>`,
+  return L.divIcon({ html:`<div class="${cls}" style="width:${d.w}px;height:${d.h}px;">${d.html}${cedulka}${safeCall(() => dekorDomu(p, owned)) || ''}</div>`,
     className:'', iconSize:[d.w, d.h], iconAnchor:[d.w / 2, d.h - 2], tooltipAnchor:[0, -d.h + 4], popupAnchor:[0, -d.h + 4] });
 }
 
@@ -11819,6 +12175,9 @@ function initMap(){
   map.on('zoomend', cedulky); cedulky();
   setInterval(() => safeCall(() => rozprostriZnacky()), 4000);   // značky přibývají průběžně
   setInterval(() => safeCall(() => renderPostavy()), 5000);       // postavy se večer pohybují
+  setInterval(() => safeCall(() => zkontrolujZiveZpravy()), 2500); // co právě udělali ostatní
+  setInterval(() => safeCall(() => renderSezonniZnacky()), 10 * 60000);
+  setTimeout(() => safeCall(() => renderSezonniZnacky()), 9000);
   safeCall(() => pripravDenNocNaMape());
   nastavPodklad(0);
 
@@ -11953,7 +12312,7 @@ const DENNI_DOBY = [
   { do: 24, barva:'rgba(8,14,44,0.62)',    nazev:'noc',      tma:true }
 ];
 function denniDoba(h){
-  const hod = (typeof h === 'number') ? h : new Date().getHours();
+  const hod = (typeof h === 'number') ? h : hodinaTed();
   return DENNI_DOBY.find(d => hod < d.do) || DENNI_DOBY[DENNI_DOBY.length - 1];
 }
 
@@ -12023,10 +12382,10 @@ function legendaHtml(){
     })()}
     <div class="legSkup">Místa</div>
     ${r('<div class="parcelMarker p-business">☕</div>', 'Firma — kup si podíl v Investicích.')}
-    ${r('<div class="landmarkMarker">⛲</div>', 'Místo zájmu — jednou denně odměna za návštěvu.')}
-    ${r('<div class="mistoMarker">⛪</div>', 'Místo ze sbírky. Navštívená zešednou.')}
+    <div class="legSkup">Kam dojít pro peníze</div>
+    ${Object.entries(PIN_DRUHY).map(([k, d]) => r(pinHtml(k, { balik:'💰', zajem:'⛲', sbirka:'⛪', akce:'🎪' }[k], 90, false), `<b>${d.nazev}</b> — ${d.kdy}. Číslo pod ikonou = odměna v Kč.`)).join('')}
+    ${r(pinHtml('zajem', '⛲', 0, true), 'Šedá s ✓ = tady už jsi byl.')}
     ${r('<div class="skladMarker">🏭</div>', 'Sklad — tady se nakládá zboží pro provozovny.')}
-    ${r('<div class="akceMarker" style="animation:none;">🎪</div>', 'Akce ve městě — dojdi pro odměnu.')}
     ${r(`<div class="postavaZnacka" style="animation:none;transform:scale(0.75);">${postavaSvg('parta')}</div>`, 'Večer 20–24 h: podnapilá postava (🎨 sprejer, 🍺 parta, 🔨 vandal, 💰 zloděj). Dojdi k ní a zažeň ji.')}
     <p style="font-size:11px;color:var(--muted);margin:8px 0 0;">Na cokoli klepni a uvidíš podrobnosti.</p>`;
 }
@@ -12072,6 +12431,10 @@ function prekresliVrstvy(vynutit){
 // Sezónní drobnost podle skutečného data — potvrdí hráči, že hra žije ve stejném čase
 // jako on. Nic neovlivňuje, je to jen ozdoba.
 function sezona(d){
+  if(!d && SEZONA_NAHLED && Date.now() < SEZONA_NAHLED_DO){
+    return { dusicky:{ id:'dusicky', emoji:'🎃', popis:'Dušičkový čas' }, advent:{ id:'advent', emoji:'❄️', popis:'Adventní Bučovice' },
+             vanoce:{ id:'vanoce', emoji:'🎄', popis:'Veselé Vánoce!' } }[SEZONA_NAHLED] || null;
+  }
   const dnes = d || new Date();
   const m = dnes.getMonth() + 1, den = dnes.getDate();
   if(m === 12 && den >= 24 && den <= 26) return { id:'vanoce',   emoji:'🎄', popis:'Veselé Vánoce!' };
@@ -15496,6 +15859,30 @@ function renderDaily(){
   }
   html += `<p class="fPozn">Splníš všechny tři? Bonus <b>${Math.round(QUEST_ALL_BONUS * inflationMult())} Kč</b>. Úkoly se mění o půlnoci.</p></div>`;
 
+  // --- KAM DOJÍT: balíky, místa zájmu, sbírka a akce v jednom seznamu od nejbližšího ---
+  if(playerPos){
+    const cile = [];
+    const sebrane = myCollectedToday();
+    asArray(world.pickups && world.pickups.list).forEach(pk => { if(!sebrane.includes(pk.id)) cile.push({ druh:'balik', ik: pk.bonus ? '🎁' : '💰', nazev: pk.bonus ? 'Bonusový balík' : 'Balík peněz', odm: pk.reward * inflationMult() * eventMult('pickupMult'), bod: pk, akce: `map.setView([${pk.lat},${pk.lng}],18);closeSheet()` }); });
+    lms.forEach(lm => { if(!got.includes(lm.id)) cile.push({ druh:'zajem', ik: escapeHtml(lm.emoji || '📍'), nazev: escapeHtml(lm.name), odm: LANDMARK_REWARD * inflationMult() * eventMult('landmarkMult'), bod: lm, akce: `map.setView([${lm.lat},${lm.lng}],18);closeSheet()` }); });
+    if(mistaStav === 'hotovo'){
+      const nav = mojeMista(u);
+      Object.values(MISTA).filter(m => !nav[m.id]).map(m => ({ m, d: haversine(playerPos, m) })).sort((a, b) => a.d - b.d).slice(0, 3)
+        .forEach(({ m }) => cile.push({ druh:'sbirka', ik: (MISTO_SADY.find(x => x.id === m.sada) || {}).emoji || '📍', nazev: escapeHtml(m.nazev), odm: MISTO_ODMENA * inflationMult(), bod: m, akce: `ukazMisto('${m.id}')` }));
+    }
+    aktivniAkce().forEach(a => { if(typeof a.lat === 'number' && !(u.akceNavstivene && u.akceNavstivene[a.id])) cile.push({ druh:'akce', ik: escapeHtml(a.emoji || '🎪'), nazev: escapeHtml(a.nazev), odm: AKCE_ODMENA * inflationMult(), bod: a, akce: `ukazAkci('${a.id}')` }); });
+    cile.forEach(c => c.d = haversine(playerPos, c.bod));
+    cile.sort((a, b) => a.d - b.d);
+    if(cile.length){
+      html += `<div class="card"><h3>🧭 Kam dojít pro peníze</h3>` +
+        cile.slice(0, 6).map(c => `<div class="tipRadek" onclick="${c.akce}">
+          <span class="ik" style="width:30px;text-align:center;">${c.ik}</span>
+          <div class="tx"><div class="nz">${c.nazev}</div><div class="ci" style="color:${PIN_DRUHY[c.druh].barva}">${PIN_DRUHY[c.druh].nazev} · ${PIN_DRUHY[c.druh].kdy}</div></div>
+          <div class="kde"><b style="color:var(--gold);font-size:1.15em;">+${Math.round(c.odm)} Kč</b><br>${kudyText(c.bod, c.d)}</div></div>`).join('') +
+        (cile.length > 6 ? `<p class="fPozn">…a dalších ${cile.length - 6} na mapě.</p>` : '') + `</div>`;
+    }
+  }
+
   // --- čekající platby (dárky od správce) ---
   const pending = asArray(world.gifts && world.gifts[u.name]);
   const claimedIds = asArray(u.claimedGifts);
@@ -15630,8 +16017,41 @@ function renderAdmin(){
   </div>
 
   <div class="card">
+    <h3>🧪 Testovací náhledy</h3>
+    <p style="font-size:0.9em;color:var(--muted);">Vyvolá věci, které jinak čekají na správnou chvíli. Běží jen u tebe, nic se neukládá a nedávají se za to peníze.${testAktivni() ? ` <b style="color:var(--gold)">Právě běží náhled.</b>` : ''}</p>
+    <div class="fSkup">Čas a teplota</div>
+    <div class="row" style="flex-wrap:wrap;gap:6px;">
+      ${[[6,'🌅 Ráno 6:00'],[12,'☀️ Poledne'],[18,'🌇 Podvečer'],[23,'🌙 Noc 23:00']].map(([h, t]) => `<button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testNastav({hodina:${h}}, 3, '${t}')">${t}</button>`).join('')}
+      <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testNastav({teplota:-3}, 3, 'Mráz −3 °C')">🥶 Mráz (kouř, sněhuláci)</button>
+      <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testNastav({teplota:20}, 3, 'Teplo 20 °C')">🌤️ Teplo</button>
+    </div>
+    <div class="fSkup">Ve městě</div>
+    <div class="row" style="flex-wrap:wrap;gap:6px;">
+      <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testPostavy()">🦹 Večerní postavy teď</button>
+      <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testZiveZpravy()">📣 Živá zpráva hráče</button>
+    </div>
+    <div class="fSkup">Oslavy</div>
+    <div class="row" style="flex-wrap:wrap;gap:6px;">
+      <button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="testKonfety()">🎉 Konfety</button>
+      <button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="testZlataVlna()">👑 Zlatá vlna</button>
+      <button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="closeSheet();setTimeout(ohnostroj, 300)">🎆 Ohňostroj</button>
+    </div>
+    <div class="fSkup">Panely</div>
+    <div class="row" style="flex-wrap:wrap;gap:6px;">
+      <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testCoJeNoveho()">🆕 Co je nového jako vracející se hráč</button>
+      <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="openSheet('daily')">🧭 Kam dojít pro peníze</button>
+    </div>
+    ${testAktivni() ? `<div class="row" style="margin-top:8px;"><button class="danger" onclick="testKonec()">Vypnout všechny náhledy</button></div>` : ''}
+  </div>
+
+  <div class="card">
     <h3>🌦️ Náhled efektů počasí</h3>
     <p style="font-size:0.9em;color:var(--muted);">Vyzkoušej, jak vypadá mapa v jiném počasí — na 45 vteřin, jen u tebe.</p>
+    <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+      <button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="nahledSezony('dusicky')">🎃 Dušičky</button>
+      <button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="nahledSezony('advent')">🎄 Advent</button>
+      <button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="ohnostroj()">🎆 Ohňostroj</button>
+    </div>
     <div class="row" style="flex-wrap:wrap;gap:6px;">${Object.keys(ATMO_NAHLEDY).map(t => `<button class="secondary" style="flex:1 1 30%;min-height:36px;font-size:0.85em;" onclick="atmoNahled('${t}')">${
       { dest:'🌧️ Déšť', bourka:'⛈️ Bouřka', snih:'❄️ Sníh', mlha:'🌫️ Mlha', slunce:'☀️ Slunce', zapad:'🌇 Západ', noc:'🌙 Noc', listi:'🍂 Listí' }[t]}</button>`).join('')}</div>
   </div>
@@ -16863,6 +17283,24 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.2', datum:'2026-10-07', body:[
+    ['info','Pro správce: v Admin panelu jsou testovací náhledy — denní doba, mráz, večerní postavy hned, živá zpráva, konfety, zlatá vlna, ohňostroj a „Co je nového" očima vracejícího se hráče.'],
+  ]},
+  { verze:'21.1', datum:'2026-10-07', body:[
+    ['zmena','📍 Všechno, kam se chodí pro peníze (balíky, místa zájmu, sbírka a akce), má na mapě stejnou značku a pod ní štítek s odměnou — hned vidíš, kolik kde dostaneš. Barva okraje prozradí druh, šedá s ✓ znamená, že už jsi tam byl.'],
+    ['novinka','🧭 Ve Výzvách je nový seznam „Kam dojít pro peníze" — všechny cíle s odměnou na jednom místě, od nejbližšího.'],
+    ['zmena','🆕 Co je nového ukazuje jen novinky od tvé poslední návštěvy, starší verze jsou sbalené.'],
+  ]},
+  { verze:'21.0', datum:'2026-10-07', body:[
+    ['novinka','🏙️ Město žije: když jiný hráč něco udělá, ukáže se dole na mapě bublina a nad místem blikne kruh (klepnutím tam mapa skočí).'],
+    ['novinka','🛍️ Provozovny mají otevírací dobu jako ve skutečnosti — přes den k nim chodí zákazníci, v noci mají cedulku „zavřeno" (disco a kino ožijí večer). Tržby se počítají jako dřív, je to jen vidět.'],
+    ['novinka','💨 Když je venku pod 8 °C, z obydlených domů se kouří z komínů. 🏗️ Na domě, kde běží stavba, je jeřáb a víří prach.'],
+    ['novinka','🎉 Oslavy: konfety nad domem po koupi, zlatá vlna přes ulici, kterou ovládneš, ohňostroj při nové hodnosti.'],
+    ['novinka','🎃 Sezónní výzdoba: o Dušičkách dýně u domů a večerní postavy v kostýmech, v adventu světýlka na střechách a stromeček na náměstí, v mrazu sněhuláci.'],
+  ]},
+  { verze:'20.2', datum:'2026-10-07', body:[
+    ['oprava','Déšť (a ve větru i listí) pokrýval jen část obrazovky — šikmo padající kapky začínaly moc blízko levého okraje a levý dolní roh zůstal suchý. Teď prší po celé ploše.'],
+  ]},
   { verze:'20.1', datum:'2026-10-05', body:[
     ['novinka','🌦️ Živé počasí na mapě podle skutečného počasí v Bučovicích: šikmý déšť podle větru s kroužky na loužích, v bouřce blesky, poletující sníh, plující mlha, stíny mraků táhnoucí přes město, za jasna sluneční záře, ráno a večer zlaté světlo, v noci měsíční svit. Na podzim ve větru padá listí, na jaře okvětní lístky.'],
     ['info','Efekty se při otevřeném panelu nekreslí (šetří baterii). Vypnout jdou v Průvodci → Nastavení → Počasí a světlo na mapě.'],
@@ -17443,35 +17881,54 @@ const ZMENY = [
   ]},
 ];
 
+// Verze „21.0" → [21, 0] pro porovnání
+function verzeCisla(v){ return String(v).split('.').map(x => parseInt(x, 10) || 0); }
+function novejsiVerze(a, b){
+  const x = verzeCisla(a), y = verzeCisla(b);
+  for(let i = 0; i < Math.max(x.length, y.length); i++){ if((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
+  return false;
+}
+function zmenaKartaHtml(z, zvyraznit){
+  const ikony = { oprava:'🔧', novinka:'✨', zmena:'⚖️', info:'ℹ️' };
+  const barvy = { oprava:'var(--accent2)', novinka:'var(--accent)', zmena:'var(--gold)', info:'var(--muted)' };
+  return `<div class="card zmenaVerze"${zvyraznit ? ' style="border-left:3px solid var(--accent);"' : ''}>
+    <h3>Verze ${z.verze} <span style="font-weight:400;font-size:0.75em;color:var(--muted);">${datumCesky(z.datum)}</span>
+      ${z.verze === APP_VERSION ? '<span class="badge badge-res">hraješ tuhle</span>' : ''}</h3>
+    ${z.body.map(([typ, text]) => `<p style="margin:6px 0;font-size:0.92em;line-height:1.45;"><span style="color:${barvy[typ] || 'var(--muted)'};">${ikony[typ] || '•'}</span> ${escapeHtml(text)}</p>`).join('')}
+  </div>`;
+}
+// Dřív se tu vypisovalo všech 130+ verzí pod sebou (přes 70 kB textu) — kdo se vrátil po
+// týdnu, dostal zeď textu. Teď nahoře jen to, co je nové od jeho poslední návštěvy,
+// a starší verze se načtou, až je hráč rozbalí.
 function renderZmeny(){
   const el = document.getElementById('zmenyContent');
   if(!el) return;
-  const ikony = { oprava:'🔧', novinka:'✨', zmena:'⚖️', info:'ℹ️' };
-  const nazvy  = { oprava:'Opraveno', novinka:'Novinka', zmena:'Změna pravidel', info:'Info' };
-  const barvy  = { oprava:'var(--accent2)', novinka:'var(--accent)', zmena:'var(--gold)', info:'var(--muted)' };
-
-  let html = `<p style="font-size:0.88em;color:var(--muted);margin-bottom:10px;">Co se ve hře změnilo. Když něco nefunguje nebo tě něco napadne, napiš do chatu — spousta věcí tady vznikla přesně tak.</p>`;
-
-  html += ZMENY.map((z, i) => {
-    const aktualni = z.verze === APP_VERSION;
-    return `<div class="card" style="${i === 0 ? 'border-left:3px solid var(--accent);' : ''}">
-      <h3 style="margin-bottom:2px;">Verze ${z.verze}
-        ${aktualni ? '<span class="badge badge-res">hraješ tuhle</span>' : ''}</h3>
-      <p style="font-size:0.82em;color:var(--muted);margin:0 0 6px;">${datumCesky(z.datum)}</p>
-      ${z.body.map(([typ, text]) => `
-        <p style="margin:5px 0;font-size:0.92em;">
-          <span style="color:${barvy[typ] || 'var(--muted)'};">${ikony[typ] || '•'} ${nazvy[typ] || ''}:</span>
-          ${escapeHtml(text)}</p>`).join('')}
-    </div>`;
-  }).join('');
-
-  // Kdyby hráč běžel na starší verzi, ať to pozná — jinak hlásí chyby, které jsou dávno opravené.
+  let naposled = null;
+  try { naposled = localStorage.getItem('bucpoly_zmeny_naposled'); } catch(e){}
+  const nove = naposled ? ZMENY.filter(z => novejsiVerze(z.verze, naposled)) : ZMENY.slice(0, 1);
+  const ukazat = (nove.length ? nove : ZMENY.slice(0, 1)).slice(0, 12);
+  const starsi = ZMENY.filter(z => !ukazat.includes(z));
+  window.__zmenyUkazane = ukazat.map(z => z.verze);
+  let html = `<p style="font-size:0.88em;color:var(--muted);margin:0 0 10px;">${nove.length && naposled
+    ? `Od tvé poslední návštěvy (verze ${escapeHtml(naposled)}) ${nove.length === 1 ? 'přibyla 1 verze' : (nove.length < 5 ? `přibyly ${nove.length} verze` : `přibylo ${nove.length} verzí`)}.`
+    : 'Co je nového ve hře.'} Když něco nefunguje nebo tě něco napadne, napiš do chatu — spousta věcí vznikla přesně tak.</p>`;
   if(!ZMENY.some(z => z.verze === APP_VERSION)){
-    html = `<div class="card" style="border-left:3px solid var(--gold);">
-      <p style="margin:0;">Hraješ verzi <b>${APP_VERSION}</b>, která tu ještě není popsaná — nebo máš starší verzi uloženou v telefonu.
-      Zkus appku zavřít a znovu otevřít.</p></div>` + html;
+    html += `<div class="card" style="border-left:3px solid var(--gold);"><p style="margin:0;">Hraješ verzi <b>${APP_VERSION}</b>, která tu ještě není popsaná — nebo máš starší verzi uloženou v telefonu. Zkus appku zavřít a znovu otevřít.</p></div>`;
+  }
+  html += ukazat.map((z, i) => zmenaKartaHtml(z, i === 0)).join('');
+  if(nove.length > 12) html += `<p class="fPozn">…a ještě ${nove.length - 12} starších novinek níž.</p>`;
+  if(starsi.length){
+    html += `<details class="mineSkupina" id="blk_zmenyStarsi">
+      <summary>Starší verze · ${starsi.length}</summary><div class="zmenyStarsi"></div></details>`;
   }
   el.innerHTML = html;
+  // Starší verze se vykreslí až při rozbalení (je jich přes sto).
+  const det = el.querySelector('#blk_zmenyStarsi');
+  if(det) det.addEventListener('toggle', () => {
+    if(!det.open || det.dataset.nacteno) return;
+    det.dataset.nacteno = '1';
+    det.querySelector('.zmenyStarsi').innerHTML = ZMENY.filter(z => !window.__zmenyUkazane.includes(z.verze)).map(z => zmenaKartaHtml(z, false)).join('');
+  });
 }
 
 // Ukáže tečku u ikony, když hráč ještě neviděl novinky k aktuální verzi.
@@ -20202,9 +20659,14 @@ function openSheet(tabName){
   const sheetBody = document.getElementById('sheetBody');
   if(sheetBody) sheetBody.scrollTop = 0;   // nový panel začíná odshora
   if(tabName === 'zmeny'){
+    // Nejdřív si zapamatovat, kterou verzi hráč viděl naposled (ukážeme jen to, co přibylo),
+    // pak teprve vykreslit a označit jako přečtené.
+    try {
+      const videno = localStorage.getItem('bucpoly_zmeny_videno');
+      if(videno && videno !== APP_VERSION) localStorage.setItem('bucpoly_zmeny_naposled', videno);
+      localStorage.setItem('bucpoly_zmeny_videno', APP_VERSION);
+    } catch(e){}
     renderZmeny();
-    // Přečteno — tečku u ikony schováme, dokud nepřijde další verze.
-    try { localStorage.setItem('bucpoly_zmeny_videno', APP_VERSION); } catch(e){}
     oznacNoveZmeny();
   }
   if(tabName === 'mine') renderMine();
@@ -20424,6 +20886,47 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden) setTi
 if(window.visualViewport) window.visualViewport.addEventListener('resize', () => setTimeout(nastavVyskuAppky, 60));
 // Pojistka: některé změny lišty prohlížeče nevyvolají žádnou událost.
 setInterval(nastavVyskuAppky, 1500);
+
+// Konfety po úspěšném nákupu. Obalujeme až hotové funkce — když nákup neproběhne (málo
+// peněz, zrušený dialog), podíl se nezmění a nic se neukáže.
+['buyHouseStake', 'buyHouseStakeOnMortgage'].forEach(jmeno => {
+  const puvodni = window[jmeno];
+  if(typeof puvodni !== 'function') return;
+  window[jmeno] = async function(id){
+    const p = world && world.parcels && world.parcels[id];
+    const pred = p ? myHousePct(p) : 0;
+    const v = await puvodni.apply(this, arguments);
+    if(p && myHousePct(p) > pred + 0.001) safeCall(() => oslavaNakup(p.lat, p.lng));
+    return v;
+  };
+});
+{
+  const puvodni = window.buyListing;
+  if(typeof puvodni === 'function') window.buyListing = async function(lid){
+    const l = world && world.listings && world.listings[lid];
+    const p = l && world.parcels[l.houseId];
+    const pred = p ? myHousePct(p) : 0;
+    const v = await puvodni.apply(this, arguments);
+    if(p && myHousePct(p) > pred + 0.001) safeCall(() => oslavaNakup(p.lat, p.lng));
+    return v;
+  };
+  const puvodniFirma = window.buyStake;
+  if(typeof puvodniFirma === 'function') window.buyStake = async function(bizId){
+    const b = world && world.businesses && world.businesses[bizId];
+    const pred = b && currentUser ? (b.owners?.[currentUser.name] || 0) : 0;
+    const v = await puvodniFirma.apply(this, arguments);
+    if(b && currentUser && (b.owners?.[currentUser.name] || 0) > pred + 0.001) safeCall(() => oslavaNakup(b.lat, b.lng));
+    return v;
+  };
+  // vlastní zprávy nehlásit jako „živé" — uživatel ví, co právě udělal
+  const puvodniZprava = window.addNews;
+  if(typeof puvodniZprava === 'function') window.addNews = function(){
+    const pred = new Set(asArray(world && world.news).map(klicZpravy));
+    const v = puvodniZprava.apply(this, arguments);
+    asArray(world && world.news).forEach(n => { const k = klicZpravy(n); if(!pred.has(k)) zpravyVidene.add(k); });
+    return v;
+  };
+}
 
 window.onload = async () => {
   // Hra je jen pro mobil. Na počítači ukážeme hlášku a nespustíme ji.
