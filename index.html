@@ -648,6 +648,45 @@
     background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);box-shadow:none;
     backdrop-filter:none;-webkit-backdrop-filter:none;padding:3px 9px;font-size:11px;cursor:pointer;
   }
+  /* ===== OBLOHA V HORNÍM PANELU (21.6) ===== */
+  #hudKarta{ position:relative; }
+  #hudKarta > .hudHlavni, #hudKarta > .statsRow{ position:relative;z-index:1; }
+  #hudNebe{ position:absolute;inset:0;border-radius:inherit;overflow:hidden;pointer-events:none;z-index:0;display:none; }
+  #hudKarta.sNebem{ background:#0b1020;border-color:rgba(255,255,255,0.14); }
+  #hudKarta.sNebem #hudNebe{ display:block; }
+  #hudKarta.sNebem > .hudHlavni, #hudKarta.sNebem > .statsRow{ text-shadow:0 1px 3px rgba(0,0,0,0.85), 0 0 8px rgba(0,0,0,0.35); }
+  #hudKarta.sNebem .hudCastka{ text-shadow:0 1px 3px rgba(0,0,0,0.9), 0 0 10px rgba(0,0,0,0.45); }
+  #hudKarta.sNebem .statPill{ background:rgba(10,14,24,0.30);border-color:rgba(255,255,255,0.16); }
+  .nebePozadi{ position:absolute;inset:0;transition:background 2s linear; }
+  .nebeHvezdy{ position:absolute;inset:0;transition:opacity 2s; }
+  .nebeHvezdy i{ position:absolute;border-radius:50%;background:#fff;opacity:0.85;animation:nebeTrpyt 3.5s ease-in-out infinite; }
+  @keyframes nebeTrpyt{ 0%,100%{opacity:0.9;} 50%{opacity:0.25;} }
+  .nebeSlunce, .nebeMesic{ position:absolute;transform:translate(-50%, 50%);transition:left 1.5s linear, bottom 1.5s linear, opacity 2s; }
+  .nebeSlunce{ width:15px;height:15px;border-radius:50%; }
+  .nebeMesic{ width:16px;height:16px;filter:drop-shadow(0 0 5px rgba(240,235,200,0.55)); }
+  #hudNebe.anim .nebeSlunce, #hudNebe.anim .nebeMesic, #hudNebe.anim .nebePozadi, #hudNebe.anim .nebeHvezdy{ transition:none; }
+  .nebeMraky b{
+    position:absolute;left:0;top:var(--y);width:46px;height:12px;border-radius:12px;background:var(--mrak, #e8ecf2);
+    transform:scale(var(--s));animation:nebeMrak var(--d) linear infinite;animation-delay:var(--o);
+  }
+  .nebeMraky b::before, .nebeMraky b::after{ content:'';position:absolute;border-radius:50%;background:inherit; }
+  .nebeMraky b::before{ width:20px;height:16px;left:8px;top:-8px; }
+  .nebeMraky b::after{ width:16px;height:12px;left:22px;top:-5px; }
+  @keyframes nebeMrak{ from{ left:-60px; } to{ left:calc(100% + 60px); } }
+  .nebeMesto{ position:absolute;left:0;bottom:0;display:block; }
+  .nebeKopce{ fill:var(--kopce, #233); transition:fill 2s; }
+  .nebeDomy{ fill:var(--mesto, #111); transition:fill 2s; }
+  .nebeOkno{ fill:#ffd27a;opacity:0;transition:opacity 1.2s; }
+  .nebeOkno.zap{ opacity:0.95; }
+  .nebeHodiny{ fill:var(--mesto, #111); }
+  #hudNebe.noc .nebeHodiny{ fill:#f6e7b0; }
+  #hudNebe.nasviceno .nebeDomy{ filter:drop-shadow(0 -1px 2px rgba(255,190,110,0.35)); }
+  /* Clona pod textem — ať jsou peníze čitelné i v poledne. */
+  .nebeClona{ position:absolute;inset:0;background:linear-gradient(90deg, rgba(8,10,18,0.50) 0%, rgba(8,10,18,0.22) 38%, rgba(8,10,18,0.14) 62%, rgba(8,10,18,0.40) 100%); }
+  @media (prefers-reduced-motion: reduce){
+    .nebeHvezdy i, .nebeMraky b{ animation:none; }
+    .nebeMraky b:nth-child(1){ left:12%; } .nebeMraky b:nth-child(2){ left:48%; } .nebeMraky b:nth-child(3){ left:70%; } .nebeMraky b:nth-child(4){ left:30%; }
+  }
 
   #spodniLista{
     position:absolute;left:0;right:0;bottom:0;z-index:700;height:var(--navH);
@@ -1150,6 +1189,7 @@
     <!-- Jedna přehledná karta místo šesti pilulek: vlevo ty, uprostřed peníze (to hlavní),
          vpravo den a počasí. Pod tím drobné štítky — klepnutím se otevře detail. -->
     <div id="hudKarta">
+      <div id="hudNebe" aria-hidden="true"></div>
       <div class="hudHlavni">
         <div id="userInfo"></div>
         <div id="balance" class="hudPenize" onclick="showStatDetail('money')">
@@ -1447,8 +1487,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.5';
-const APP_BUILD = '03.10.2026 12:00';
+const APP_VERSION = '21.7';
+const APP_BUILD = '08.10.2026 21:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7087,8 +7127,14 @@ function adoptWorldVnitrni(incoming){
   // zachovat vlastní záznam o přejmenováních (cloud o něm nemusí vědět)
   const myRenames = (world && world.renames && typeof world.renames === 'object' && !Array.isArray(world.renames)) ? world.renames : {};
 
+  // Společné razítko času NESMÍ jít při sloučení dozadu. Když Firebase odmítne zápis
+  // (nebo dorazí starý snímek z probuzeného telefonu), vrátí se svět i se starým `lastTick`
+  // — a další tick pak znovu „odchátral" byty za celou dobu od toho starého razítka.
+  // Při zápisu každé 2,5 s to za hodinu sebralo bytům desítky procent (hlášení od Evy).
+  const mujLastTick = (world && typeof world.lastTick === 'number') ? world.lastTick : 0;
   world = incoming;
   migrateWorld();
+  world.lastTick = Math.min(Date.now(), Math.max(mujLastTick, typeof world.lastTick === 'number' ? world.lastTick : 0)) || Date.now();
 
   // sloučit záznamy o přejmenování z obou stran a rovnou je aplikovat na přijatá data,
   // ať se z cloudu nevrátí stará přezdívka jako druhý účet v žebříčku
@@ -7269,7 +7315,9 @@ function adoptWorldVnitrni(incoming){
       ['lastWorkedCalDay','totalShifts','totalDistance',
        'questBonusDay','streakDay','streakBest','peakWorth',
        // nejvyšší dosažená hodnost jen roste — jinak by se po přepnutí zařízení povýšení ohlásilo znovu
-       'nejRank'].forEach(vyssi);
+       'nejRank',
+       // večer se vyhodnocuje jednou — starší verze účtu by jinak spustila losování škod znovu
+       'vecerVyhodnocen'].forEach(vyssi);
       // Dny dovolené sjednotit z obou zařízení. Dřív vyhrál celý záznam z novějšího zařízení,
       // takže dovolená vzatá na telefonu zmizela, když hráč pak hrál na tabletu — a druhý den
       // se mu počítala absence (hrozil vyhazov), i když si volno řádně vzal.
@@ -7598,9 +7646,73 @@ function doCloudWrite(){
   lastFbWrite = Date.now();
   lastWrittenRev = world.rev; // ať sedí s tím, co reálně posíláme (rozpoznání vlastní ozvěny)
   const posilanaRev = world.rev;
-  fbDb.ref(cloudPathForCity()).set(worldForCloud())
-    .then(() => { lastSyncedRev = Math.max(lastSyncedRev, posilanaRev); })
-    .catch(e => console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e));
+  let data, nalezy = [];
+  try {
+    const pr = pripravProCloud(worldForCloud());
+    data = pr.data; nalezy = pr.nalezy;
+  } catch(e){
+    zapisChybu('Příprava zápisu do cloudu selhala: ' + ((e && e.message) || e), 'sync');
+    return;
+  }
+  if(nalezy.length) zapisChybu('Před zápisem opraveno: ' + nalezy.slice(0, 6).join('; '), 'sync');
+  try {
+    fbDb.ref(cloudPathForCity()).set(data)
+      .then(() => { lastSyncedRev = Math.max(lastSyncedRev, posilanaRev); syncStav.chyba = ''; syncStav.ok = Date.now(); })
+      .catch(e => {
+        console.warn('Uložení do Firebase selhalo (data zůstávají v pořádku uložená lokálně):', e);
+        syncStav.chyba = (e && (e.code || e.message)) || String(e);
+        zapisChybu('Firebase odmítl zápis světa: ' + syncStav.chyba, 'sync');
+      });
+  } catch(e){
+    syncStav.chyba = (e && e.message) || String(e);
+    zapisChybu('Zápis do Firebase spadl: ' + syncStav.chyba, 'sync');
+  }
+}
+let syncStav = { ok: 0, chyba: '' };
+
+// Data posílaná do cloudu musí projít pravidly Firebase (firebase-pravidla.json). Stačí jediná
+// vadná hodnota kdekoli ve světě a Firebase odmítne CELÝ zápis — a všem pak vrátí starý stav.
+// Tady se proto vše srovná do mezí pravidel a vrátí se seznam toho, co se muselo opravit.
+function pripravProCloud(slim){
+  const nalezy = [];
+  // JSON tam a zpět vyhodí `undefined`, funkce i NaN/Infinity (na ty Firebase spadne).
+  const d = JSON.parse(JSON.stringify(slim));
+  // Pravidla vyžadují, aby tyhle dva domy v zápisu byly (pojistka proti smazání světa).
+  ['h_0', 'h_2266'].forEach(id => {
+    if(!d.parcels[id] && world.parcels && world.parcels[id]){ d.parcels[id] = JSON.parse(JSON.stringify(world.parcels[id])); }
+  });
+  const text = (x, max, kde) => {
+    if(typeof x !== 'string') return x;
+    if(x.length > max){ nalezy.push(`${kde}: text zkrácen z ${x.length} na ${max}`); return x.slice(0, max); }
+    return x;
+  };
+  const jmenoOk = k => typeof k === 'string' && k.length <= 32 && /^[^'<>`&]+$/.test(k);
+  Object.keys(d.users || {}).forEach(k => {
+    const u = d.users[k];
+    if(!jmenoOk(k) || !u || typeof u !== 'object'){ nalezy.push(`hráč „${String(k).slice(0, 20)}" vyřazen (neplatné jméno)`); delete d.users[k]; return; }
+    if(u.name !== k){ u.name = k; nalezy.push(`hráč ${k}: jméno srovnáno`); }
+    if(typeof u.balance !== 'number'){ u.balance = 0; nalezy.push(`hráč ${k}: chyběl zůstatek`); }
+    if(u.balance <= -10000000 || u.balance >= 1000000000){ nalezy.push(`hráč ${k}: zůstatek ${Math.round(u.balance)} mimo meze`); u.balance = Math.max(-9999999, Math.min(999999999, u.balance)); }
+    if(u.savings !== undefined && (typeof u.savings !== 'number' || u.savings < 0 || u.savings >= 1000000000)){
+      nalezy.push(`hráč ${k}: spoření ${u.savings} mimo meze`);
+      u.savings = Math.max(0, Math.min(999999999, Number(u.savings) || 0));
+    }
+    if(u.avatar !== undefined && (typeof u.avatar !== 'string' || u.avatar.length > 16)){ nalezy.push(`hráč ${k}: avatar`); u.avatar = '🧑'; }
+  });
+  asArray(d.chat).forEach((m, i) => {
+    if(!m) return;
+    m.text = text(m.text, 400, 'chat');
+    m.name = text(m.name, 32, 'chat jméno');
+  });
+  asArray(d.news).forEach(n => { if(n) n.text = text(n.text, 400, 'noviny'); });
+  Object.keys(d.nabidky || {}).forEach(k => {
+    const n = d.nabidky[k];
+    if(!n || typeof n !== 'object') return;
+    const spatne = (n.cena !== undefined && !(typeof n.cena === 'number' && n.cena > 0 && n.cena < 100000000)) ||
+                   (n.pct !== undefined && !(typeof n.pct === 'number' && n.pct > 0 && n.pct <= 100));
+    if(spatne){ nalezy.push(`nabídka ${k}: cena ${n.cena}, podíl ${n.pct} mimo meze — vyřazena`); delete d.nabidky[k]; }
+  });
+  return { data: d, nalezy };
 }
 // Poslední verze, o které víme, že OPRAVDU dorazila do cloudu.
 // Když se liší od world.rev, máme rozpracované změny, které ještě nikdo jiný nevidí.
@@ -7824,8 +7936,12 @@ function addNews(type, text, kde){
   // dokonce i opakovaně pro už zpracovaný den).
   const jeUz = world.news.some(n => n && n.day === world.day && n.text === text);
   if(jeUz) return;
-  world.news.unshift({ type, text, day: world.day, ts: Date.now(),
-    kde: (typeof kde === 'string' ? kde : (kde && isFinite(kde.lat) ? { lat: kde.lat, lng: kde.lng } : undefined)) });
+  // POZOR: žádné `kde: undefined`. Firebase celý zápis světa odmítne, když v něm je
+  // jediná nedefinovaná hodnota — a zařízení pak přestane synchronizovat.
+  const zprava = { type, text: String(text == null ? '' : text).slice(0, 400), day: world.day, ts: Date.now() };
+  if(typeof kde === 'string') zprava.kde = kde;
+  else if(kde && isFinite(kde.lat) && isFinite(kde.lng)) zprava.kde = { lat: kde.lat, lng: kde.lng };
+  world.news.unshift(zprava);
   if(world.news.length > NEWS_MAX) world.news.length = NEWS_MAX;
   // nevoláme saveWorld zde — volající už obvykle ukládá; ať se to nezdvojuje
 }
@@ -7905,11 +8021,18 @@ function tick(){
   try { tickVnitrni(); }
   catch(e){ console.warn('tick selhal:', e); zapisChybu((e && (e.stack || e.message)) || String(e), 'tick'); }
 }
+let posledniTickZarizeni = 0;   // jen v paměti tohohle zařízení, nesynchronizuje se
 function tickVnitrni(){
   const now = Date.now();
   let elapsed = now - world.lastTick;
   if(elapsed <= 0){ world.lastTick = now; return; }
   elapsed = Math.min(elapsed, GAME_DAY_MS * 3); // ochrana proti obřímu skoku po dlouhé odmlce
+  // Druhá pojistka: město nesmí zestárnout víc, než kolik času opravdu uběhlo od
+  // posledního ticku na TOMHLE zařízení (první tick po spuštění dohání odmlku, ten se nekrátí).
+  if(posledniTickZarizeni) elapsed = Math.min(elapsed, Math.max(0, now - posledniTickZarizeni));
+  if(elapsed > 6 * 3600000 && posledniTickZarizeni)
+    zapisChybu(`Velký skok času v ticku: ${Math.round(elapsed / 60000)} min`, 'tick');
+  posledniTickZarizeni = now;
   world.lastTick = now;
 
   // Společné razítko zůstává pro věci, které patří MĚSTU a mají se dít jen jednou:
@@ -10070,7 +10193,7 @@ function iconKey(p){
   const allBroken = !!(p.units && p.units.length && p.units.every(u => u && u.condition <= 0));
   const dosah = !!(playerPos && haversine(playerPos, {lat:p.lat, lng:p.lng}) <= INTERACTION_RADIUS);
   const b = barvaDomu(p);
-  return [owned ? 1 : 0, p.useType || '-', p.provoz?.typ || '-', allBroken ? 1 : 0, myHousePct(p) > 0 ? 1 : 0,
+  return [owned ? 1 : 0, p.useType || '-', p.provoz?.typ || '-', allBroken ? 1 : 0, safeCall(() => stavDomuIkona(p)) || '', myHousePct(p) > 0 ? 1 : 0,
           dosah ? 1 : 0, recommendedIds[p.id] ? 1 : 0, b ? b.hex : '-',
           Object.keys(p.upgrades || {}).filter(k => p.upgrades[k]).sort().join(''), ulicniMult(p) > 1 ? 1 : 0,
           pocetPater(p), houseHasOwner(p) ? 1 : 0, p.useType || '-',
@@ -11883,6 +12006,7 @@ function testVecerAktivni(){ return testAktivni() && TEST.vecer; }
 function testPrekresliMapu(){
   Object.keys(markers || {}).forEach(k => { const m = markers[k], p = world.parcels[k]; if(m && p && map && map.hasLayer(m)){ m._ikonaKlic = iconKey(p); m.setIcon(iconFor(p)); } });
   safeCall(() => prekresliVrstvy(true));
+  safeCall(() => kresliNebe(true));
   Atmo.klic = '';
   safeCall(() => renderPostavy());
 }
@@ -11983,7 +12107,18 @@ function typDomu(patra){
   if(patra <= 5) return { klic:'bytovy', nazev:'Bytový dům', ikona:'🏘️' };
   return { klic:'panelak', nazev:'Panelový dům', ikona:'🏢' };
 }
-// o = { patra, fasada (barva), stav: 'volny'|'normal'|'rozbity', moje, ulice, provoz (emoji), upg (text ikon) }
+// o = { patra, fasada (barva), stav: 'volny'|'normal'|'opotrebeny'|'spatny'|'rozbity', moje, ulice, provoz (emoji), upg (text ikon) }
+// Stav domu z průměrného stavu bytů. Dřív měl prasklinu jen dům, kde byly VŠECHNY byty
+// na nule — dům s byty na 25 % vypadal stejně jako nový (hlášení od Evy).
+function stavDomuIkona(p){
+  const byty = asArray(p && p.units).filter(Boolean);
+  if(!byty.length || (p.useType !== 'rental' && !(p.provoz && p.provoz.prizemi))) return 'normal';
+  if(byty.every(u => (u.condition || 0) <= 0)) return 'rozbity';
+  const prumer = byty.reduce((a, u) => a + Math.max(0, Math.min(100, u.condition || 0)), 0) / byty.length;
+  if(prumer < 35) return 'spatny';
+  if(prumer < 60) return 'opotrebeny';
+  return 'normal';
+}
 function dumSvg(o){
   const patra = Math.max(1, Math.min(o.patra || 1, 20));
   const typ = typDomu(patra).klic;
@@ -12034,7 +12169,9 @@ function dumSvg(o){
     ${korunkaSvg}${strechaSvg}
     <rect x="${x0}" y="${top}" width="${sirka}" height="${telo}" rx="1.5" fill="${fasada}" stroke="${ram}" stroke-width="${ramSirka}"
       ${volny ? 'stroke-dasharray="2.5 1.6"' : ''}/>
-    ${o.stav === 'rozbity' ? `<path d="M${x0 + 4} ${top + 3} l4 5 l-3 3 l5 6" stroke="#0f1115" stroke-width="1.2" fill="none" opacity="0.7"/>` : ''}
+    ${o.stav === 'spatny' || o.stav === 'rozbity' ? `<rect x="${x0}" y="${top}" width="${sirka}" height="${telo}" rx="1.5" fill="rgba(40,24,10,0.30)"/>` : ''}
+    ${o.stav === 'opotrebeny' || o.stav === 'spatny' || o.stav === 'rozbity' ? `<path d="M${x0 + 4} ${top + 3} l4 5 l-3 3 l5 6" stroke="#0f1115" stroke-width="1.2" fill="none" opacity="${o.stav === 'opotrebeny' ? 0.5 : 0.75}"/>` : ''}
+    ${o.stav === 'spatny' || o.stav === 'rozbity' ? `<path d="M${x0 + sirka - 4} ${top + telo - 3} l-3 -4 l3 -3 l-4 -5" stroke="#0f1115" stroke-width="1.1" fill="none" opacity="0.7"/>` : ''}
     <g class="dOkna${o.moje ? ' sviti' : ''}">${okna}</g>
     ${provozSvg}${cislo}
   </svg>`;
@@ -12071,7 +12208,7 @@ function iconFor(p){
   const d = dumSvg({
     patra, fasada: vynosRezim ? barvaVynosu(vyn) : (b ? b.hex : vychozi),
     stitek: vynosRezim && vyn !== null ? `${Math.round(vyn)} %` : '',
-    stav: !owned ? 'volny' : (allBroken ? 'rozbity' : 'normal'),
+    stav: !owned ? 'volny' : (allBroken ? 'rozbity' : (safeCall(() => stavDomuIkona(p)) || 'normal')),
     moje, ulice,
     provoz: provoz ? (PROVOZ_TYPY[p.provoz.typ] || {}).emoji : '',
     upg: ikonyVylepseni(p)
@@ -12296,9 +12433,10 @@ const VZHLED_VOLBY = [
   { id:'denNoc',  nazev:'Denní doba na mapě', popis:'V noci ztmavne, za svítání a soumraku má teplý nádech.' },
   { id:'pocasi',  nazev:'Počasí a světlo na mapě', popis:'Déšť, sníh, mlha, bouřka, stíny mraků, sluníčko a padající listí podle skutečného počasí v Bučovicích.' },
   { id:'sezony',  nazev:'Sezónní ozdoby',      popis:'Vločka v adventu, listí na podzim, stromeček o Vánocích.' },
-  { id:'pudorysy', nazev:'Půdorysy budov',      popis:'Skutečné tvary domů obarvené barvou majitele. Na slabém telefonu jde vypnout.' }
+  { id:'pudorysy', nazev:'Půdorysy budov',      popis:'Skutečné tvary domů obarvené barvou majitele. Na slabém telefonu jde vypnout.' },
+  { id:'nebe',     nazev:'Obloha v horním panelu', popis:'Silueta Bučovic se sluncem a měsícem podle skutečného času, za tmy se rozsvítí okna.' }
 ];
-let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true };
+let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true, nebe:true };
 
 function nactiVzhled(){
   try {
@@ -12333,6 +12471,7 @@ function prepniVzhled(id){
   try { localStorage.setItem('bp_vzhled', JSON.stringify(VZHLED)); } catch(e){}
   safeCall(() => prekresliVrstvy(true));
   safeCall(() => renderPudorysy(true));
+  safeCall(() => kresliNebe(true));
   safeCall(() => renderGuide());
 }
 
@@ -12415,7 +12554,9 @@ function legendaHtml(){
         + r(z({patra:2, fasada:moje, stav:'normal', ulice:true}, 'obydleny'), 'Korunka = dům v ovládnuté ulici (+10 % nájmu).')
         + r(z({patra:3, fasada:cizi, stav:'normal', provoz:'☕'}, 'obydleny'), 'Kroužek na fasádě = provozovna (ikona oboru).')
         + r(z({patra:2, fasada:cizi, stav:'normal', upg:'☀️❄️'}, 'obydleny'), 'Ikonky na střeše = vylepšení domu.')
-        + r(z({patra:2, fasada:'#f87171', stav:'rozbity'}), 'Červený s prasklinou = všechny byty na nule, potřebují opravu.')
+        + r(z({patra:2, fasada:cizi, stav:'opotrebeny'}, 'obydleny'), 'Jedna prasklina = byty v průměru pod 60 %, je čas na opravu.')
+        + r(z({patra:2, fasada:cizi, stav:'spatny'}, 'obydleny'), 'Tmavší se dvěma prasklinami = byty pod 35 %, nájemníci odcházejí.')
+        + r(z({patra:2, fasada:'#f87171', stav:'rozbity'}), 'Červený s prasklinami = všechny byty na nule, neobyvatelné.')
         + r('<div style="width:26px;height:18px;background:rgba(244,114,182,0.45);border:1.5px solid #f472b6;border-radius:2px;"></div>', 'Při přiblížení je vidět i skutečný půdorys budovy v barvě majitele (tvoje se zlatým okrajem).')
         + `<p style="font-size:11px;color:var(--muted);margin:2px 0 0;">V noci se v obydlených domech rozsvítí okna. Tlačítko 📈 přebarví domy podle výnosu.</p>`;
     })()}
@@ -12500,8 +12641,348 @@ function sezona(d){
   return null;
 }
 
+// ===== OBLOHA V HORNÍM PANELU =====
+// Za penězi a časem je silueta Bučovic (zámek, kostel, radnice, paneláky) a nad ní obloha,
+// která jde se skutečným časem: slunce vychází a zapadá podle opravdového východu a západu
+// v Bučovicích (v zimě kratší oblouk, v létě delší), v noci svítí měsíc ve správné fázi
+// a hvězdy, v oknech se rozsvěcí. Když je zataženo, obloha zešedne a připlují mraky.
+// Překresluje se jednou za minutu — víc není potřeba a telefon to nezatíží.
+const NEBE_LAT = 49.149, NEBE_LNG = 17.001;
+let NEBE_ANIM = null;          // admin náhled „celý den za 30 s": { od, delka }
+
+// Výška slunce nad obzorem (ve stupních) a časy východu a západu pro daný den.
+// Zjednodušený astronomický výpočet — na minuty přesný, víc hra nepotřebuje.
+function slunceDne(d){
+  const zacRoku = new Date(d.getFullYear(), 0, 1);
+  const n = Math.floor((d - zacRoku) / 86400000) + 1;
+  const rad = Math.PI / 180;
+  // Vzorce NOAA (Spencer) — deklinace a časová rovnice, přesnost na minuty.
+  const g = 2 * Math.PI / 365 * (n - 1);
+  const dekl = 0.006918 - 0.399912 * Math.cos(g) + 0.070257 * Math.sin(g) - 0.006758 * Math.cos(2 * g)
+             + 0.000907 * Math.sin(2 * g) - 0.002697 * Math.cos(3 * g) + 0.00148 * Math.sin(3 * g);   // radiány
+  const casRovnice = 229.18 * (0.000075 + 0.001868 * Math.cos(g) - 0.032077 * Math.sin(g)
+             - 0.014615 * Math.cos(2 * g) - 0.040849 * Math.sin(2 * g));                            // minuty
+  const pasmo = -d.getTimezoneOffset() / 60;
+  const poledne = 12 - (NEBE_LNG / 15 - pasmo) - casRovnice / 60;
+  const fi = NEBE_LAT * rad;
+  const cosH0 = (Math.sin(-0.833 * rad) - Math.sin(fi) * Math.sin(dekl)) / (Math.cos(fi) * Math.cos(dekl));
+  const H0 = Math.acos(Math.max(-1, Math.min(1, cosH0))) / rad;   // stupně
+  const vyska = t => {
+    const H = 15 * (t - poledne) * rad;
+    return Math.asin(Math.sin(fi) * Math.sin(dekl) + Math.cos(fi) * Math.cos(dekl) * Math.cos(H)) / rad;
+  };
+  return { poledne, vychod: poledne - H0 / 15, zapad: poledne + H0 / 15, vyska, maxVyska: vyska(poledne) };
+}
+
+// Fáze měsíce 0–1 (0 nov, 0,5 úplněk) podle známého novu 6. 1. 2000.
+function fazeMesice(d){
+  const dny = (d.getTime() - Date.UTC(2000, 0, 6, 18, 14)) / 86400000;
+  const f = (dny / 29.530588853) % 1;
+  return f < 0 ? f + 1 : f;
+}
+
+// Aktuální čas pro oblohu jako desetinná hodina. Respektuje admin náhledy.
+function nebeCas(){
+  const d = new Date();
+  if(NEBE_ANIM){
+    const uplynulo = (Date.now() - NEBE_ANIM.od) / NEBE_ANIM.delka;
+    if(uplynulo >= 1) NEBE_ANIM = null;
+    else return { d, t: uplynulo * 24 };
+  }
+  if(testAktivni() && TEST.hodina !== null) return { d, t: TEST.hodina + d.getMinutes() / 60 };
+  return { d, t: d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600 };
+}
+
+// Barvy oblohy podle výšky slunce: [výška, horní barva, barva u obzoru]
+const NEBE_BARVY = [
+  [-18, [5, 8, 20],    [12, 18, 38]],
+  [-10, [8, 12, 32],   [22, 28, 62]],
+  [-5,  [16, 24, 58],  [72, 54, 102]],
+  [-1,  [30, 44, 88],  [190, 96, 72]],
+  [3,   [40, 72, 122], [214, 142, 90]],
+  [10,  [34, 88, 146], [118, 162, 200]],
+  [25,  [28, 96, 164], [104, 164, 214]],
+  [90,  [28, 96, 164], [104, 164, 214]]
+];
+function nebeMix(a, b, k){ return a.map((v, i) => Math.round(v + (b[i] - v) * k)); }
+function nebeRgb(c, a){ return a === undefined ? `rgb(${c[0]},${c[1]},${c[2]})` : `rgba(${c[0]},${c[1]},${c[2]},${a})`; }
+function nebeBarvy(e, rano, zatazeno){
+  let i = 0;
+  while(i < NEBE_BARVY.length - 2 && e > NEBE_BARVY[i + 1][0]) i++;
+  const [e1, h1, s1] = NEBE_BARVY[i], [e2, h2, s2] = NEBE_BARVY[i + 1];
+  const k = Math.max(0, Math.min(1, (e - e1) / (e2 - e1)));
+  let horni = nebeMix(h1, h2, k), spodni = nebeMix(s1, s2, k);
+  // Ráno je obzor spíš růžový, večer víc do červena.
+  if(rano && e > -8 && e < 8) spodni = nebeMix(spodni, [226, 140, 156], 0.28 * (1 - Math.abs(e) / 8));
+  // Zataženo: barvy se slijí do šedi stejného jasu.
+  if(zatazeno > 0){
+    const sed = c => { const j = Math.round(c[0] * 0.3 + c[1] * 0.55 + c[2] * 0.15); return [j, j + 2, j + 6]; };
+    horni = nebeMix(horni, sed(horni), zatazeno * 0.85);
+    spodni = nebeMix(spodni, sed(spodni), zatazeno * 0.85);
+  }
+  return { horni, spodni };
+}
+
+// Jak moc je zataženo (0 jasno – 1 hustý déšť/mlha) podle kódu počasí.
+function nebeZatazeno(){
+  if(!VZHLED.pocasi || !POCASI || typeof POCASI.kod !== 'number') return 0;
+  const k = POCASI.kod;
+  if(k === 0) return 0;
+  if(k === 1) return 0.15;
+  if(k === 2) return 0.35;
+  if(k === 3) return 0.75;
+  if(k === 45 || k === 48) return 0.85;
+  return 0.9;   // déšť, sníh, bouřka
+}
+
+// Deterministická náhoda, ať silueta vypadá pořád stejně.
+function nebeNahoda(seed){
+  let s = seed >>> 0;
+  return () => { s = (s + 0x6D2B79F5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+// Silueta města na šířku karty (v pixelech, takže se nic nedeformuje).
+function nebeSilueta(w, h){
+  const r = nebeNahoda(1947);
+  const okna = [];              // [x, y, šířka, výška, práh rozsvícení]
+  const tvary = [];
+  const okno = (x, y, ow, oh) => okna.push([x, y, ow || 2, oh || 2.4, r()]);
+  // Památky: střed v poměru šířky karty, aby na úzkém i širokém displeji seděly podobně.
+  const pamatky = [
+    { typ:'zamek',   x: w * 0.30, sir: 70 },
+    { typ:'kostel',  x: w * 0.58, sir: 40 },
+    { typ:'radnice', x: w * 0.78, sir: 28 },
+    { typ:'panel',   x: w * 0.935, sir: 50 }
+  ];
+  const obsazeno = x => pamatky.some(p => Math.abs(x - p.x) < p.sir / 2 + 3);
+  const z = h;   // základna
+
+  // Obyčejné domky a stromy mezi památkami
+  let x = -4;
+  while(x < w + 4){
+    const sir = 13 + Math.floor(r() * 16);
+    if(obsazeno(x + sir / 2)){ x += 6; continue; }
+    if(r() < 0.22){
+      // strom
+      const v = 9 + r() * 7, cx = x + 5;
+      tvary.push(`<ellipse cx="${cx.toFixed(1)}" cy="${(z - v + 4).toFixed(1)}" rx="${(4 + r() * 2).toFixed(1)}" ry="${(v / 2).toFixed(1)}"/><rect x="${(cx - 0.7).toFixed(1)}" y="${(z - 4).toFixed(1)}" width="1.4" height="4"/>`);
+      x += 10;
+      continue;
+    }
+    const v = 8 + Math.floor(r() * 7);
+    const strecha = 4 + Math.floor(r() * 5);
+    const druh = r();
+    if(druh < 0.55){
+      // sedlová střecha
+      tvary.push(`<path d="M${x} ${z}V${z - v}L${x + sir / 2} ${z - v - strecha}L${x + sir} ${z - v}V${z}Z"/>`);
+    } else if(druh < 0.8){
+      // valbová střecha
+      tvary.push(`<path d="M${x} ${z}V${z - v}L${x + 3} ${z - v - strecha}H${x + sir - 3}L${x + sir} ${z - v}V${z}Z"/>`);
+    } else {
+      // rovná s komínem
+      tvary.push(`<path d="M${x} ${z}V${z - v - 2}H${x + sir}V${z}Z"/><rect x="${x + sir - 5}" y="${z - v - 6}" width="2.2" height="4"/>`);
+    }
+    if(r() < 0.5) tvary.push(`<rect x="${x + 3 + Math.floor(r() * (sir - 8))}" y="${z - v - strecha + 1}" width="2" height="${strecha}"/>`);  // komín
+    const n = sir > 22 ? 3 : 2;
+    for(let i = 0; i < n; i++) okno(x + 3 + i * ((sir - 6) / n) + 0.5, z - v + 3 + (r() < 0.3 ? 3 : 0));
+    x += sir + Math.floor(r() * 3);
+  }
+
+  // Zámek: čtyřkřídlý renesanční zámek — dlouhé křídlo s valbou, nárožní věže, věžička nad branou.
+  { const p = pamatky[0], l = p.x - 35;
+    tvary.push(`<path d="M${l} ${z}V${z - 15}L${l + 5} ${z - 22}H${l + 65}L${l + 70} ${z - 15}V${z}Z"/>`);
+    tvary.push(`<path d="M${l - 2} ${z}V${z - 22}L${l + 3.5} ${z - 31}L${l + 9} ${z - 22}V${z}Z"/>`);
+    tvary.push(`<path d="M${l + 61} ${z}V${z - 22}L${l + 66.5} ${z - 31}L${l + 72} ${z - 22}V${z}Z"/>`);
+    tvary.push(`<path d="M${p.x - 4} ${z - 21}V${z - 27}L${p.x} ${z - 34}L${p.x + 4} ${z - 27}V${z - 21}Z"/><rect x="${p.x - 0.4}" y="${z - 38}" width="0.8" height="4"/>`);
+    for(let i = 0; i < 9; i++){ okno(l + 12 + i * 5.4, z - 12); if(i % 2 === 0) okno(l + 12 + i * 5.4, z - 6.5); }
+    okno(l + 2.5, z - 16); okno(l + 64.5, z - 16);
+  }
+  // Kostel: loď se sedlovou střechou a vysoká věž s jehlanem a křížem.
+  { const p = pamatky[1], l = p.x - 20;
+    tvary.push(`<path d="M${l + 9} ${z}V${z - 15}L${l + 24} ${z - 25}L${l + 40} ${z - 15}V${z}Z"/>`);
+    tvary.push(`<path d="M${l} ${z}V${z - 32}L${l + 1.5} ${z - 34}H${l + 9.5}L${l + 11} ${z - 32}V${z}Z"/>`);
+    tvary.push(`<path d="M${l} ${z - 34}L${l + 5.5} ${z - 47}L${l + 11} ${z - 34}Z"/><rect x="${l + 5.1}" y="${z - 53}" width="0.8" height="7"/><rect x="${l + 3.3}" y="${z - 51}" width="4.4" height="0.8"/>`);
+    okno(l + 4.5, z - 27, 2, 4); okno(l + 4.5, z - 17, 2, 3);
+    okno(l + 16, z - 11, 1.8, 5); okno(l + 23, z - 11, 1.8, 5); okno(l + 30, z - 11, 1.8, 5);
+    tvary.push(`<circle cx="${l + 5.5}" cy="${z - 30.5}" r="1.6" class="nebeHodiny"/>`);
+  }
+  // Radnice: dům s věží a cibulkou.
+  { const p = pamatky[2], l = p.x - 14;
+    tvary.push(`<path d="M${l} ${z}V${z - 13}L${l + 4} ${z - 19}H${l + 24}L${l + 28} ${z - 13}V${z}Z"/>`);
+    tvary.push(`<path d="M${p.x - 3.5} ${z - 18}V${z - 29}H${p.x + 3.5}V${z - 18}Z"/>`);
+    tvary.push(`<path d="M${p.x - 3.5} ${z - 29}Q${p.x - 4.5} ${z - 33} ${p.x} ${z - 35}Q${p.x + 4.5} ${z - 33} ${p.x + 3.5} ${z - 29}Z"/><rect x="${p.x - 0.4}" y="${z - 39}" width="0.8" height="4"/>`);
+    for(let i = 0; i < 4; i++) okno(l + 4 + i * 5.5, z - 9);
+    okno(p.x - 1, z - 25, 2, 3);
+  }
+  // Paneláky na kraji města
+  { const p = pamatky[3], l = p.x - 25;
+    [[l, 22, 24], [l + 27, 20, 18]].forEach(([px, sir, v]) => {
+      tvary.push(`<rect x="${px}" y="${z - v}" width="${sir}" height="${v}"/>`);
+      for(let rad = 0; rad < Math.floor((v - 3) / 4); rad++)
+        for(let s = 0; s < Math.floor(sir / 4.5); s++) okno(px + 2 + s * 4.5, z - v + 3 + rad * 4, 2, 2);
+    });
+  }
+
+  // Kopce v pozadí (Ždánický les)
+  let kopce = `M0 ${z}`;
+  for(let i = 0; i <= w; i += 8){
+    const y = z - 15 - 5 * Math.sin(i / 83 + 0.6) - 3 * Math.sin(i / 29 + 2.1);
+    kopce += `L${i} ${y.toFixed(1)}`;
+  }
+  kopce += `L${w} ${z}Z`;
+
+  const oknaSvg = okna.map((o, i) => `<rect class="nebeOkno" data-p="${o[4].toFixed(3)}" x="${o[0].toFixed(1)}" y="${o[1].toFixed(1)}" width="${o[2]}" height="${o[3]}"/>`).join('');
+  return `<svg class="nebeMesto" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+    <path class="nebeKopce" d="${kopce}"/>
+    <g class="nebeDomy">${tvary.join('')}</g>
+    <g class="nebeOkna">${oknaSvg}</g>
+  </svg>`;
+}
+
+// Měsíc se správnou fází (osvětlená strana vpravo, když dorůstá).
+function nebeMesicSvg(faze){
+  const r = 6;
+  const rx = Math.abs(Math.cos(2 * Math.PI * faze)) * r;
+  const dorusta = faze < 0.5;
+  const vetsi = faze > 0.25 && faze < 0.75;
+  const s1 = dorusta ? 1 : 0;
+  const s2 = dorusta ? (vetsi ? 1 : 0) : (vetsi ? 0 : 1);
+  return `<svg width="16" height="16" viewBox="-8 -8 16 16"><circle r="${r}" fill="rgba(200,210,235,0.13)"/>
+    <path d="M0 ${-r}A${r} ${r} 0 0 ${s1} 0 ${r}A${rx.toFixed(2)} ${r} 0 0 ${s2} 0 ${-r}Z" fill="#f4f1e0"/></svg>`;
+}
+
+function nebePriprav(el, w){
+  const h = 56;
+  const r = nebeNahoda(77);
+  let hvezdy = '';
+  const pocet = Math.round(w / 9);
+  for(let i = 0; i < pocet; i++){
+    const vel = r() < 0.15 ? 2 : 1.2;
+    hvezdy += `<i style="left:${(r() * 100).toFixed(2)}%;top:${(r() * 62).toFixed(1)}%;width:${vel}px;height:${vel}px;${r() < 0.3 ? `animation-delay:${(r() * 4).toFixed(1)}s` : 'animation:none'}"></i>`;
+  }
+  el.innerHTML = `<div class="nebePozadi"></div>
+    <div class="nebeHvezdy">${hvezdy}</div>
+    <div class="nebeSlunce"></div>
+    <div class="nebeMesic"></div>
+    <div class="nebeMraky"><b style="--y:14%;--d:95s;--o:-20s;--s:1"></b><b style="--y:34%;--d:120s;--o:-75s;--s:0.8"></b><b style="--y:6%;--d:140s;--o:-40s;--s:1.25"></b><b style="--y:24%;--d:105s;--o:-100s;--s:0.9"></b></div>
+    ${nebeSilueta(w, h)}
+    <div class="nebeClona"></div>`;
+  el.dataset.w = w;
+}
+
+// Volá se každou sekundu z updateHeaderStats, ale skutečně kreslí jen při změně minuty,
+// šířky, počasí nebo nastavení.
+function kresliNebe(vynutit){
+  const el = document.getElementById('hudNebe');
+  const karta = document.getElementById('hudKarta');
+  if(!el || !karta) return;
+  const zap = !!VZHLED.nebe;
+  karta.classList.toggle('sNebem', zap);
+  if(!zap){ if(el.innerHTML){ el.innerHTML = ''; el.dataset.w = ''; el.dataset.klic = ''; } return; }
+  const w = Math.round(karta.clientWidth || 0);
+  if(w < 50) return;            // karta ještě není vidět
+  if(String(w) !== el.dataset.w) { nebePriprav(el, w); vynutit = true; }
+
+  const { d, t } = nebeCas();
+  const zat = nebeZatazeno();
+  const klic = [Math.floor(t * 60), zat, NEBE_ANIM ? 'a' : ''].join('|');
+  if(!vynutit && el.dataset.klic === klic) return;
+  el.dataset.klic = klic;
+
+  const s = slunceDne(d);
+  const e = s.vyska(t);
+  const rano = t < s.poledne;
+  const { horni, spodni } = nebeBarvy(e, rano, zat);
+  el.querySelector('.nebePozadi').style.background = `linear-gradient(180deg, ${nebeRgb(horni)} 0%, ${nebeRgb(nebeMix(horni, spodni, 0.45))} 55%, ${nebeRgb(spodni)} 100%)`;
+
+  // Tma 0 (den) – 1 (hluboká noc)
+  const tma = Math.max(0, Math.min(1, (2 - e) / 14));
+  el.style.setProperty('--tma', tma.toFixed(3));
+
+  // Slunce: oblouk od východu (vlevo) k západu (vpravo). V zimě je nižší.
+  const sl = el.querySelector('.nebeSlunce');
+  const delkaDne = s.zapad - s.vychod;
+  const fd = (t - s.vychod) / delkaDne;
+  const strop = 0.5 + 0.38 * Math.max(0, Math.min(1, s.maxVyska / 64));
+  if(fd > -0.04 && fd < 1.04){
+    const x = 7 + Math.max(0, Math.min(1, fd)) * 86;
+    const y = 8 + Math.sin(Math.PI * Math.max(0, Math.min(1, fd))) * strop * 82;   // % odspodu
+    const nizko = Math.max(0, Math.min(1, e / 12));
+    sl.style.display = '';
+    sl.style.left = x.toFixed(2) + '%';
+    sl.style.bottom = y.toFixed(2) + '%';
+    sl.style.background = nebeRgb(nebeMix([255, 150, 70], [255, 244, 200], nizko));
+    sl.style.boxShadow = `0 0 ${10 + (1 - nizko) * 8}px ${3 + (1 - nizko) * 3}px ${nebeRgb(nebeMix([255, 120, 50], [255, 220, 130], nizko), 0.55)}`;
+    sl.style.opacity = (1 - zat * 0.75).toFixed(2);
+  } else sl.style.display = 'none';
+
+  // Měsíc: vychází každý den asi o 50 minut později než předchozí den — v novu se sluncem,
+  // v úplňku večer, když slunce zapadá. Jde po stejném oblouku jako slunce, jen posunutý
+  // podle fáze. Kolem novu proto v noci vidět není (jako ve skutečnosti), ve dne je bledý.
+  const me = el.querySelector('.nebeMesic');
+  const faze = NEBE_ANIM ? 0.5 : fazeMesice(d);
+  const mVychod = s.vychod + faze * 24.84;
+  const fm = ((((t - mVychod) % 24) + 24) % 24) / delkaDne;
+  const osvetleni = (1 - Math.cos(2 * Math.PI * faze)) / 2;   // 0 nov – 1 úplněk
+  if(fm >= 0 && fm <= 1 && osvetleni > 0.04){
+    const x = 7 + fm * 86, y = 10 + Math.sin(Math.PI * fm) * strop * 74;
+    const viditelnost = e < -3 ? Math.min(1, (-e - 3) / 5) : 0;
+    me.style.display = '';
+    me.style.left = x.toFixed(2) + '%';
+    me.style.bottom = y.toFixed(2) + '%';
+    me.style.opacity = (Math.max(0.3, viditelnost) * (1 - zat * 0.7)).toFixed(2);
+    const fk = Math.round(faze * 40);
+    if(me.dataset.f !== String(fk)){ me.dataset.f = fk; me.innerHTML = nebeMesicSvg(faze); }
+  } else me.style.display = 'none';
+
+  // Hvězdy jen za tmy a jen když není zataženo.
+  el.querySelector('.nebeHvezdy').style.opacity = (Math.max(0, Math.min(1, (-e - 4) / 8)) * (1 - zat)).toFixed(2);
+
+  // Mraky: kolik a jak světlé.
+  const mraky = el.querySelector('.nebeMraky');
+  const pocetMraku = zat >= 0.7 ? 4 : zat >= 0.3 ? 3 : zat > 0 ? 2 : 0;
+  mraky.querySelectorAll('b').forEach((b, i) => { b.style.display = i < pocetMraku ? '' : 'none'; });
+  const barvaMraku = nebeMix([236, 240, 246], [46, 52, 70], tma);
+  mraky.style.setProperty('--mrak', nebeRgb(zat >= 0.7 ? nebeMix(barvaMraku, [120, 126, 138], 0.35 * (1 - tma)) : barvaMraku, zat >= 0.7 ? 0.75 : 0.6));
+
+  // Silueta: ve dne tmavě modrošedá, v noci skoro černá; kopce jsou průhlednější.
+  const mesto = nebeMix(nebeMix(spodni, [24, 32, 48], 0.72), [5, 7, 14], tma);
+  el.style.setProperty('--mesto', nebeRgb(mesto));
+  el.style.setProperty('--kopce', nebeRgb(nebeMix(spodni, mesto, 0.45)));
+
+  // Okna: za soumraku se rozsvěcí, kolem půlnoci většina zhasne, nad ránem se zase pár rozsvítí.
+  const hod = ((t % 24) + 24) % 24;
+  const lidi = hod >= 22 ? 0.55 - (hod - 22) * 0.12 : hod < 5 ? 0.18 : hod < 7 ? 0.45 : 0.75;
+  const sviti = tma * lidi;
+  el.querySelectorAll('.nebeOkno').forEach(o => {
+    const zapnuto = parseFloat(o.dataset.p) < sviti;
+    if(o.classList.contains('zap') !== zapnuto) o.classList.toggle('zap', zapnuto);
+  });
+  // Kostelní hodiny a zámek se v noci nasvítí.
+  el.classList.toggle('nasviceno', tma > 0.5 && hod >= 17 && hod < 23.5);
+  el.classList.toggle('noc', tma > 0.5);
+
+  el.classList.toggle('anim', !!NEBE_ANIM);
+  karta.dataset.nebe = `${Math.floor(hod)}:${String(Math.floor((hod % 1) * 60)).padStart(2, '0')} · slunce ${e.toFixed(1)}°`;
+}
+
+// Admin: celý den v panelu za 30 vteřin.
+function testNebeDen(){
+  closeSheet();
+  if(!VZHLED.nebe){ showToast('Obloha v panelu je vypnutá v Nastavení vzhledu'); return; }
+  NEBE_ANIM = { od: Date.now(), delka: 30000 };
+  showToast('🌗 Celý den v horním panelu za 30 vteřin');
+  const krok = () => {
+    safeCall(() => kresliNebe(true));
+    if(NEBE_ANIM) requestAnimationFrame(krok);
+    else safeCall(() => kresliNebe(true));
+  };
+  requestAnimationFrame(krok);
+}
+
 function updateHeaderStats(){
   safeCall(() => prekresliVrstvy());
+  safeCall(() => kresliNebe());
   safeCall(() => {
     // ozdoba u čísla dne
     const sez = VZHLED.sezony ? sezona() : null;
@@ -13207,6 +13688,11 @@ function renderSelected(id){
       html += `</div>`;
     }
 
+    // Hromadná oprava — hráčka opravovala dům po bytu a každý zvlášť potvrzovala.
+    if(iDecide){
+      const ho = hromadnaOprava(p);
+      if(ho.pocet >= 2) html += `<div class="row" style="margin:6px 0;"><button class="gold" ${near?'':'disabled'} onclick="repairAllUnits('${p.id}')">🔧 Opravit všech ${ho.pocet} bytů za ${ho.cena.toLocaleString('cs-CZ')} Kč</button></div>`;
+    }
     p.units.forEach((u, idx) => {
       const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;   // buď někdo bydlí, nebo ne
       const occPct = Math.round(occ*100);
@@ -13313,7 +13799,7 @@ function renderSelected(id){
         <div class="condBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':'var(--accent)'}"></div></div>
         ${iDecide ? `<div class="row">
           <button ${near?'':'disabled'} onclick="setUnitRentPrice('${p.id}',${idx})">Nastavit nájemné</button>
-          ${u.condition < 100 ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit (${Math.round(cenaOpravyBod() * eventMult('repairMult'))} Kč/bod)</button>` : ''}
+          ${u.condition <= 99 ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit za ${Math.round((100 - u.condition) * cenaOpravyBod() * eventMult('repairMult'))} Kč</button>` : ''}
         </div>` : ''}
         ${iDecide && u.npc ? `<div class="row"><button class="danger" onclick="evictNpc('${p.id}',${idx})">Vystěhovat ${escapeHtml(u.npc.name)}</button></div>` : ''}
         ${iDecide && u.ownerOccupied ? `<div class="row"><button class="secondary" onclick="leaveOwnUnit('${p.id}',${idx})">📤 Vystěhovat se (byt se zase pronajme)</button></div>` : ''}
@@ -16077,6 +16563,50 @@ function adminSmazChyby(){
   renderAdmin();
 }
 
+// Stav synchronizace a kontrola dat proti pravidlům Firebase. Když Firebase odmítá zápisy,
+// nikdo nevidí cizí změny a svět se všem vrací do starého stavu — tady se to pozná hned.
+function adminSyncKartaHtml(){
+  let nalezy = [];
+  try { nalezy = pripravProCloud(worldForCloud()).nalezy; } catch(e){ nalezy = ['kontrola spadla: ' + ((e && e.message) || e)]; }
+  const ok = syncStav.ok ? `${Math.round((Date.now() - syncStav.ok) / 1000)} s` : '—';
+  return `<div class="card" style="border-left:3px solid ${syncStav.chyba || nalezy.length ? 'var(--danger)' : 'var(--accent)'};">
+    <h3>🔄 Synchronizace</h3>
+    <p style="font-size:0.88em;margin:2px 0;">Poslední úspěšný zápis: <b>${ok}</b> zpátky${syncStav.chyba ? ` · <span style="color:var(--danger)">poslední chyba: ${escapeHtml(syncStav.chyba)}</span>` : ''}</p>
+    <p style="font-size:0.88em;margin:2px 0;">Kontrola dat proti pravidlům Firebase: ${nalezy.length
+      ? `<b style="color:var(--danger)">${nalezy.length} ${sklonuj(nalezy.length, 'problém', 'problémy', 'problémů')}</b> (před odesláním se opraví)</p><ul style="font-size:0.82em;margin:4px 0 0 16px;padding:0;">${nalezy.slice(0, 8).map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`
+      : '<b style="color:var(--accent)">v pořádku</b></p>'}
+  </div>
+  <div class="card">
+    <h3>🛠️ Náprava stavu bytů</h3>
+    <p style="font-size:0.88em;color:var(--muted);">Do verze 21.6 mohla chyba v synchronizaci nechat byty ve městě během pár hodin zchátrat (nájemníci se pak odstěhovali). Tímhle zvedneš stav všech bytů ve městě aspoň na zadanou hodnotu. Nic se neplatí a lepší byty se nemění.</p>
+    <div class="row"><button class="secondary" onclick="adminNapravaBytu()">Zvednout stav bytů…</button></div>
+  </div>`;
+}
+async function adminNapravaBytu(){
+  if(!isAdmin) return;
+  const vstup = await showPrompt('Na kolik procent zvednout byty, které jsou pod touto hodnotou?', '80', true);
+  if(vstup === null || vstup === undefined) return;
+  const min = Math.round(Number(String(vstup).replace(',', '.').replace('%', '')));
+  if(!isFinite(min) || min < 1 || min > 100){ showAlert('Zadej číslo od 1 do 100.'); return; }
+  const pocitej = () => {
+    const kOprave = [];
+    Object.values(world.parcels || {}).forEach(p => asArray(p && p.units).forEach(u => { if(u && (u.condition || 0) < min) kOprave.push({ p, u }); }));
+    return kOprave;
+  };
+  const pred = pocitej();
+  if(!pred.length){ showAlert(`Všechny byty už mají aspoň ${min} %.`); return; }
+  const pocetDomu = new Set(pred.map(x => x.p.id)).size;
+  if(!(await showConfirm(`Zvednout ${pred.length} ${sklonuj(pred.length, 'byt', 'byty', 'bytů')} v ${pocetDomu} ${sklonuj(pocetDomu, 'domě', 'domech', 'domech')} na ${min} %?`))) return;
+  const kOprave = pocitej();   // svět se mohl během dialogu sloučit — spočítat znovu
+  const domy = new Set();
+  kOprave.forEach(({ p, u }) => { u.condition = min; stampUnit(u); domy.add(p.id); });
+  const bytu = kOprave.length;
+  domy.forEach(id => { const p = world.parcels[id]; if(p) stampHouse(p); });
+  addNews('event', `🛠️ Vedení města opravilo po technické chybě ${bytu} ${sklonuj(bytu, 'byt', 'byty', 'bytů')} — stav je zase aspoň ${min} %.`);
+  saveWorld(); refreshAll(); renderAdmin();
+  showAlert(`Hotovo: ${bytu} ${sklonuj(bytu, 'byt má', 'byty mají', 'bytů má')} teď aspoň ${min} %. Nájemníci se začnou vracet sami.`);
+}
+
 function renderAdmin(){
   const el = document.getElementById('adminContent');
   if(!isAdmin){ el.innerHTML = '<div class="empty-state">Nemáš admin oprávnění.</div>'; return; }
@@ -16089,6 +16619,7 @@ function renderAdmin(){
     <p style="font-size:0.88em;margin:2px 0;">Běží: <b>${APP_VERSION}</b> · sestaveno <b>${APP_BUILD}</b></p>
     <p style="font-size:0.82em;color:var(--muted);margin:2px 0;">Vidíš tu staré datum po nahrání nové verze? Appka běží ze staré kopie — zavři ji úplně (i z přehledu aplikací) a otevři znovu.</p>
   </div>`;
+  html += adminSyncKartaHtml();
 
   // Záznam chyb — ať víš o průšvizích i od hráčů, kteří ti je nenapíšou do chatu.
   html += `<div class="card">
@@ -16108,6 +16639,7 @@ function renderAdmin(){
       ${[[6,'🌅 Ráno 6:00'],[12,'☀️ Poledne'],[18,'🌇 Podvečer'],[23,'🌙 Noc 23:00']].map(([h, t]) => `<button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testNastav({hodina:${h}}, 3, '${t}')">${t}</button>`).join('')}
       <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testNastav({teplota:-3}, 3, 'Mráz −3 °C')">🥶 Mráz (kouř, sněhuláci)</button>
       <button class="secondary" style="flex:1 1 45%;min-height:36px;font-size:0.85em;" onclick="testNastav({teplota:20}, 3, 'Teplo 20 °C')">🌤️ Teplo</button>
+      <button class="secondary" style="flex:1 1 100%;min-height:36px;font-size:0.85em;" onclick="testNebeDen()">🌗 Celý den v horním panelu za 30 s</button>
     </div>
     <div class="fSkup">Ve městě</div>
     <div class="row" style="flex-wrap:wrap;gap:6px;">
@@ -17367,6 +17899,16 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.7', datum:'2026-10-08', body:[
+    ['oprava','🔄 Vážná chyba synchronizace: po zprávě v novinách bez místa (půjčka, nová hodnost, nový hráč, oznámení vedení města…) telefon přestal posílat změny do cloudu, dokud se hra úplně nezavřela. Ostatní pak jeho opravy, nákupy ani nájemníky neviděli. Opraveno.'],
+    ['oprava','🛡️ Pojistky: čas města se při synchronizaci už nevrací dozadu (byty tak nemůžou chátrat dvakrát) a data se před odesláním kontrolují podle pravidel serveru.'],
+    ['novinka','🔧 V detailu domu je tlačítko „Opravit všechny byty" s celkovou cenou — už není potřeba opravovat po jednom.'],
+    ['oprava','🔧 Byt, kterému chybí méně než 1 %, se už neopravuje (dřív to stálo pár korun za „+0 % stavu"). Tlačítko rovnou ukazuje cenu opravy.'],
+    ['zmena','🏚️ Ikona domu ukazuje stav bytů: jedna prasklina pod 60 %, tmavší se dvěma prasklinami pod 35 %, červená = všechny byty na nule. Dřív měl prasklinu jen úplně zničený dům.'],
+  ]},
+  { verze:'21.6', datum:'2026-10-08', body:[
+    ['novinka','🌇 V horním panelu je silueta Bučovic — zámek, kostel, radnice i paneláky. Slunce jde po obloze podle skutečného východu a západu v Bučovicích, večer se obloha zbarví a setmí, v noci vyjde měsíc ve správné fázi a hvězdy a v oknech se rozsvítí. Když je zataženo, připlují mraky. Vypnout jde v Nastavení vzhledu.'],
+  ]},
   { verze:'21.5', datum:'2026-10-07', body:[
     ['zmena','💰 Při nákupu podílu (dům, hypotéka i firma) se teď píše, kolik chceš UTRATIT v korunách — hra spočítá procenta sama a v potvrzení ukáže, kolik dostaneš. Kdo chce procenta, napíše je se znakem %, třeba „25 %". U hypotéky píšeš, kolik zaplatíš hned.'],
   ]},
@@ -19929,6 +20471,41 @@ async function installUpgrade(id, key){
   showAlert(`${up.icon} ${up.name} — hotovo. Investice se ti postupně vrátí.`);
 }
 
+function hromadnaOprava(p){
+  const byty = asArray(p.units).filter(u => u && 100 - (u.condition || 0) >= 1);
+  const body = byty.reduce((a, u) => a + (100 - (u.condition || 0)), 0);
+  return { byty, pocet: byty.length, body, cena: Math.round(body * cenaOpravyBod() * eventMult('repairMult')) };
+}
+async function repairAllUnits(id){
+  const p = world.parcels[id];
+  if(!p){ showAlert('Tenhle dům už ve hře není — otevři mapu znovu.'); return; }
+  if(!canInteract(p.lat, p.lng, INTERACTION_RADIUS)){ showAlert('Musíš být fyzicky blíž k domu.'); return; }
+  if(!iAmDecider(p)){ showAlert('Opravy hradí a řídí jen největší podílník.'); return; }
+  const ho = hromadnaOprava(p);
+  if(!ho.pocet){ showToast('Všechny byty jsou v pořádku.'); return; }
+  if(!(await showConfirm(`Opravit všech ${ho.pocet} ${sklonuj(ho.pocet, 'byt', 'byty', 'bytů')} v domě ${domKratce(p)} na 100 %?\n\nCelkem ${ho.cena.toLocaleString('cs-CZ')} Kč (${Math.round(ho.body)} bodů stavu).`))) return;
+  const me = world.users[currentUser.name];
+  // Ceny se mohly změnit, zatímco byl otevřený dialog — přepočítat.
+  const znovu = hromadnaOprava(p);
+  if(me.balance < znovu.cena){ showAlert(`Na opravu všech bytů potřebuješ ${znovu.cena.toLocaleString('cs-CZ')} Kč, máš ${Math.round(me.balance).toLocaleString('cs-CZ')} Kč. Oprav zatím jen některé byty.`); return; }
+  me.balance -= znovu.cena;
+  znovu.byty.forEach(u => { u.condition = 100; stampUnit(u); });
+  zapisDoDeniku('repair', `Opravil jsem ${znovu.pocet} ${sklonuj(znovu.pocet, 'byt', 'byty', 'bytů')} v domě ${domKratce(p)} (+${Math.round(znovu.body)} bodů stavu)`, -znovu.cena);
+  stampHouse(p);
+  const today = calendarDay();
+  if(me.repairDay !== today){ me.repairDay = today; me.repairsToday = 0; }
+  me.repairsToday = (me.repairsToday || 0) + znovu.pocet;
+  safeCall(() => resPozadavky());
+  safeCall(() => prekresliZnackuDomu(p));
+  saveWorld(); refreshAll();
+  checkQuests();
+  showToast(`🔧 ${znovu.pocet} ${sklonuj(znovu.pocet, 'byt opraven', 'byty opraveny', 'bytů opraveno')}`);
+}
+function prekresliZnackuDomu(p){
+  const m = markers && markers[p.id];
+  if(m && map && map.hasLayer(m)){ m._ikonaKlic = iconKey(p); m.setIcon(iconFor(p)); }
+}
+
 async function repairUnit(id, idx){
   // Dům mohl mezitím zmizet (sloučení světa, prodej městu) — tlačítko ze staré
   // obrazovky by jinak shodilo panel.
@@ -19938,7 +20515,8 @@ async function repairUnit(id, idx){
   if(!iAmDecider(p)){ showAlert('Opravy hradí a řídí jen největší podílník.'); return; }
   const unit = p.units[idx];
   const missing = 100 - unit.condition;
-  if(missing <= 0) return;
+  // Pod 1 bod se oprava nedělá — hráčka platila 5 Kč za „+0 % stavu".
+  if(missing < 1){ showToast('Byt je v pořádku, oprava zatím není potřeba.'); return; }
   const cost = Math.round(missing * cenaOpravyBod() * eventMult('repairMult'));
   if(!(await showConfirm(`Oprava bytu (${idx+1}. patro) na 100 % bude stát ${cost} Kč. Pokračovat?`))) return;
   const me = world.users[currentUser.name];
@@ -19948,6 +20526,7 @@ async function repairUnit(id, idx){
   stampUnit(unit);
   zapisDoDeniku('repair', `Opravil jsem byt v domě ${domKratce(p)} (+${Math.round(missing)} % stavu)`, -cost);
   stampHouse(p);
+  safeCall(() => prekresliZnackuDomu(p));
   // počítadlo oprav pro denní úkol (nuluje se s novým dnem)
   const today = calendarDay();
   if(me.repairDay !== today){ me.repairDay = today; me.repairsToday = 0; }
