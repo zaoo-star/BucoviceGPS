@@ -1055,6 +1055,16 @@
     box-shadow:0 0 0 9999px rgba(10,12,16,0.82), 0 0 18px 4px rgba(74,222,128,0.6);transition:all .3s ease;z-index:0; }
   #tutorialOverlay .tutBox{ position:relative;z-index:1; }
   #tutText b{ color:var(--text); }
+
+  /* Tlačítko „Najdi mě" — větší, kulaté, výrazné */
+  .najdiMeBar{ margin-right:10px !important;margin-bottom:10px !important; }
+  .najdiMeBar a{
+    width:48px;height:48px;border-radius:50%;display:flex;align-items:center;justify-content:center;text-decoration:none;
+    background:rgba(23,26,33,0.95);color:#e5e7eb;border:1px solid var(--border);box-shadow:0 4px 12px rgba(0,0,0,0.45);
+    transition:background .2s, color .2s;
+  }
+  .najdiMeBar a.sleduje{ background:var(--accent2);color:#06121f;border-color:var(--accent2);box-shadow:0 0 0 4px rgba(56,189,248,0.25), 0 4px 12px rgba(0,0,0,0.45); }
+  .najdiMeBar a:active{ transform:scale(0.94); }
 </style>
 </head>
 <body>
@@ -1437,7 +1447,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.3';
+const APP_VERSION = '21.5';
 const APP_BUILD = '03.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -9038,8 +9048,12 @@ function onPosition(pos){
     recordHeat(newPos);   // agregovaná statistika pohybu (bez identity)
   }
   updatePlayerMarker(newPos, accuracy);
+  // sledování: mapa jde za hráčem (jen když je přiblížená, ať to neskáče při prohlížení města)
+  if(sledujHrace && hasCenteredOnPlayer && map && !document.getElementById('bottomSheet').classList.contains('open'))
+    map.panTo([newPos.lat, newPos.lng], { animate:true, duration:0.6 });
   if(!hasCenteredOnPlayer){
     hasCenteredOnPlayer = true;
+    nastavSledovani(true);
     map.setView([newPos.lat, newPos.lng], 18);
     maybeSwitchCity(newPos.lat, newPos.lng);   // hraješ jinde než posledně? → přepnout město
   }
@@ -12159,21 +12173,34 @@ function initMap(){
   naMe.onAdd = () => {
     const d = L.DomUtil.create('div', 'leaflet-bar naMeBar');
     d.innerHTML = '<a href="#" role="button" id="vynosBtn" title="Mapa výnosů" aria-label="Mapa výnosů">📈</a>' +
-                  '<a href="#" role="button" id="legendaBtn" title="Co je na mapě" aria-label="Co je na mapě">ⓘ</a>' +
-                  '<a href="#" role="button" title="Na mou polohu" aria-label="Na mou polohu">◎</a>';
+                  '<a href="#" role="button" id="legendaBtn" title="Co je na mapě" aria-label="Co je na mapě">ⓘ</a>';
     L.DomEvent.disableClickPropagation(d);
     L.DomEvent.disableScrollPropagation(d);
-    const [btnVyn, btnLeg, btnMe] = d.querySelectorAll('a');
+    const [btnVyn, btnLeg] = d.querySelectorAll('a');
     btnVyn.addEventListener('click', (e) => { e.preventDefault(); prepniVynosy(); });
     btnLeg.addEventListener('click', (e) => { e.preventDefault(); prepniLegendu(); });
-    btnMe.addEventListener('click', (e) => {
-      e.preventDefault();
-      if(playerPos) map.setView([playerPos.lat, playerPos.lng], Math.max(map.getZoom(), 17));
-      else showToast('Polohu ještě neznám — povol GPS.');
-    });
     return d;
   };
   naMe.addTo(map);
+  // Velké samostatné tlačítko „Najdi mě" — dřív to bylo nenápadné ◎ mezi ostatními a hráči
+  // ho nenacházeli. Klepnutí vycentruje mapu na tebe a zapne SLEDOVÁNÍ: mapa jde s tebou,
+  // dokud ji neposuneš prstem. Při sledování tlačítko svítí.
+  const najdiMe = L.control({position:'bottomright'});
+  najdiMe.onAdd = () => {
+    const d = L.DomUtil.create('div', 'najdiMeBar');
+    d.innerHTML = `<a href="#" role="button" id="najdiMeBtn" title="Na mou polohu" aria-label="Na mou polohu">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><circle cx="12" cy="12" r="4.2" fill="currentColor"/>
+      <circle cx="12" cy="12" r="7.6" fill="none" stroke="currentColor" stroke-width="2"/>
+      <path d="M12 1.5v3.2M12 19.3v3.2M1.5 12h3.2M19.3 12h3.2" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></a>`;
+    L.DomEvent.disableClickPropagation(d);
+    d.querySelector('a').addEventListener('click', (e) => { e.preventDefault(); najdiMe_(); });
+    return d;
+  };
+  najdiMe.addTo(map);
+  // úplně dolů (na dosah palce) — Leaflet nové ovládání v dolním rohu dává nahoru
+  { const c = najdiMe.getContainer(); if(c && c.parentNode) c.parentNode.appendChild(c); }
+  // posunutí mapy prstem sledování vypne
+  map.on('dragstart', () => nastavSledovani(false));
   if(map.attributionControl) map.attributionControl.setPosition('bottomleft');
   map.on('zoomend', () => safeCall(() => rozprostriZnacky()));
   map.on('moveend zoomend', () => safeCall(() => renderPudorysy()));
@@ -12400,6 +12427,20 @@ function legendaHtml(){
     ${r('<div class="skladMarker">🏭</div>', 'Sklad — tady se nakládá zboží pro provozovny.')}
     ${r(`<div class="postavaZnacka" style="animation:none;transform:scale(0.75);">${postavaSvg('parta')}</div>`, 'Večer 20–24 h: podnapilá postava (🎨 sprejer, 🍺 parta, 🔨 vandal, 💰 zloděj). Dojdi k ní a zažeň ji.')}
     <p style="font-size:11px;color:var(--muted);margin:8px 0 0;">Na cokoli klepni a uvidíš podrobnosti.</p>`;
+}
+
+// ===== NAJDI MĚ / SLEDOVÁNÍ POLOHY =====
+let sledujHrace = false;
+function nastavSledovani(zap){
+  sledujHrace = !!zap;
+  const b = document.getElementById('najdiMeBtn');
+  if(b) b.classList.toggle('sleduje', sledujHrace);
+}
+function najdiMe_(){
+  if(!playerPos){ showToast('Polohu ještě neznám — povol v telefonu GPS pro tuhle stránku.'); return; }
+  nastavSledovani(true);
+  map.setView([playerPos.lat, playerPos.lng], Math.max(map.getZoom(), 17), { animate:true });
+  showToast('📍 Mapa tě teď sleduje — posunutím prstem to vypneš');
 }
 
 let vrstvyNahlaseno = false;
@@ -14062,6 +14103,37 @@ function renderJobs(){
 
 // ===== AKCE: NEMOVITOSTI =====
 
+// ===== ZADÁNÍ NÁKUPU V KORUNÁCH =====
+// Dřív se psalo, kolik PROCENT koupit, a hráč si musel sám přepočítat, kolik to stojí
+// (a jestli na to má). Teď se zadává, kolik chceš UTRATIT — hra spočítá procenta sama.
+// Kdo chce procenta, napíše je se znakem % (např. „25 %").
+// o = { zaProcento: cena za 1 % (u hypotéky to, co se platí hned), volne: max %, maxKc: kolik máš,
+//       nadpis, poznamka }
+async function zadejNakup(o){
+  const maxPct = Math.max(0, o.volne);
+  const vseKc = Math.floor(maxPct * o.zaProcento);
+  const vychozi = Math.max(0, Math.min(vseKc, Math.floor(o.maxKc)));
+  const vstup = await showPrompt(`${o.nadpis}\n\n` +
+    `Za 1 % ${Math.round(o.zaProcento).toLocaleString('cs-CZ')} Kč · volných ${des(maxPct, 1)} % (celkem ${vseKc.toLocaleString('cs-CZ')} Kč)\n` +
+    `Máš ${Math.floor(o.maxKc).toLocaleString('cs-CZ')} Kč.${o.poznamka ? '\n' + o.poznamka : ''}\n\n` +
+    `Napiš, kolik chceš utratit (Kč) — nebo procenta se znakem %, třeba „25 %".`, String(vychozi));
+  if(vstup === null || vstup === undefined) return null;
+  const t = String(vstup).replace(/\s/g, '').replace(',', '.');
+  if(!t) return null;
+  let pct;
+  if(/%$/.test(t)) pct = parseFloat(t);
+  else {
+    const kc = parseFloat(t.replace(/kč$/i, ''));
+    if(!(kc > 0)){ showAlert('Napiš částku v korunách, nebo procenta se znakem %.'); return null; }
+    if(kc > o.maxKc + 0.5){ showAlert(`Tolik nemáš — máš ${Math.floor(o.maxKc).toLocaleString('cs-CZ')} Kč.`); return null; }
+    pct = Math.floor(kc / o.zaProcento * 10) / 10;
+    if(pct < 0.1){ showAlert(`Za ${Math.round(kc).toLocaleString('cs-CZ')} Kč nekoupíš ani 0,1 % (to stojí ${Math.ceil(o.zaProcento / 10).toLocaleString('cs-CZ')} Kč).`); return null; }
+  }
+  if(!(pct > 0)) return null;
+  // když hráč chce víc, než je volné, dostane všechno volné
+  return Math.min(Math.round(pct * 10) / 10, Math.floor(maxPct * 10) / 10 || maxPct);
+}
+
 async function buyHouseStake(id){
   // Dům mohl mezitím zmizet (sloučení světa, prodej městu) — tlačítko ze staré
   // obrazovky by jinak shodilo panel.
@@ -14073,8 +14145,9 @@ async function buyHouseStake(id){
   // Stejná cena jako na hypotéku a jako v jmění — podle stavu bytů. Dřív se hotově platila
   // plná cena, na hypotéku cena se slevou za zchátralost: zchátralý dům byl na úvěr levnější.
   const pricePer = houseMarketPricePerPercent(p);
-  const pct = parseFloat(await showPrompt(`Kolik % domu koupit? (volných ${des(free, 1)} %, cena ${Math.round(pricePer)} Kč/1 %)`, Math.min(100, free)));
-  if(isNaN(pct) || pct <= 0) return;
+  const pct = await zadejNakup({ zaProcento: pricePer, volne: free, maxKc: world.users[currentUser.name].balance,
+    nadpis: `🏠 Koupit podíl v domě ${domKratce(p)}` });
+  if(!pct) return;
   if(pct > free + 0.001){ showAlert(`Tolik volných % není — max ${des(free, 1)} %.`); return; }
   const cost = Math.round(pricePer * pct);
   const me = world.users[currentUser.name];
@@ -14718,12 +14791,11 @@ async function buyHouseStakeOnMortgage(id){
     return;
   }
 
-  const vstup = parseInt(await showPrompt(
-    `Kolik % domu koupit na hypotéku? (volných ${des(volne, 1)} %, zvládneš ${des(maxPct, 0)} %)\n\n` +
-    `Cena za 1 %: ${Math.round(cenaZaProcento).toLocaleString('cs-CZ')} Kč\n` +
-    `Z toho zaplatíš hned: ${Math.round(cenaZaProcento*MORTGAGE_DOWNPAYMENT_RATIO).toLocaleString('cs-CZ')} Kč (${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} %)\n` +
-    `Zbytek půjčí banka za ${urokText(MORTGAGE_ANNUAL_RATE)}.`, Math.min(10, maxPct)), 10);
-  if(isNaN(vstup) || vstup <= 0) return;
+  // U hypotéky se zadává, kolik chceš zaplatit HNED (akontace) — zbytek půjčí banka.
+  const vstup = await zadejNakup({ zaProcento: cenaZaProcento * MORTGAGE_DOWNPAYMENT_RATIO, volne: volne, maxKc: me.balance,
+    nadpis: `🏦 Koupit na hypotéku — dům ${domKratce(p)}`,
+    poznamka: `Píšeš, kolik zaplatíš HNED (${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny). Zbytek půjčí banka za ${urokText(MORTGAGE_ANNUAL_RATE)}. Celá cena 1 % je ${Math.round(cenaZaProcento).toLocaleString('cs-CZ')} Kč.` });
+  if(!vstup) return;
   const pct = Math.min(vstup, volne, maxPct);
 
   const cena = Math.round(cenaZaProcento * pct);
@@ -17295,6 +17367,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.5', datum:'2026-10-07', body:[
+    ['zmena','💰 Při nákupu podílu (dům, hypotéka i firma) se teď píše, kolik chceš UTRATIT v korunách — hra spočítá procenta sama a v potvrzení ukáže, kolik dostaneš. Kdo chce procenta, napíše je se znakem %, třeba „25 %". U hypotéky píšeš, kolik zaplatíš hned.'],
+  ]},
+  { verze:'21.4', datum:'2026-10-07', body:[
+    ['zmena','📍 Velké kulaté tlačítko vpravo dole tě vrátí na tvou polohu a zapne sledování — mapa pak jde s tebou, dokud ji neposuneš prstem. Při sledování tlačítko svítí modře. Dřív to bylo nenápadné ◎ mezi ostatními tlačítky.'],
+  ]},
   { verze:'21.3', datum:'2026-10-07', body:[
     ['zmena','👋 Nový úvodní návod: ukazuje přímo na skutečná místa na obrazovce (peníze nahoře, tvoje značka, Výzvy, Domy, legenda) a řekne i o domě zdarma, ochranné lhůtě a balících peněz. Spustit znovu jde v ☰ Víc → 📖 Průvodce.'],
   ]},
@@ -20387,8 +20465,9 @@ async function buyStake(bizId){
   if(available <= 0){ showAlert('Podnik je celý rozprodaný.'); return; }
   const per1 = Math.round(pricePerPercent(biz));
   const per1DayInfo = (bizYieldPerDay(biz)*inflationMult()/100).toFixed(1);
-  const pct = parseFloat(await showPrompt(`Kolik % koupit? Volných ${des(available, 1)} %.\n1 % stojí ${per1.toLocaleString('cs-CZ')} Kč a nese ${per1DayInfo} Kč/den.`, Math.min(5, available)));
-  if(isNaN(pct) || pct <= 0) return;
+  const pct = await zadejNakup({ zaProcento: pricePerPercent(biz), volne: available, maxKc: world.users[currentUser.name].balance,
+    nadpis: `📈 Koupit podíl ve firmě ${biz.name}`, poznamka: `1 % nese ${per1DayInfo} Kč/den.` });
+  if(!pct) return;
   if(pct > available){ showAlert(`Tolik volných % není — max ${des(available, 1)} %.`); return; }
   const cost = Math.round(pricePerPercent(biz) * pct);
   const me = world.users[currentUser.name];
@@ -20853,7 +20932,7 @@ const TUTORIAL_STEPS = [
   { icon:'💰', title:'Tvoje peníze', cil:'#hudKarta',
     text:'Nahoře je tvůj zůstatek. Zelené <b>▲ číslo</b> je to, co ti dnes naskočilo — připíše se o půlnoci. Klepnutím na kterékoli číslo se dozvíš víc.' },
   { icon:'🚶', title:'Choď a sbírej', cil:'.hracIkonaObal',
-    text:'Tohle jsi ty. Za chůzi dostáváš peníze a na mapě jsou <b>balíky 💰</b> s číslem odměny — seberou se samy, když k nim dojdeš. Zelený kruh kolem tebe je dosah, ve kterém můžeš kupovat domy.' },
+    text:'Tohle jsi ty. Za chůzi dostáváš peníze a na mapě jsou <b>balíky 💰</b> s číslem odměny — seberou se samy, když k nim dojdeš. Zelený kruh kolem tebe je dosah, ve kterém můžeš kupovat domy. Kulaté tlačítko vpravo dole tě kdykoli vrátí na tvou polohu.' },
   { icon:'🏠', title:'Dům zdarma', kdy: () => { const u = currentUser && world.users[currentUser.name]; return !!(u && u.starterHomeAvailable); },
     text:`Máš nárok na <b>první dům zdarma</b> v hodnotě ${STARTER_HOME_VALUE.toLocaleString('cs-CZ')} Kč — jen jednou, tak si vyber. Dojdi k volnému domu (šedý obrys), klepni na něj a zvol <b>„🎁 Vzít zdarma"</b>.<br><br>Tip: u levnějšího domu (do ${(STARTER_HOME_VALUE * 2).toLocaleString('cs-CZ')} Kč) dostaneš většinu a rovnou v něm budeš bydlet — to ti srazí denní náklady.` },
   { icon:'🎯', title:'Co dělat dál', cil:'#navVyzvy',
