@@ -673,6 +673,21 @@
   .nebeMraky b::before{ width:20px;height:16px;left:8px;top:-8px; }
   .nebeMraky b::after{ width:16px;height:12px;left:22px;top:-5px; }
   @keyframes nebeMrak{ from{ left:-60px; } to{ left:calc(100% + 60px); } }
+  .nebeMraky b{ animation-duration:calc(var(--d) * var(--rych, 1)); }
+  .nebeSlunce.zaMraky{ filter:blur(2px); }
+  .nebeSrazky{ position:absolute;inset:0;overflow:hidden;transition:opacity 2s; }
+  .nebeSrazky i{ position:absolute;display:block; }
+  .nebeSrazky i.k{ width:1.6px;height:13px;border-radius:1px;background:linear-gradient(rgba(200,222,255,0), rgba(222,236,255,1));
+    animation:nebeDest 0.6s linear infinite; }
+  .nebeSrazky i.v{ border-radius:50%;background:rgba(248,250,255,0.95);animation:nebeVlocka 4s linear infinite; }
+  @keyframes nebeDest{ from{ transform:translate(0, -110px) rotate(var(--uhel, 0deg)); } to{ transform:translate(var(--posun, 0px), 30px) rotate(var(--uhel, 0deg)); } }
+  @keyframes nebeVlocka{ 0%{ transform:translate(0, -100px); } 50%{ transform:translate(calc(var(--posun, 0px) * 0.6 + 4px), -35px); } 100%{ transform:translate(var(--posun, 0px), 30px); } }
+  .nebeMlha{ position:absolute;inset:0;opacity:0;transition:opacity 3s;
+    background:linear-gradient(to top, var(--mlha, rgba(206,212,220,0.8)) 0%, transparent 85%); }
+  .nebeBlesk{ position:absolute;inset:0;background:rgba(232,238,255,0.9);opacity:0; }
+  #hudNebe.blesk .nebeBlesk{ animation:nebeBlesk 0.55s ease-out; }
+  @keyframes nebeBlesk{ 0%{opacity:0;} 8%{opacity:0.85;} 18%{opacity:0.1;} 28%{opacity:0.6;} 100%{opacity:0;} }
+  #hudNebe.snih .nebeDomy{ filter:drop-shadow(0 -1.3px 0 rgba(242,246,255,0.95)); }
   .nebeMesto{ position:absolute;left:0;bottom:0;display:block; }
   .nebeKopce{ fill:var(--kopce, #233); transition:fill 2s; }
   .nebeDomy{ fill:var(--mesto, #111); transition:fill 2s; }
@@ -684,7 +699,7 @@
   /* Clona pod textem — ať jsou peníze čitelné i v poledne. */
   .nebeClona{ position:absolute;inset:0;background:linear-gradient(90deg, rgba(8,10,18,0.50) 0%, rgba(8,10,18,0.22) 38%, rgba(8,10,18,0.14) 62%, rgba(8,10,18,0.40) 100%); }
   @media (prefers-reduced-motion: reduce){
-    .nebeHvezdy i, .nebeMraky b{ animation:none; }
+    .nebeHvezdy i, .nebeMraky b, .nebeSrazky i{ animation:none; }
     .nebeMraky b:nth-child(1){ left:12%; } .nebeMraky b:nth-child(2){ left:48%; } .nebeMraky b:nth-child(3){ left:70%; } .nebeMraky b:nth-child(4){ left:30%; }
   }
 
@@ -1487,8 +1502,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.8';
-const APP_BUILD = '09.10.2026 06:00';
+const APP_VERSION = '21.9';
+const APP_BUILD = '09.10.2026 11:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -9932,7 +9947,7 @@ async function nactiPocasi(){
   // obsloužit ani service worker, ani mezipaměť prohlížeče — počasí se zasekávalo přesně
   // na tomhle: stahovalo se pravidelně, ale pořád se vracela ta samá uložená odpověď.
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lng.toFixed(3)}` +
-              `&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto&_t=${Date.now()}`;
+              `&current=temperature_2m,weather_code,wind_speed_10m,cloud_cover,precipitation&timezone=auto&_t=${Date.now()}`;
   try {
     const res = await fetch(url, { cache: 'no-store' });
     if(!res.ok) return POCASI;
@@ -9957,6 +9972,10 @@ async function nactiPocasi(){
       teplota: t,
       kod: c.weather_code,
       vitr: Math.round(c.wind_speed_10m || 0),
+      // Oblačnost v procentech a srážky v mm — obloha v horním panelu podle nich kreslí
+      // přesné množství mraků a sílu deště/sněhu, ne jen podle hrubého kódu počasí.
+      mraky: isFinite(c.cloud_cover) ? Math.max(0, Math.min(100, Math.round(c.cloud_cover))) : null,
+      srazkyMm: isFinite(c.precipitation) ? Math.max(0, c.precipitation) : null,
       kdy: Date.now()
     };
     try { localStorage.setItem('bucpoly_pocasi', JSON.stringify(POCASI)); } catch(e){}
@@ -12724,16 +12743,22 @@ function nebeBarvy(e, rano, zatazeno){
 }
 
 // Jak moc je zataženo (0 jasno – 1 hustý déšť/mlha) podle kódu počasí.
-function nebeZatazeno(){
-  if(!VZHLED.pocasi || !POCASI || typeof POCASI.kod !== 'number') return 0;
-  const k = POCASI.kod;
-  if(k === 0) return 0;
-  if(k === 1) return 0.15;
-  if(k === 2) return 0.35;
-  if(k === 3) return 0.75;
-  if(k === 45 || k === 48) return 0.85;
-  return 0.9;   // déšť, sníh, bouřka
+// Počasí pro oblohu v panelu. Bere stejný stav jako efekty na mapě (atmoStav — tedy i admin
+// náhledy počasí), jen oblačnost upřesní skutečným procentem z Open-Meteo. Na přepínači
+// „Počasí na mapě" nezávisí: obloha v panelu má vlastní přepínač.
+function nebePocasi(){
+  const a = safeCall(() => atmoStav()) || {};
+  const nahled = !!(Atmo.nahled && Date.now() < Atmo.nahledDo);
+  let oc = typeof a.oblacnost === 'number' ? a.oblacnost : 0;
+  if(!nahled && POCASI && typeof POCASI.mraky === 'number') oc = POCASI.mraky / 100;
+  let intenzita = a.intenzita || 0;
+  if(!nahled && a.srazky && POCASI && typeof POCASI.srazkyMm === 'number' && POCASI.srazkyMm > 0)
+    intenzita = Math.max(intenzita * 0.6, Math.min(1, 0.25 + POCASI.srazkyMm / 4));
+  if(a.srazky || a.bourka) oc = Math.max(oc, 0.8);
+  if(a.mlha) oc = Math.max(oc, 0.6);
+  return { oc: Math.max(0, Math.min(1, oc)), srazky: a.srazky || null, intenzita, bourka: !!a.bourka, mlha: !!a.mlha, vitr: a.vitr || 0 };
 }
+function nebeZatazeno(){ return nebePocasi().oc; }
 
 // Deterministická náhoda, ať silueta vypadá pořád stejně.
 function nebeNahoda(seed){
@@ -12864,8 +12889,11 @@ function nebePriprav(el, w){
     <div class="nebeHvezdy">${hvezdy}</div>
     <div class="nebeSlunce"></div>
     <div class="nebeMesic"></div>
-    <div class="nebeMraky"><b style="--y:14%;--d:95s;--o:-20s;--s:1"></b><b style="--y:34%;--d:120s;--o:-75s;--s:0.8"></b><b style="--y:6%;--d:140s;--o:-40s;--s:1.25"></b><b style="--y:24%;--d:105s;--o:-100s;--s:0.9"></b></div>
+    <div class="nebeMraky"><b style="--y:14%;--d:95s;--o:-20s;--s:1"></b><b style="--y:34%;--d:120s;--o:-75s;--s:0.8"></b><b style="--y:6%;--d:140s;--o:-40s;--s:1.25"></b><b style="--y:24%;--d:105s;--o:-100s;--s:0.9"></b><b style="--y:42%;--d:130s;--o:-15s;--s:1.1"></b><b style="--y:2%;--d:110s;--o:-60s;--s:1.4"></b><b style="--y:28%;--d:150s;--o:-120s;--s:1.2"></b><b style="--y:10%;--d:125s;--o:-90s;--s:0.85"></b></div>
+    <div class="nebeSrazky"></div>
     ${nebeSilueta(w, h)}
+    <div class="nebeMlha"></div>
+    <div class="nebeBlesk"></div>
     <div class="nebeClona"></div>`;
   el.dataset.w = w;
 }
@@ -12884,8 +12912,9 @@ function kresliNebe(vynutit){
   if(String(w) !== el.dataset.w) { nebePriprav(el, w); vynutit = true; }
 
   const { d, t } = nebeCas();
-  const zat = nebeZatazeno();
-  const klic = [Math.floor(t * 60), zat, NEBE_ANIM ? 'a' : ''].join('|');
+  const poc = nebePocasi();
+  const zat = poc.oc;
+  const klic = [Math.floor(t * 60), zat.toFixed(2), poc.srazky, poc.intenzita.toFixed(2), poc.bourka, poc.mlha, Math.round(poc.vitr / 5), NEBE_ANIM ? 'a' : ''].join('|');
   if(!vynutit && el.dataset.klic === klic) return;
   el.dataset.klic = klic;
 
@@ -12913,7 +12942,9 @@ function kresliNebe(vynutit){
     sl.style.bottom = y.toFixed(2) + '%';
     sl.style.background = nebeRgb(nebeMix([255, 150, 70], [255, 244, 200], nizko));
     sl.style.boxShadow = `0 0 ${10 + (1 - nizko) * 8}px ${3 + (1 - nizko) * 3}px ${nebeRgb(nebeMix([255, 120, 50], [255, 220, 130], nizko), 0.55)}`;
-    sl.style.opacity = (1 - zat * 0.75).toFixed(2);
+    // Za mraky slunce mizí: při polojasnu prosvítá, při zataženo je jen bledá skvrna.
+    sl.style.opacity = Math.max(0.08, 1 - zat * 0.9).toFixed(2);
+    sl.classList.toggle('zaMraky', zat >= 0.6);
   } else sl.style.display = 'none';
 
   // Měsíc: vychází každý den asi o 50 minut později než předchozí den — v novu se sluncem,
@@ -12938,12 +12969,46 @@ function kresliNebe(vynutit){
   // Hvězdy jen za tmy a jen když není zataženo.
   el.querySelector('.nebeHvezdy').style.opacity = (Math.max(0, Math.min(1, (-e - 4) / 8)) * (1 - zat)).toFixed(2);
 
-  // Mraky: kolik a jak světlé.
+  // Mraky: počet podle skutečné oblačnosti (0–100 %), rychlost podle větru, barva podle
+  // denní doby — při dešti a bouřce tmavé a husté.
   const mraky = el.querySelector('.nebeMraky');
-  const pocetMraku = zat >= 0.7 ? 4 : zat >= 0.3 ? 3 : zat > 0 ? 2 : 0;
-  mraky.querySelectorAll('b').forEach((b, i) => { b.style.display = i < pocetMraku ? '' : 'none'; });
-  const barvaMraku = nebeMix([236, 240, 246], [46, 52, 70], tma);
-  mraky.style.setProperty('--mrak', nebeRgb(zat >= 0.7 ? nebeMix(barvaMraku, [120, 126, 138], 0.35 * (1 - tma)) : barvaMraku, zat >= 0.7 ? 0.75 : 0.6));
+  const vsechny = mraky.querySelectorAll('b');
+  const pocetMraku = zat < 0.08 ? 0 : Math.max(1, Math.round(zat * vsechny.length));
+  vsechny.forEach((b, i) => { b.style.display = i < pocetMraku ? '' : 'none'; });
+  let barvaMraku = nebeMix([236, 240, 246], [46, 52, 70], tma);
+  if(zat >= 0.7) barvaMraku = nebeMix(barvaMraku, [120, 126, 138], 0.35 * (1 - tma));
+  if(poc.srazky || poc.bourka) barvaMraku = nebeMix(barvaMraku, poc.bourka ? [52, 56, 70] : [92, 98, 112], 0.6 * (1 - tma * 0.5));
+  mraky.style.setProperty('--mrak', nebeRgb(barvaMraku, zat >= 0.7 ? 0.82 : 0.62));
+  mraky.style.setProperty('--rych', (14 / (Math.max(0, poc.vitr) + 10)).toFixed(2));   // silný vítr = rychlejší mraky
+
+  // Déšť nebo sníh. Kapky se přegenerují jen při změně druhu nebo síly.
+  const sr = el.querySelector('.nebeSrazky');
+  const srKlic = poc.srazky ? `${poc.srazky}|${Math.round(poc.intenzita * 10)}|${Math.round(poc.vitr / 10)}` : '';
+  if(sr.dataset.k !== srKlic){
+    sr.dataset.k = srKlic;
+    if(!poc.srazky) sr.innerHTML = '';
+    else {
+      const r = nebeNahoda(31);
+      const snih = poc.srazky === 'snih';
+      const n = Math.round((snih ? 14 : 18) + poc.intenzita * (snih ? 26 : 42));
+      const posun = Math.min(40, poc.vitr * 0.9);           // vítr žene srážky do strany
+      sr.style.setProperty('--posun', posun.toFixed(0) + 'px');
+      sr.style.setProperty('--uhel', (-Math.atan2(posun, 110) * 180 / Math.PI).toFixed(1) + 'deg');
+      let html = '';
+      for(let i = 0; i < n; i++){
+        const dur = snih ? 3 + r() * 2.5 : 0.45 + r() * 0.3;
+        html += `<i class="${snih ? 'v' : 'k'}" style="left:${(r() * 110 - 10).toFixed(1)}%;top:${(r() * 90).toFixed(0)}%;animation-duration:${dur.toFixed(2)}s;animation-delay:-${(r() * dur).toFixed(2)}s;${snih ? `width:${(1.6 + r() * 1.6).toFixed(1)}px;height:auto;aspect-ratio:1;` : ''}"></i>`;
+      }
+      sr.innerHTML = html;
+    }
+  }
+  sr.style.opacity = poc.srazky ? (0.65 + poc.intenzita * 0.35).toFixed(2) : '0';
+
+  // Mlha přes město, sněhové čepice na střechách, bouřka s blesky.
+  el.querySelector('.nebeMlha').style.opacity = poc.mlha ? '1' : (zat >= 0.95 && poc.srazky ? '0.35' : '0');
+  el.style.setProperty('--mlha', nebeRgb(nebeMix([206, 212, 220], [40, 46, 60], tma), 0.8));
+  el.classList.toggle('snih', poc.srazky === 'snih');
+  nebeBlesky(poc.bourka);
 
   // Silueta: ve dne tmavě modrošedá, v noci skoro černá; kopce jsou průhlednější.
   const mesto = nebeMix(nebeMix(spodni, [24, 32, 48], 0.72), [5, 7, 14], tma);
@@ -12964,6 +13029,25 @@ function kresliNebe(vynutit){
 
   el.classList.toggle('anim', !!NEBE_ANIM);
   karta.dataset.nebe = `${Math.floor(hod)}:${String(Math.floor((hod % 1) * 60)).padStart(2, '0')} · slunce ${e.toFixed(1)}°`;
+}
+
+// Blesky při bouřce: nepravidelně, každých 4–12 s. Zastaví se, jakmile bouřka skončí
+// nebo se obloha vypne.
+let nebeBleskTimer = null;
+function nebeBlesky(bourka){
+  if(!bourka){ clearTimeout(nebeBleskTimer); nebeBleskTimer = null; return; }
+  if(nebeBleskTimer) return;
+  const dalsi = () => {
+    nebeBleskTimer = setTimeout(() => {
+      const el = document.getElementById('hudNebe');
+      if(!el || !VZHLED.nebe || !nebePocasi().bourka){ nebeBleskTimer = null; return; }
+      if(!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches)){
+        el.classList.remove('blesk'); void el.offsetWidth; el.classList.add('blesk');
+      }
+      dalsi();
+    }, 4000 + Math.random() * 8000);
+  };
+  dalsi();
 }
 
 // Admin: celý den v panelu za 30 vteřin.
@@ -17917,6 +18001,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.9', datum:'2026-10-09', body:[
+    ['zmena','🌦️ Obloha v horním panelu jde podle skutečného počasí v Bučovicích: počet mraků odpovídá opravdové oblačnosti, vítr je žene rychleji, za mraky slunce zbledne. Když prší, padají kapky (šikmo podle větru), když sněží, padají vločky a střechy zbělají. V mlze se město ztrácí v oparu, při bouřce se blýská.'],
+  ]},
   { verze:'21.8', datum:'2026-10-09', body:[
     ['oprava','🔄 Vážná chyba synchronizace: po zprávě v novinách bez místa (půjčka, nová hodnost, nový hráč, oznámení vedení města…) telefon přestal posílat změny do cloudu, dokud se hra úplně nezavřela. Ostatní pak jeho opravy, nákupy ani nájemníky neviděli. Opraveno.'],
     ['oprava','🏚️ Byty chátraly ze 100 % na nulu za hodinu a zásoby v provozovnách mizely hned po nákupu (hlásili Jerry a Eva). Když se zápis do cloudu nepovedl, vrátil se telefonu starý čas města a hra pak počítala chátrání a spotřebu zásob za celou tu dobu znovu — při každém dalším pokusu o zápis. Čas města se teď nikdy nevrací dozadu a data se před odesláním kontrolují podle pravidel serveru. Poškozené byty a zásoby opraví vedení města.'],
