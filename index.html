@@ -1135,10 +1135,11 @@
   #mapaSipky{
     position:absolute;left:12px;bottom:calc(var(--navH) + 40px + var(--kkVyska, 0px));z-index:440;   /* nad popiskem autorství mapy */
     width:116px;height:116px;border-radius:50%;
-    background:radial-gradient(circle at 50% 35%, rgba(40,46,58,0.86), rgba(16,19,26,0.88));
-    border:1px solid rgba(255,255,255,0.13);
-    box-shadow:0 6px 18px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
-    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    /* průhledné, ať je pod nimi vidět mapa (21.15) */
+    background:radial-gradient(circle at 50% 35%, rgba(40,46,58,0.34), rgba(16,19,26,0.42));
+    border:1px solid rgba(255,255,255,0.18);
+    box-shadow:0 4px 12px rgba(0,0,0,0.22), inset 0 1px 0 rgba(255,255,255,0.10);
+    backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);
     transition:bottom .25s ease, opacity .2s;touch-action:none;user-select:none;-webkit-user-select:none;
   }
   /* jemné rozdělení na čtyři výseče */
@@ -1152,19 +1153,22 @@
     background:transparent;color:#e5e7eb;display:flex;align-items:center;justify-content:center;cursor:pointer;
     -webkit-tap-highlight-color:transparent;box-shadow:none;transition:background .12s, color .12s, transform .12s;
   }
-  #mapaSipky .sip svg{ width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;
-    filter:drop-shadow(0 1px 1px rgba(0,0,0,0.5)); }
+  #mapaSipky .sip svg{ width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round;
+    filter:drop-shadow(0 0 2px rgba(0,0,0,0.9)) drop-shadow(0 1px 1px rgba(0,0,0,0.6)); }
   #mapaSipky .sipN{ top:3px;left:38px; } #mapaSipky .sipS{ bottom:3px;left:38px; }
   #mapaSipky .sipW{ left:3px;top:38px; } #mapaSipky .sipE{ right:3px;top:38px; }
   #mapaSipky .sip.drzi, #mapaSipky .sip:active{ background:rgba(74,222,128,0.18);color:var(--accent);transform:scale(0.92); }
   #mapaSipky .sipStred{
     position:absolute;left:38px;top:38px;width:40px;height:40px;padding:0;margin:0;min-height:0;border-radius:50%;
-    background:linear-gradient(180deg, #2a3140, #1a1f29);border:1px solid rgba(255,255,255,0.16);color:var(--gold);
+    background:linear-gradient(180deg, rgba(42,49,64,0.55), rgba(26,31,41,0.6));border:1px solid rgba(255,255,255,0.2);color:var(--gold);
     display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;
     box-shadow:0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
   }
   #mapaSipky .sipStred svg{ width:20px;height:20px; }
-  #mapaSipky .sipStred .vypln{ fill:currentColor; }
+  #mapaSipky .sipStred{ color:#fff; }
+  #mapaSipky .sipStred svg{ filter:drop-shadow(0 0 2px rgba(0,0,0,0.8)); }
+  #mapaSipky .sipStred svg{ width:22px;height:22px; }
+  #mapaSipky .sipStred.sleduje{ background:var(--accent2);color:#06121f;border-color:var(--accent2);box-shadow:0 0 0 3px rgba(56,189,248,0.28), 0 2px 6px rgba(0,0,0,0.4); }
   #mapaSipky .sipStred:active{ transform:scale(0.92);background:#2f3747; }
   @media (max-height: 640px){ #mapaSipky{ transform:scale(0.82);transform-origin:left bottom; } }
 </style>
@@ -1275,14 +1279,16 @@
 
   <!-- Karta „co je kolem mě": když stojíš u domu, vyjede nad spodní lištou. -->
   <div id="kontextKarta" style="display:none;"></div>
-  <!-- Šipky na posun mapy (21.12). Uprostřed skok do centra Bučovic. -->
+  <!-- Šipky na posun mapy (21.12). Uprostřed „najdi mě" (21.14). -->
   <div id="mapaSipky" role="group" aria-label="Posun mapy" style="display:none;">
     <button class="sip sipN" data-smer="n" aria-label="Posunout mapu na sever"><svg viewBox="0 0 24 24"><path d="M6 14.5l6-6 6 6"/></svg></button>
     <button class="sip sipE" data-smer="e" aria-label="Posunout mapu na východ"><svg viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></svg></button>
     <button class="sip sipS" data-smer="s" aria-label="Posunout mapu na jih"><svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg></button>
     <button class="sip sipW" data-smer="w" aria-label="Posunout mapu na západ"><svg viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></svg></button>
-    <button class="sipStred" aria-label="Do centra Bučovic" title="Do centra Bučovic">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="vypln" d="M4 20V11h2V8h2v3h2V6l2-2.2L14 6v5h2V8h2v3h2v9h-6v-4a2 2 0 0 0-4 0v4z"/></svg>
+    <button class="sipStred" aria-label="Na mou polohu" title="Na mou polohu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="currentColor"/>
+        <circle cx="12" cy="12" r="7.4" fill="none" stroke="currentColor" stroke-width="2"/>
+        <path d="M12 1.8v3.1M12 19.1v3.1M1.8 12h3.1M19.1 12h3.1" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
     </button>
   </div>
   <div id="mapLegenda" style="display:none;"></div>
@@ -1560,8 +1566,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.13';
-const APP_BUILD = '09.10.2026 16:00';
+const APP_VERSION = '21.15';
+const APP_BUILD = '09.10.2026 17:45';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -12529,7 +12535,7 @@ const VZHLED_VOLBY = [
   { id:'sezony',  nazev:'Sezónní ozdoby',      popis:'Vločka v adventu, listí na podzim, stromeček o Vánocích.' },
   { id:'pudorysy', nazev:'Půdorysy budov',      popis:'Skutečné tvary domů obarvené barvou majitele. Na slabém telefonu jde vypnout.' },
   { id:'nebe',     nazev:'Obloha v horním panelu', popis:'Silueta Bučovic se sluncem a měsícem podle skutečného času, za tmy se rozsvítí okna.' },
-  { id:'sipky',    nazev:'Šipky na posun mapy',  popis:'Kulaté ovládání vlevo dole: šipky posunou mapu, prostřední tlačítko skočí do centra Bučovic.' }
+  { id:'sipky',    nazev:'Šipky na posun mapy',  popis:'Kulaté ovládání vlevo dole: šipky posunou mapu, prostřední tlačítko tě vrátí na tvou polohu. Bez šipek je „najdi mě" vpravo dole.' }
 ];
 let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true, nebe:true, sipky:true };
 
@@ -12869,7 +12875,12 @@ function prepniNavigaci(){ navNastav(!navZap); }
 const SIPKY_SMERY = { n:[0, -1], s:[0, 1], e:[1, 0], w:[-1, 0] };
 function aktualizujSipky(){
   const el = document.getElementById('mapaSipky');
-  if(el) el.style.display = (VZHLED.sipky && map) ? '' : 'none';
+  const vidim = !!(VZHLED.sipky && map);
+  if(el) el.style.display = vidim ? '' : 'none';
+  // Se šipkami je „najdi mě" uprostřed kříže — samostatné kulaté tlačítko vpravo by bylo
+  // dvakrát. Bez šipek se zase ukáže.
+  const nm = document.querySelector('.najdiMeBar');
+  if(nm) nm.style.display = vidim ? 'none' : '';
 }
 function posunMapu(smer, podil, animace){
   if(!map) return;
@@ -12908,11 +12919,8 @@ function nastavSipky(){
     b.addEventListener('contextmenu', (e) => e.preventDefault());
   });
   const stred = el.querySelector('.sipStred');
-  stred.addEventListener('click', (e) => {
-    e.preventDefault();
-    nastavSledovani(false);
-    map.setView(CITY_CENTER, Math.max(map.getZoom(), 16), { animate:true });
-  });
+  // Prostředek = „najdi mě": vycentruje na tvou polohu a zapne sledování (svítí modře).
+  stred.addEventListener('click', (e) => { e.preventDefault(); najdiMe_(); });
   // Když vyjede karta „co je kolem mě", šipky se posunou nad ni.
   const kk = document.getElementById('kontextKarta');
   const posunNadKartu = () => {
@@ -12939,6 +12947,8 @@ function nastavSledovani(zap){
   sledujHrace = !!zap;
   const b = document.getElementById('najdiMeBtn');
   if(b) b.classList.toggle('sleduje', sledujHrace);
+  const st = document.querySelector('#mapaSipky .sipStred');
+  if(st) st.classList.toggle('sleduje', sledujHrace);
 }
 function najdiMe_(){
   if(!playerPos){ showToast('Polohu ještě neznám — povol v telefonu GPS pro tuhle stránku.'); return; }
@@ -18360,6 +18370,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.15', datum:'2026-10-09', body:[
+    ['zmena','🧭 Šipky na mapě jsou průhlednější — pod nimi je vidět mapa.'],
+  ]},
+  { verze:'21.14', datum:'2026-10-09', body:[
+    ['zmena','📍 Prostřední tlačítko v šipkách tě teď vrátí na tvou polohu a zapne sledování (svítí modře) — místo skoku do centra města. Samostatné kulaté tlačítko vpravo dole se proto schová; vrátí se, když si šipky vypneš v Nastavení vzhledu.'],
+  ]},
   { verze:'21.13', datum:'2026-10-09', body:[
     ['novinka','🧭 Mapa jako v navigaci: klepni na kompas v pravém sloupci tlačítek a mapa se bude otáčet podle toho, kam jdeš — co je před tebou, je nahoře. Když stojíš, otáčí se podle kompasu v telefonu. Červená střelka ukazuje, kde je sever; dalším klepnutím vrátíš sever nahoru.'],
   ]},
