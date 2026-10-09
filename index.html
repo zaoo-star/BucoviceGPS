@@ -1487,8 +1487,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.7';
-const APP_BUILD = '08.10.2026 21:00';
+const APP_VERSION = '21.8';
+const APP_BUILD = '09.10.2026 06:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -16577,9 +16577,9 @@ function adminSyncKartaHtml(){
       : '<b style="color:var(--accent)">v pořádku</b></p>'}
   </div>
   <div class="card">
-    <h3>🛠️ Náprava stavu bytů</h3>
-    <p style="font-size:0.88em;color:var(--muted);">Do verze 21.6 mohla chyba v synchronizaci nechat byty ve městě během pár hodin zchátrat (nájemníci se pak odstěhovali). Tímhle zvedneš stav všech bytů ve městě aspoň na zadanou hodnotu. Nic se neplatí a lepší byty se nemění.</p>
-    <div class="row"><button class="secondary" onclick="adminNapravaBytu()">Zvednout stav bytů…</button></div>
+    <h3>🛠️ Náprava po chybě v synchronizaci</h3>
+    <p style="font-size:0.88em;color:var(--muted);">Do verze 21.6 mohly byty zchátrat ze 100 % na nulu za hodinu a zásoby provozoven zmizet hned po nákupu. Tímhle zvedneš stav všech bytů i zásoby všech provozoven ve městě aspoň na zadanou hodnotu. Nic se neplatí a co je lepší, se nemění.</p>
+    <div class="row"><button class="secondary" onclick="adminNapravaBytu()">Opravit byty a zásoby…</button></div>
   </div>`;
 }
 async function adminNapravaBytu(){
@@ -16594,17 +16594,26 @@ async function adminNapravaBytu(){
     return kOprave;
   };
   const pred = pocitej();
-  if(!pred.length){ showAlert(`Všechny byty už mají aspoň ${min} %.`); return; }
+  const provozPred = Object.values(world.parcels || {}).filter(p => p && p.provoz && typeof p.provoz === 'object' && (p.provoz.zasoby ?? 100) < min).length;
+  if(!pred.length && !provozPred){ showAlert(`Všechny byty i zásoby už mají aspoň ${min} %.`); return; }
   const pocetDomu = new Set(pred.map(x => x.p.id)).size;
-  if(!(await showConfirm(`Zvednout ${pred.length} ${sklonuj(pred.length, 'byt', 'byty', 'bytů')} v ${pocetDomu} ${sklonuj(pocetDomu, 'domě', 'domech', 'domech')} na ${min} %?`))) return;
+  if(!(await showConfirm(`Zvednout ${pred.length} ${sklonuj(pred.length, 'byt', 'byty', 'bytů')} v ${pocetDomu} ${sklonuj(pocetDomu, 'domě', 'domech', 'domech')} na ${min} %` +
+      (provozPred ? ` a doplnit zásoby v ${provozPred} ${sklonuj(provozPred, 'provozovně', 'provozovnách', 'provozovnách')}` : '') + '?'))) return;
   const kOprave = pocitej();   // svět se mohl během dialogu sloučit — spočítat znovu
   const domy = new Set();
   kOprave.forEach(({ p, u }) => { u.condition = min; stampUnit(u); domy.add(p.id); });
   const bytu = kOprave.length;
+  // Stejná chyba vyjídala i zásoby provozoven — doplnit je na stejnou hodnotu.
+  let provozu = 0;
+  Object.values(world.parcels || {}).forEach(p => {
+    if(p && p.provoz && typeof p.provoz === 'object' && (p.provoz.zasoby ?? 100) < min){ p.provoz.zasoby = min; domy.add(p.id); provozu++; }
+  });
   domy.forEach(id => { const p = world.parcels[id]; if(p) stampHouse(p); });
-  addNews('event', `🛠️ Vedení města opravilo po technické chybě ${bytu} ${sklonuj(bytu, 'byt', 'byty', 'bytů')} — stav je zase aspoň ${min} %.`);
+  addNews('event', `🛠️ Vedení města po technické chybě opravilo ${bytu} ${sklonuj(bytu, 'byt', 'byty', 'bytů')}` +
+    (provozu ? ` a doplnilo zásoby v ${provozu} ${sklonuj(provozu, 'provozovně', 'provozovnách', 'provozovnách')}` : '') + ` — vše je zase aspoň na ${min} %.`);
   saveWorld(); refreshAll(); renderAdmin();
-  showAlert(`Hotovo: ${bytu} ${sklonuj(bytu, 'byt má', 'byty mají', 'bytů má')} teď aspoň ${min} %. Nájemníci se začnou vracet sami.`);
+  showAlert(`Hotovo: ${bytu} ${sklonuj(bytu, 'byt má', 'byty mají', 'bytů má')} teď aspoň ${min} %` +
+    (provozu ? `, zásoby doplněny v ${provozu} ${sklonuj(provozu, 'provozovně', 'provozovnách', 'provozovnách')}` : '') + '. Nájemníci se začnou vracet sami.');
 }
 
 function renderAdmin(){
@@ -17899,9 +17908,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
-  { verze:'21.7', datum:'2026-10-08', body:[
+  { verze:'21.8', datum:'2026-10-09', body:[
     ['oprava','🔄 Vážná chyba synchronizace: po zprávě v novinách bez místa (půjčka, nová hodnost, nový hráč, oznámení vedení města…) telefon přestal posílat změny do cloudu, dokud se hra úplně nezavřela. Ostatní pak jeho opravy, nákupy ani nájemníky neviděli. Opraveno.'],
-    ['oprava','🛡️ Pojistky: čas města se při synchronizaci už nevrací dozadu (byty tak nemůžou chátrat dvakrát) a data se před odesláním kontrolují podle pravidel serveru.'],
+    ['oprava','🏚️ Byty chátraly ze 100 % na nulu za hodinu a zásoby v provozovnách mizely hned po nákupu (hlásili Jerry a Eva). Když se zápis do cloudu nepovedl, vrátil se telefonu starý čas města a hra pak počítala chátrání a spotřebu zásob za celou tu dobu znovu — při každém dalším pokusu o zápis. Čas města se teď nikdy nevrací dozadu a data se před odesláním kontrolují podle pravidel serveru. Poškozené byty a zásoby opraví vedení města.'],
     ['novinka','🔧 V detailu domu je tlačítko „Opravit všechny byty" s celkovou cenou — už není potřeba opravovat po jednom.'],
     ['oprava','🔧 Byt, kterému chybí méně než 1 %, se už neopravuje (dřív to stálo pár korun za „+0 % stavu"). Tlačítko rovnou ukazuje cenu opravy.'],
     ['zmena','🏚️ Ikona domu ukazuje stav bytů: jedna prasklina pod 60 %, tmavší se dvěma prasklinami pod 35 %, červená = všechny byty na nule. Dřív měl prasklinu jen úplně zničený dům.'],
