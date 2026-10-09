@@ -16597,12 +16597,14 @@ async function adminNapravaBytu(){
   if(!isFinite(min) || min < 1 || min > 100){ showAlert('Zadej číslo od 1 do 100.'); return; }
   const pocitej = () => {
     const kOprave = [];
-    Object.values(world.parcels || {}).forEach(p => asArray(p && p.units).forEach(u => { if(u && (u.condition || 0) < min) kOprave.push({ p, u }); }));
+    // Tolerance 1 bod: hned po nápravě byty běžně chátrají (80 → 79,99 %) a nástroj je pak
+    // při dalším spuštění hlásil znovu, jako by se náprava neuložila.
+    Object.values(world.parcels || {}).forEach(p => asArray(p && p.units).forEach(u => { if(u && (u.condition || 0) < min - 1) kOprave.push({ p, u }); }));
     return kOprave;
   };
   const pred = pocitej();
-  const provozPred = Object.values(world.parcels || {}).filter(p => p && p.provoz && typeof p.provoz === 'object' && (p.provoz.zasoby ?? 100) < min).length;
-  if(!pred.length && !provozPred){ showAlert(`Všechny byty i zásoby už mají aspoň ${min} %.`); return; }
+  const provozPred = Object.values(world.parcels || {}).filter(p => p && p.provoz && typeof p.provoz === 'object' && (p.provoz.zasoby ?? 100) < min - 1).length;
+  if(!pred.length && !provozPred){ showAlert(`Všechny byty i zásoby už mají zhruba ${min} % nebo víc — není co opravovat.`); return; }
   const pocetDomu = new Set(pred.map(x => x.p.id)).size;
   if(!(await showConfirm(`Zvednout ${pred.length} ${sklonuj(pred.length, 'byt', 'byty', 'bytů')} v ${pocetDomu} ${sklonuj(pocetDomu, 'domě', 'domech', 'domech')} na ${min} %` +
       (provozPred ? ` a doplnit zásoby v ${provozPred} ${sklonuj(provozPred, 'provozovně', 'provozovnách', 'provozovnách')}` : '') + '?'))) return;
@@ -16613,7 +16615,7 @@ async function adminNapravaBytu(){
   // Stejná chyba vyjídala i zásoby provozoven — doplnit je na stejnou hodnotu.
   let provozu = 0;
   Object.values(world.parcels || {}).forEach(p => {
-    if(p && p.provoz && typeof p.provoz === 'object' && (p.provoz.zasoby ?? 100) < min){ p.provoz.zasoby = min; domy.add(p.id); provozu++; }
+    if(p && p.provoz && typeof p.provoz === 'object' && (p.provoz.zasoby ?? 100) < min - 1){ p.provoz.zasoby = min; domy.add(p.id); provozu++; }
   });
   domy.forEach(id => { const p = world.parcels[id]; if(p) stampHouse(p); });
   addNews('event', `🛠️ Vedení města po technické chybě opravilo ${bytu} ${sklonuj(bytu, 'byt', 'byty', 'bytů')}` +
