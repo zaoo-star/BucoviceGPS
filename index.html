@@ -14876,12 +14876,16 @@ function recordSale(p, totalPrice, pct, od, komu, hybeCenou = true){
   if(!p.salesHistory) p.salesHistory = [];
   // Kdo komu a kdy — z toho vznikne čitelný příběh domu. `ts` navíc slouží ke slučování
   // historie mezi zařízeními (viz adoptWorld), proto tu musí být vždy.
-  p.salesHistory.unshift({
+  // `mimoTrh` se zapisuje JEN když platí. Dřív tu bylo `|| undefined` a Firebase pak
+  // odmítl celý zápis světa (záznam chyb: salesHistory.0.mimoTrh) — každý běžný prodej
+  // tak tomu telefonu zastavil synchronizaci.
+  const zaznamProdeje = {
     pricePerPct: Math.round(pricePerPct), pct: Math.round(pct*10)/10,
     day: world.day, ts: Date.now(),
-    od: od || null, komu: komu || null, celkem: Math.round(totalPrice),
-    mimoTrh: !hybeCenou || undefined
-  });
+    od: od || null, komu: komu || null, celkem: Math.round(totalPrice)
+  };
+  if(!hybeCenou) zaznamProdeje.mimoTrh = true;
+  p.salesHistory.unshift(zaznamProdeje);
   if(p.salesHistory.length > 12) p.salesHistory.length = 12;
 }
 
@@ -15921,7 +15925,10 @@ function nastavZachytChyb(){
   });
   window.addEventListener('unhandledrejection', (e) => {
     const r = e.reason;
-    zapisChybu((r && (r.stack || r.message)) || String(r), 'neodchycený slib');
+    const t = (r && (r.stack || r.message)) || String(r);
+    // Nepovedená aktualizace service workeru bez sítě není chyba hry — prohlížeč to zkusí znovu.
+    if(/ServiceWorker/.test(t) && /fetching the script/.test(t)) return;
+    zapisChybu(t, 'neodchycený slib');
   });
 }
 function poctivyDenniStrop(u){
