@@ -38,7 +38,13 @@
   /* Tažení prstem dolů nesmí obnovit stránku (jinak appka "spadne" zpět na úvodní obrazovku
      uprostřed čtení nebo posouvání mapy). */
   html, body{overscroll-behavior:none;overscroll-behavior-y:contain;}
-  #map{position:absolute;inset:0;z-index:1;overscroll-behavior:none;touch-action:pan-x pan-y;}
+  /* touch-action:none — gesta na mapě řeší jen Leaflet. Dřív tu bylo `pan-x pan-y`, které
+     přebilo Leaflet a dovolilo telefonu svislé tahy převzít (tah dolů = obnovení stránky). */
+  #map{position:absolute;inset:0;z-index:1;overscroll-behavior:none;touch-action:none;}
+  /* O 1 px vyšší dokument: stránka se drží odrolovaná o 1 px (viz drzOdrolovano), aby
+     nativní „táhni dolů pro obnovení" v Android aplikaci nebral tahy prstem dolů na mapě. */
+  html{height:calc(100% + 1px);}
+  html.odrol #app{top:1px;}
   /* POZOR: `overscroll-behavior` účinkuje POUZE na prvku, který sám roluje. Dřív to bylo
      napsané na `.panelContent` a `#bottomSheet`, jenže ani jeden z nich neroluje — roluje
      `#sheetBody` uvnitř. Pravidlo tak nedělalo nic a tažení prstem dolů propadlo až na
@@ -1119,6 +1125,48 @@
   }
   .najdiMeBar a.sleduje{ background:var(--accent2);color:#06121f;border-color:var(--accent2);box-shadow:0 0 0 4px rgba(56,189,248,0.25), 0 4px 12px rgba(0,0,0,0.45); }
   .najdiMeBar a:active{ transform:scale(0.94); }
+
+  /* ===== MAPA PODLE SMĚRU CHŮZE (21.13) ===== */
+  #mapaOvladani{ position:absolute;inset:0;z-index:2;pointer-events:none;background:transparent !important;outline:none;cursor:auto; }
+  #navigaceBtn svg{ vertical-align:middle;transition:none; }
+  #navigaceBtn.zap{ background:rgba(56,189,248,0.22) !important;box-shadow:inset 0 0 0 1.5px var(--accent2); }
+
+  /* ===== ŠIPKY NA POSUN MAPY (21.12) ===== */
+  #mapaSipky{
+    position:absolute;left:12px;bottom:calc(var(--navH) + 40px + var(--kkVyska, 0px));z-index:440;   /* nad popiskem autorství mapy */
+    width:116px;height:116px;border-radius:50%;
+    background:radial-gradient(circle at 50% 35%, rgba(40,46,58,0.86), rgba(16,19,26,0.88));
+    border:1px solid rgba(255,255,255,0.13);
+    box-shadow:0 6px 18px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.08);
+    backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+    transition:bottom .25s ease, opacity .2s;touch-action:none;user-select:none;-webkit-user-select:none;
+  }
+  /* jemné rozdělení na čtyři výseče */
+  #mapaSipky::before{ content:'';position:absolute;inset:14px;border-radius:50%;pointer-events:none;
+    background:conic-gradient(from 45deg, transparent 0 1deg, rgba(255,255,255,0.07) 1deg 2deg, transparent 2deg 90deg,
+      rgba(255,255,255,0.07) 90deg 91deg, transparent 91deg 180deg, rgba(255,255,255,0.07) 180deg 181deg, transparent 181deg 270deg,
+      rgba(255,255,255,0.07) 270deg 271deg, transparent 271deg);
+    -webkit-mask:radial-gradient(circle, transparent 23px, #000 24px);mask:radial-gradient(circle, transparent 23px, #000 24px); }
+  #mapaSipky .sip{
+    position:absolute;width:40px;height:40px;padding:0;margin:0;min-height:0;border:none;border-radius:50%;
+    background:transparent;color:#e5e7eb;display:flex;align-items:center;justify-content:center;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;box-shadow:none;transition:background .12s, color .12s, transform .12s;
+  }
+  #mapaSipky .sip svg{ width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round;
+    filter:drop-shadow(0 1px 1px rgba(0,0,0,0.5)); }
+  #mapaSipky .sipN{ top:3px;left:38px; } #mapaSipky .sipS{ bottom:3px;left:38px; }
+  #mapaSipky .sipW{ left:3px;top:38px; } #mapaSipky .sipE{ right:3px;top:38px; }
+  #mapaSipky .sip.drzi, #mapaSipky .sip:active{ background:rgba(74,222,128,0.18);color:var(--accent);transform:scale(0.92); }
+  #mapaSipky .sipStred{
+    position:absolute;left:38px;top:38px;width:40px;height:40px;padding:0;margin:0;min-height:0;border-radius:50%;
+    background:linear-gradient(180deg, #2a3140, #1a1f29);border:1px solid rgba(255,255,255,0.16);color:var(--gold);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;
+    box-shadow:0 2px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+  #mapaSipky .sipStred svg{ width:20px;height:20px; }
+  #mapaSipky .sipStred .vypln{ fill:currentColor; }
+  #mapaSipky .sipStred:active{ transform:scale(0.92);background:#2f3747; }
+  @media (max-height: 640px){ #mapaSipky{ transform:scale(0.82);transform-origin:left bottom; } }
 </style>
 </head>
 <body>
@@ -1227,6 +1275,16 @@
 
   <!-- Karta „co je kolem mě": když stojíš u domu, vyjede nad spodní lištou. -->
   <div id="kontextKarta" style="display:none;"></div>
+  <!-- Šipky na posun mapy (21.12). Uprostřed skok do centra Bučovic. -->
+  <div id="mapaSipky" role="group" aria-label="Posun mapy" style="display:none;">
+    <button class="sip sipN" data-smer="n" aria-label="Posunout mapu na sever"><svg viewBox="0 0 24 24"><path d="M6 14.5l6-6 6 6"/></svg></button>
+    <button class="sip sipE" data-smer="e" aria-label="Posunout mapu na východ"><svg viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></svg></button>
+    <button class="sip sipS" data-smer="s" aria-label="Posunout mapu na jih"><svg viewBox="0 0 24 24"><path d="M6 9.5l6 6 6-6"/></svg></button>
+    <button class="sip sipW" data-smer="w" aria-label="Posunout mapu na západ"><svg viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></svg></button>
+    <button class="sipStred" aria-label="Do centra Bučovic" title="Do centra Bučovic">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="vypln" d="M4 20V11h2V8h2v3h2V6l2-2.2L14 6v5h2V8h2v3h2v9h-6v-4a2 2 0 0 0-4 0v4z"/></svg>
+    </button>
+  </div>
   <div id="mapLegenda" style="display:none;"></div>
   <div id="vynosLegenda" style="display:none;"></div>
 
@@ -1502,8 +1560,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.9';
-const APP_BUILD = '09.10.2026 11:30';
+const APP_VERSION = '21.13';
+const APP_BUILD = '09.10.2026 16:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -8016,6 +8074,16 @@ function sklonuj(pocet, jeden, dva, pet){
   return pet;
 }
 
+// Procento podílu do textu. Malé podíly se dřív zaokrouhlily na „0 %" (Eva: „investoval
+// do podniku… 0 % za 600 Kč"). Pod 1 % se proto ukazují desetiny, pod 10 % jedna desetina.
+function pctText(x){
+  const n = Number(x);
+  if(!isFinite(n)) return '0';
+  const a = Math.abs(n);
+  if(a > 0 && a < 1) return des(n, a < 0.1 ? 2 : 1).replace(/0+$/, '').replace(/,$/, '');
+  if(a < 10 && Math.round(n * 10) % 10 !== 0) return des(n, 1);
+  return des(n, 0);
+}
 function des(x, mist){
   const n = Number(x);
   if(!isFinite(n)) return '0';
@@ -8726,7 +8794,7 @@ function listDormantPlayersHouses(){
       const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'');
       world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct, mod: Date.now(),
         type: 'fixed', price: cena, dormant: true };
-      addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${des(pct, 0)} % za ${cena.toLocaleString('cs-CZ')} Kč).`, p.id);
+      addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${pctText(pct)} % za ${cena.toLocaleString('cs-CZ')} Kč).`, p.id);
     });
   });
 }
@@ -9143,6 +9211,7 @@ function onPosition(pos){
   document.getElementById('gpsWarning').style.display = 'none';
   const newPos = {lat: pos.coords.latitude, lng: pos.coords.longitude};
   const accuracy = pos.coords.accuracy || 30;
+  safeCall(() => navPoloha(pos));
   playerPos = newPos;   // POZOR: musí být dřív než počítání chůze — kontrola herní oblasti
                         // se ptá na aktuální polohu. Bez toho se první zaměření po zapnutí
                         // appky (a s ním i cesta ušlá "offline") zahodilo.
@@ -9563,16 +9632,16 @@ async function encounterKupec(enc, u){
 
   // Co prodej udělá. Nejdůležitější je ztráta rozhodovacího práva — o tu se Eva bála
   // a hra jí to neřekla.
-  let dusledky = `\n\nCo se stane:\n• Zbude ti ${des(zbude, 0)} % domu\n• Nájem ti bude chodit dál, ale jen z těch ${des(zbude, 0)} %`;
+  let dusledky = `\n\nCo se stane:\n• Zbude ti ${pctText(zbude)} % domu\n• Nájem ti bude chodit dál, ale jen z těch ${pctText(zbude)} %`;
   if(mam > 50 && zbude <= 50){
     dusledky += `\n⚠️ PŘIJDEŠ O ROZHODOVÁNÍ o domě (teď ho máš). Kupec pak sám určuje nájem, opravy i přestavbu — a ty s tím nic nenaděláš.`;
   }
   if(vylepseni) dusledky += `\n• Vylepšení zůstávají domu, nevrátí se ti`;
 
   const ok = await showConfirm(
-    `🧳 Kupec z okolí\n\n„Zajímá mě tenhle dům. Prodáš mi ${des(pct, 0)} %? Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — o ${enc.bonus} % víc, než je běžná cena."\n\n` +
+    `🧳 Kupec z okolí\n\n„Zajímá mě tenhle dům. Prodáš mi ${pctText(pct)} %? Dám ti ${nabidka.toLocaleString('cs-CZ')} Kč — o ${enc.bonus} % víc, než je běžná cena."\n\n` +
     popis +
-    `\n\nNabídka: ${nabidka.toLocaleString('cs-CZ')} Kč za ${des(pct, 0)} % (tržní cena ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)` +
+    `\n\nNabídka: ${nabidka.toLocaleString('cs-CZ')} Kč za ${pctText(pct)} % (tržní cena ${Math.round(trzni).toLocaleString('cs-CZ')} Kč)` +
     dusledky +
     `\n\nProdat?`);
   if(!ok){ showToast('Nabídku jsi odmítl.'); return; }
@@ -9591,13 +9660,13 @@ async function encounterKupec(enc, u){
   // a hráč mohl skončit s penězi i podílem, nebo naopak přijít o obojí.
   stampOwners(p, u.name);
   pricti(u, 'akce', nabidka);
-  zapisDoDeniku('sell', `Prodal jsem kupci ${des(pct, 0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
+  zapisDoDeniku('sell', `Prodal jsem kupci ${pctText(pct)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
   recordSale(p, nabidka, pct, u.name, 'kupec z okolí');
-  addNews('sale', `🧳 ${u.name} prodal ${des(pct, 0)} % domu ${domKratce(p)} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`, p.id);
+  addNews('sale', `🧳 ${u.name} prodal ${pctText(pct)} % domu ${domKratce(p)} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`, p.id);
   // Hráči po prodeji nevěděli, KTERÝ dům to byl, a museli to dohledávat podle podílů.
   await showAlert(`Prodáno! Na účet ti přišlo ${nabidka.toLocaleString('cs-CZ')} Kč.\n\n` +
     `🏠 ${domLabel(p)}${kde ? ' (' + kde + ')' : ''}\n` +
-    `Prodal jsi ${des(pct, 0)} %, zbývá ti ${des(zbude, 0)} %` +
+    `Prodal jsi ${pctText(pct)} %, zbývá ti ${pctText(zbude)} %` +
     `${zbude > 50 ? ' — pořád o něm rozhoduješ ty.' : (zbude > 0 ? ' — nájem ti chodí dál, ale o domě už rozhoduje někdo jiný.' : '.')}\n\n` +
     `Záznam najdeš v deníku (📔).`);
   saveWorld();
@@ -9762,7 +9831,7 @@ let skladMarker = null;
 function ukazSklad(){
   if(!map) return;
   closeSheet();
-  map.setView([SKLAD.lat, SKLAD.lng], 17);
+  ukazNaMape([SKLAD.lat, SKLAD.lng], 17);
   oznacCil({ lat:SKLAD.lat, lng:SKLAD.lng });
 }
 function chibiText(chybi, zBatohu, cena){
@@ -10545,7 +10614,7 @@ function ukazAkci(id){
   const a = (world.akceMesta || {})[id];
   if(!a || !map || typeof a.lat !== 'number') return;
   closeSheet();
-  map.setView([a.lat, a.lng], 17);
+  ukazNaMape([a.lat, a.lng], 17);
   oznacCil({ lat:a.lat, lng:a.lng });
 }
 // Admin: nová akce. Místo konání = kde právě stojíš (nebo náměstí, když GPS nemáš).
@@ -10739,7 +10808,7 @@ async function prijmoutNabidku(id){
   recordSale(p, n.cena, n.pct, ja, n.od);
   n.stav = 'prijata'; n.ts = Date.now();
   zapisDoDeniku('sell', `🤝 Prodáno ${des(n.pct, 1)} % domu ${domKratce(p)} hráči ${n.od}`, n.cena - fee);
-  addNews('trade', `🤝 ${n.od} koupil ${des(n.pct, 0)} % domu ${domKratce(p)} od hráče ${ja} za ${n.cena.toLocaleString('cs-CZ')} Kč (přímá nabídka).`, p.id);
+  addNews('trade', `🤝 ${n.od} koupil ${pctText(n.pct)} % domu ${domKratce(p)} od hráče ${ja} za ${n.cena.toLocaleString('cs-CZ')} Kč (přímá nabídka).`, p.id);
   playSound('coin');
   saveWorld(); refreshAll();
   showAlert(`Prodáno. Na účet ti přišlo ${(n.cena - fee).toLocaleString('cs-CZ')} Kč.`);
@@ -10760,7 +10829,7 @@ async function prijmoutNabidkuFirmy(n){
   world.users[ja].balance += (n.cena - fee);
   n.stav = 'prijata'; n.ts = Date.now();
   zapisDoDeniku('sell', `🤝 Prodáno ${des(n.pct, 1)} % firmy ${biz.name} hráči ${n.od}`, n.cena - fee);
-  addNews('invest', `🤝 ${n.od} koupil ${des(n.pct, 0)} % firmy ${biz.name} od hráče ${ja} za ${n.cena.toLocaleString('cs-CZ')} Kč (přímá nabídka).`, { lat: biz.lat, lng: biz.lng });
+  addNews('invest', `🤝 ${n.od} koupil ${pctText(n.pct)} % firmy ${biz.name} od hráče ${ja} za ${n.cena.toLocaleString('cs-CZ')} Kč (přímá nabídka).`, { lat: biz.lat, lng: biz.lng });
   playSound('coin');
   saveWorld(); refreshAll();
   showAlert(`Prodáno. Na účet ti přišlo ${(n.cena - fee).toLocaleString('cs-CZ')} Kč.`);
@@ -11981,7 +12050,7 @@ function dalsiZivaZprava(){
   if(bod && map){
     const m = L.marker([bod.lat, bod.lng], { icon: L.divIcon({ className:'', iconSize:[70, 70], iconAnchor:[35, 35], html:'<div class="zivyPulz"></div>' }), interactive:false, zIndexOffset:2600 }).addTo(map);
     setTimeout(() => map.hasLayer(m) && map.removeLayer(m), 3200);
-    el.onclick = () => map.setView([bod.lat, bod.lng], Math.max(map.getZoom(), 17));
+    el.onclick = () => ukazNaMape([bod.lat, bod.lng], Math.max(map.getZoom(), 17));
   } else el.onclick = null;
   setTimeout(() => {
     el.classList.remove('videt');
@@ -12071,7 +12140,7 @@ function testZlataVlna(){
   const moje = ulice.find(st => ja && st.poHracich[ja]) || ulice[0];
   if(!moje){ showAlert('Ulice se ukážou, až se načtou adresy domů.'); return; }
   const prvni = world.parcels[(seznamUlic()[moje.nazev] || [])[0]];
-  if(prvni && map) map.setView([prvni.lat, prvni.lng], 17);
+  if(prvni && map) ukazNaMape([prvni.lat, prvni.lng], 17);
   setTimeout(() => zlataVlna(moje.nazev), 500);
   showToast(`👑 ${moje.nazev}`);
 }
@@ -12282,6 +12351,7 @@ const PODKLADY = [
 let podkladIndex = 0;
 let podkladVrstva = null;
 
+let mapaVypadekHlasena = false;   // upozornění na výpadek mapy jen jednou (dřív chyběla deklarace → pád)
 function nastavPodklad(index){
   if(!map || index >= PODKLADY.length) return;
   podkladIndex = index;
@@ -12329,12 +12399,15 @@ function initMap(){
   naMe.onAdd = () => {
     const d = L.DomUtil.create('div', 'leaflet-bar naMeBar');
     d.innerHTML = '<a href="#" role="button" id="vynosBtn" title="Mapa výnosů" aria-label="Mapa výnosů">📈</a>' +
-                  '<a href="#" role="button" id="legendaBtn" title="Co je na mapě" aria-label="Co je na mapě">ⓘ</a>';
+                  '<a href="#" role="button" id="legendaBtn" title="Co je na mapě" aria-label="Co je na mapě">ⓘ</a>' +
+                  '<a href="#" role="button" id="navigaceBtn" title="Mapa podle směru chůze" aria-label="Mapa podle směru chůze">' +
+                  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 2.5l3.6 9.5h-7.2z" fill="#f87171"/><path d="M12 21.5l-3.6-9.5h7.2z" fill="currentColor" opacity="0.85"/><circle cx="12" cy="12" r="1.6" fill="#0f1115"/></svg></a>';
     L.DomEvent.disableClickPropagation(d);
     L.DomEvent.disableScrollPropagation(d);
-    const [btnVyn, btnLeg] = d.querySelectorAll('a');
+    const [btnVyn, btnLeg, btnNav] = d.querySelectorAll('a');
     btnVyn.addEventListener('click', (e) => { e.preventDefault(); prepniVynosy(); });
     btnLeg.addEventListener('click', (e) => { e.preventDefault(); prepniLegendu(); });
+    btnNav.addEventListener('click', (e) => { e.preventDefault(); prepniNavigaci(); });
     return d;
   };
   naMe.addTo(map);
@@ -12357,6 +12430,8 @@ function initMap(){
   { const c = najdiMe.getContainer(); if(c && c.parentNode) c.parentNode.appendChild(c); }
   // posunutí mapy prstem sledování vypne
   map.on('dragstart', () => nastavSledovani(false));
+  safeCall(() => nastavSipky());
+  safeCall(() => navNapojMapu());
   if(map.attributionControl) map.attributionControl.setPosition('bottomleft');
   map.on('zoomend', () => safeCall(() => rozprostriZnacky()));
   map.on('moveend zoomend', () => safeCall(() => renderPudorysy()));
@@ -12453,9 +12528,10 @@ const VZHLED_VOLBY = [
   { id:'pocasi',  nazev:'Počasí a světlo na mapě', popis:'Déšť, sníh, mlha, bouřka, stíny mraků, sluníčko a padající listí podle skutečného počasí v Bučovicích.' },
   { id:'sezony',  nazev:'Sezónní ozdoby',      popis:'Vločka v adventu, listí na podzim, stromeček o Vánocích.' },
   { id:'pudorysy', nazev:'Půdorysy budov',      popis:'Skutečné tvary domů obarvené barvou majitele. Na slabém telefonu jde vypnout.' },
-  { id:'nebe',     nazev:'Obloha v horním panelu', popis:'Silueta Bučovic se sluncem a měsícem podle skutečného času, za tmy se rozsvítí okna.' }
+  { id:'nebe',     nazev:'Obloha v horním panelu', popis:'Silueta Bučovic se sluncem a měsícem podle skutečného času, za tmy se rozsvítí okna.' },
+  { id:'sipky',    nazev:'Šipky na posun mapy',  popis:'Kulaté ovládání vlevo dole: šipky posunou mapu, prostřední tlačítko skočí do centra Bučovic.' }
 ];
-let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true, nebe:true };
+let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true, nebe:true, sipky:true };
 
 function nactiVzhled(){
   try {
@@ -12491,6 +12567,7 @@ function prepniVzhled(id){
   safeCall(() => prekresliVrstvy(true));
   safeCall(() => renderPudorysy(true));
   safeCall(() => kresliNebe(true));
+  safeCall(() => aktualizujSipky());
   safeCall(() => renderGuide());
 }
 
@@ -12589,8 +12666,275 @@ function legendaHtml(){
     <p style="font-size:11px;color:var(--muted);margin:8px 0 0;">Na cokoli klepni a uvidíš podrobnosti.</p>`;
 }
 
+// ===== MAPA PODLE SMĚRU CHŮZE (21.13) =====
+// Jako v navigaci: co je před tebou, je na mapě nahoře. Leaflet otáčení mapy neumí, proto
+// otáčíme celý kontejner mapy přes CSS (je čtvercový o úhlopříčce obrazovky, ať v rozích
+// nezbudou díry) a dopočítáváme to, co Leaflet neví:
+//  • kam prst na obrazovce ukazuje (klepnutí, sevření prsty, tah),
+//  • že značky a bubliny mají stát rovně (otáčí se zpátky kolem svého „kotvicího" bodu).
+// Směr bereme z pohybu podle GPS; když stojíš, z kompasu telefonu (pokud ho má).
+// Ovládání (tlačítka mapy) je mimo otáčený kontejner, takže zůstává na místě.
+let navUhel = 0, navCil = 0, navZap = false, navKotva = null, navKurzCas = 0, navSmycka = null, navKompasNa = false;
+function navRotuj(x, y, stupne){
+  const r = stupne * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+  return { x: x * c - y * s, y: x * s + y * c };
+}
+function navAzimut(a, b){
+  const r = Math.PI / 180;
+  const y = Math.sin((b.lng - a.lng) * r) * Math.cos(b.lat * r);
+  const x = Math.cos(a.lat * r) * Math.sin(b.lat * r) - Math.sin(a.lat * r) * Math.cos(b.lat * r) * Math.cos((b.lng - a.lng) * r);
+  return (Math.atan2(y, x) / r + 360) % 360;
+}
+
+// Úpravy Leafletu — jednou, hned po načtení knihovny. Bez otočení (úhel 0) se nic nemění.
+(function navPriprav(){
+  if(typeof L === 'undefined' || L.__navPripraveno) return;
+  L.__navPripraveno = true;
+  const OTOC = ' rotate(var(--protirot, 0deg))';
+  // Značky: posun + otočení zpátky kolem kotvy ikony (u domu je to pata domu).
+  const setPos = L.Marker.prototype._setPos;
+  L.Marker.prototype._setPos = function(pos){
+    setPos.call(this, pos);
+    const ik = this._icon;
+    if(ik && ik.style.transform && ik.style.transform.indexOf('rotate(') < 0){
+      ik.style.transform += OTOC;
+      const ml = parseFloat(ik.style.marginLeft) || 0, mt = parseFloat(ik.style.marginTop) || 0;
+      ik.style.transformOrigin = `${-ml}px ${-mt}px`;
+    }
+  };
+  // Bubliny (popup) — kotva je špička bubliny.
+  const popPos = L.Popup.prototype._updatePosition;
+  L.Popup.prototype._updatePosition = function(){
+    popPos.call(this);
+    const c = this._container;
+    if(c && this._zoomAnimated && c.style.transform && c.style.transform.indexOf('rotate(') < 0){
+      c.style.transform += OTOC;
+      c.style.transformOrigin = `${-(this._containerLeft || 0)}px ${(this._containerBottom || 0) + c.offsetHeight}px`;
+    }
+  };
+  // Popisky (tooltip) — kotva je bod na mapě, ke kterému patří.
+  const tipPos = L.Tooltip.prototype._setPosition;
+  L.Tooltip.prototype._setPosition = function(pos){
+    tipPos.call(this, pos);
+    const c = this._container, p = c && c._leaflet_pos;
+    if(c && p && c.style.transform && c.style.transform.indexOf('rotate(') < 0){
+      c.style.transform += OTOC;
+      c.style.transformOrigin = `${pos.x - p.x}px ${pos.y - p.y}px`;
+    }
+  };
+})();
+
+// Napojení na konkrétní mapu: přesun ovládání ven z otáčené plochy + přepočet dotyků.
+function navNapojMapu(){
+  if(!map || map.__nav) return;
+  map.__nav = true;
+  // Tlačítka mapy (+ −, 📈, ⓘ, 🧭, 📍, autorství) do samostatné vrstvy nad mapou.
+  const cont = map.getContainer();
+  const ovl = document.createElement('div');
+  ovl.id = 'mapaOvladani';
+  ovl.className = Array.from(cont.classList).filter(c => /^leaflet-(container|touch|retina|fade-anim|safari)/.test(c)).join(' ');
+  cont.parentNode.insertBefore(ovl, cont.nextSibling);
+  if(map._controlContainer) ovl.appendChild(map._controlContainer);
+  // Kde je prst v souřadnicích (neotočené) mapy.
+  const puv = map.mouseEventToContainerPoint;
+  map.mouseEventToContainerPoint = function(e){
+    if(!navUhel) return puv.call(this, e);
+    const r = this._container.getBoundingClientRect();
+    const v = navRotuj(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2), navUhel);
+    const s = this.getSize();
+    return L.point(s.x / 2 + v.x, s.y / 2 + v.y);
+  };
+  // Tah prstem: posun na obrazovce přepočítat do směru otočené mapy.
+  const d = map.dragging && map.dragging._draggable;
+  if(d){
+    const tah = d._onMove;
+    d._onMove = function(e){
+      if(!navUhel || (e.touches && e.touches.length > 1)) return tah.call(this, e);
+      this._parentScale = { x: 1, y: 1 };
+      const t = (e.touches && e.touches.length === 1) ? e.touches[0] : e;
+      const v = navRotuj(t.clientX - this._startPoint.x, t.clientY - this._startPoint.y, navUhel);
+      return tah.call(this, {
+        clientX: this._startPoint.x + v.x, clientY: this._startPoint.y + v.y, type: e.type,
+        target: e.target, srcElement: e.srcElement, touches: undefined,
+        preventDefault: () => { if(e.cancelable !== false && e.preventDefault) e.preventDefault(); },
+        stopPropagation: () => e.stopPropagation && e.stopPropagation()
+      });
+    };
+  }
+  window.addEventListener('resize', () => { if(navZap) setTimeout(navRozmer, 60); });
+  try { if(localStorage.getItem('bp_navigace') === '1') navNastav(true, true); } catch(e){}
+}
+
+// Čtverec o úhlopříčce obrazovky, vystředěný — při otočení pokryje celou plochu.
+function navRozmer(){
+  const el = document.getElementById('map');
+  if(!el || !map) return;
+  const par = el.parentNode;
+  if(navZap){
+    const W = par.clientWidth, H = par.clientHeight, D = Math.ceil(Math.hypot(W, H)) + 4;
+    Object.assign(el.style, { left: ((W - D) / 2) + 'px', top: ((H - D) / 2) + 'px', right: 'auto', bottom: 'auto', width: D + 'px', height: D + 'px' });
+  } else {
+    ['left', 'top', 'right', 'bottom', 'width', 'height', 'transform'].forEach(k => { el.style[k] = ''; });
+    el.style.removeProperty('--protirot');
+  }
+  map.invalidateSize({ animate: false });
+}
+function navNastavUhel(u){
+  navUhel = ((u % 360) + 360) % 360;
+  if(Math.abs(navUhel) < 0.01 || Math.abs(navUhel - 360) < 0.01) navUhel = 0;
+  const el = document.getElementById('map');
+  if(el){
+    el.style.transform = navUhel ? `rotate(${-navUhel}deg)` : '';
+    el.style.setProperty('--protirot', navUhel + 'deg');
+  }
+  const ik = document.querySelector('#navigaceBtn svg');
+  if(ik) ik.style.transform = `rotate(${-navUhel}deg)`;   // střelka ukazuje pořád na sever
+}
+// Plynulé natáčení k cílovému směru (kompas i GPS skáčou, tohle to uhladí).
+function navSmeruj(cil){
+  navCil = ((cil % 360) + 360) % 360;
+  if(navSmycka) return;
+  const krok = () => {
+    let rozdil = ((navCil - navUhel + 540) % 360) - 180;
+    if(Math.abs(rozdil) < 0.4 || !navZap){ if(navZap) navNastavUhel(navCil); navSmycka = null; return; }
+    navNastavUhel(navUhel + rozdil * 0.18);
+    navSmycka = requestAnimationFrame(krok);
+  };
+  navSmycka = requestAnimationFrame(krok);
+}
+
+// Směr z GPS: kurz od telefonu, jinak spočítaný z posledních pár metrů chůze.
+function navPoloha(pos){
+  if(!navZap || !pos || !pos.coords) return;
+  const c = pos.coords, bod = { lat: c.latitude, lng: c.longitude };
+  if((c.accuracy || 99) > 30) return;
+  if(typeof c.heading === 'number' && isFinite(c.heading) && (c.speed || 0) > 0.7){
+    navKurzCas = Date.now(); navKotva = bod; navSmeruj(c.heading); return;
+  }
+  if(!navKotva){ navKotva = bod; return; }
+  if(haversine(navKotva, bod) >= 7){
+    navSmeruj(navAzimut(navKotva, bod));
+    navKurzCas = Date.now();
+    navKotva = bod;
+  }
+}
+// Kompas: když stojíš (posledních 5 s žádný směr z chůze), mapa se otáčí podle telefonu.
+function navKompas(e){
+  if(!navZap || Date.now() - navKurzCas < 5000) return;
+  let h = null;
+  if(typeof e.webkitCompassHeading === 'number') h = e.webkitCompassHeading;          // iPhone
+  else if(e.absolute && typeof e.alpha === 'number') h = 360 - e.alpha;                 // Android
+  if(h === null || !isFinite(h)) return;
+  const otoceni = (screen.orientation && typeof screen.orientation.angle === 'number') ? screen.orientation.angle : (window.orientation || 0);
+  const cil = h + otoceni;
+  if(Math.abs((((cil - navCil) + 540) % 360) - 180) < 2) return;   // drobné chvění ignorovat
+  navSmeruj(cil);
+}
+function navKompasZapni(zap){
+  if(zap === navKompasNa) return;
+  navKompasNa = zap;
+  const udalost = ('ondeviceorientationabsolute' in window) ? 'deviceorientationabsolute' : 'deviceorientation';
+  if(zap) window.addEventListener(udalost, navKompas);
+  else window.removeEventListener(udalost, navKompas);
+}
+
+async function navNastav(zap, tise){
+  if(!map) return;
+  if(zap && !tise && typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+    try { await DeviceOrientationEvent.requestPermission(); } catch(e){}   // iPhone se musí zeptat
+  }
+  navZap = !!zap;
+  try { localStorage.setItem('bp_navigace', navZap ? '1' : '0'); } catch(e){}
+  const b = document.getElementById('navigaceBtn');
+  if(b) b.classList.toggle('zap', navZap);
+  navKotva = null; navKurzCas = 0;
+  navKompasZapni(navZap);
+  navRozmer();
+  if(navZap){
+    navNastavUhel(navUhel);
+    if(playerPos){ nastavSledovani(true); map.setView([playerPos.lat, playerPos.lng], Math.max(map.getZoom(), 17), { animate: false }); }
+    if(!tise) showToast('🧭 Mapa se otáčí podle směru chůze. Klepni znovu pro sever nahoře.');
+  } else {
+    if(navSmycka){ cancelAnimationFrame(navSmycka); navSmycka = null; }
+    navNastavUhel(0);
+    if(!tise) showToast('🧭 Sever je zase nahoře');
+  }
+}
+function prepniNavigaci(){ navNastav(!navZap); }
+
+// ===== ŠIPKY NA POSUN MAPY =====
+// Klepnutí posune mapu o třetinu obrazovky, podržení posouvá plynule (zrychluje).
+// Hráčům, kterým tah prstem dělal potíže (nativní obal APK), to dává jistý způsob, jak se
+// po mapě pohybovat. Prostřední tlačítko vrátí mapu do centra Bučovic.
+const SIPKY_SMERY = { n:[0, -1], s:[0, 1], e:[1, 0], w:[-1, 0] };
+function aktualizujSipky(){
+  const el = document.getElementById('mapaSipky');
+  if(el) el.style.display = (VZHLED.sipky && map) ? '' : 'none';
+}
+function posunMapu(smer, podil, animace){
+  if(!map) return;
+  const v = SIPKY_SMERY[smer]; if(!v) return;
+  nastavSledovani(false);
+  // Velikost a směr podle obrazovky — při otočené mapě (navigace) přepočítat do mapy.
+  const el = document.getElementById('app') || map.getContainer();
+  const vx = v[0] * el.clientWidth * podil, vy = v[1] * el.clientHeight * podil;
+  const o = navUhel ? navRotuj(vx, vy, navUhel) : { x: vx, y: vy };
+  map.panBy([o.x, o.y], animace ? { animate:true, duration:0.3 } : { animate:false });
+}
+function nastavSipky(){
+  const el = document.getElementById('mapaSipky');
+  if(!el || el.dataset.hotovo) return;
+  el.dataset.hotovo = '1';
+  let drz = null, krok = 0, smer = null;
+  const konec = () => {
+    if(drz){ clearTimeout(drz.t); clearInterval(drz.i); }
+    drz = null; smer = null;
+    el.querySelectorAll('.sip.drzi').forEach(b => b.classList.remove('drzi'));
+  };
+  el.querySelectorAll('.sip').forEach(b => {
+    b.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      konec();
+      smer = b.dataset.smer; krok = 0;
+      b.classList.add('drzi');
+      try { b.setPointerCapture(e.pointerId); } catch(_){}
+      posunMapu(smer, 0.33, true);
+      // podržení: po chvilce plynulý posun, postupně rychlejší
+      drz = { t: setTimeout(() => {
+        drz.i = setInterval(() => { krok++; posunMapu(smer, Math.min(0.045, 0.012 + krok * 0.0012), false); }, 30);
+      }, 380) };
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => b.addEventListener(t, konec));
+    b.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+  const stred = el.querySelector('.sipStred');
+  stred.addEventListener('click', (e) => {
+    e.preventDefault();
+    nastavSledovani(false);
+    map.setView(CITY_CENTER, Math.max(map.getZoom(), 16), { animate:true });
+  });
+  // Když vyjede karta „co je kolem mě", šipky se posunou nad ni.
+  const kk = document.getElementById('kontextKarta');
+  const posunNadKartu = () => {
+    const vidim = kk && kk.style.display !== 'none' && kk.offsetHeight > 0;
+    el.style.setProperty('--kkVyska', vidim ? Math.max(0, kk.offsetHeight - 16) + 'px' : '0px');
+  };
+  if(kk && window.MutationObserver){
+    new MutationObserver(posunNadKartu).observe(kk, { attributes:true, attributeFilter:['style'], childList:true, subtree:true });
+  }
+  posunNadKartu();
+  aktualizujSipky();
+}
+
 // ===== NAJDI MĚ / SLEDOVÁNÍ POLOHY =====
 let sledujHrace = false;
+// Každé „ukázat na mapě" (revizorka Eva, přivýdělek, balík, dům ze zprávy…) musí sledování
+// vypnout. Jinak mapa skočila na místo a při další aktualizaci GPS hned zpátky na hráče —
+// hráč viděl jen bliknutí. Sledování zase zapne tlačítko 📍.
+function ukazNaMape(bod, zoom, volby){
+  nastavSledovani(false);
+  if(map) map.setView(bod, zoom, volby);
+}
 function nastavSledovani(zap){
   sledujHrace = !!zap;
   const b = document.getElementById('najdiMeBtn');
@@ -13865,7 +14209,7 @@ function renderSelected(id){
             const ostatniPct = ostatni.reduce((a, [, pct]) => a + pct, 0);
             if((volne < 1 && !ostatniPct) || !realCollected) return '';
             const casti = [];
-            if(ostatniPct >= 0.5) casti.push(`${ostatni.map(([jm, pct]) => `${escapeHtml(jm)} ${des(pct, 0)} %`).join(', ')} — dohromady ${des(u.rentPrice*ostatniPct/100, 0)} Kč/den`);
+            if(ostatniPct >= 0.5) casti.push(`${ostatni.map(([jm, pct]) => `${escapeHtml(jm)} ${pctText(pct)} %`).join(', ')} — dohromady ${des(u.rentPrice*ostatniPct/100, 0)} Kč/den`);
             if(volne >= 0.5) casti.push(`město ${des(volne, 0)} % — ${des(u.rentPrice*volne/100, 0)} Kč/den (když podíl dokoupíš, poputují tobě)`);
             return `<p style="margin:3px 0 0 0;font-size:0.85em;color:var(--muted)">Zbytek nájmu si dělí ${casti.join(' · ')}.</p>`;
           })()}
@@ -14404,7 +14748,7 @@ function ukazZakazku(id){
   const z = zakazkyDnes().find(x => x.id === id);
   if(!z || !map) return;
   closeSheet();
-  map.setView([z.lat, z.lng], 18);
+  ukazNaMape([z.lat, z.lng], 18);
   oznacCil(z);
 }
 
@@ -14442,7 +14786,7 @@ function ukazMisto(id){
   closeSheet();
   mistoVybrane = id;
   safeCall(() => renderMistaMarkery());
-  map.setView([m.lat, m.lng], 17);
+  ukazNaMape([m.lat, m.lng], 17);
   oznacCil({ lat:m.lat, lng:m.lng });
   // rovnou ukázat jméno u značky, ať je jasné, KTERÉ místo to je
   const z = mistaMarkery[id];
@@ -14458,7 +14802,7 @@ function ukazMistoZpravy(el){
   const lat = parseFloat(el.dataset.lat), lng = parseFloat(el.dataset.lng);
   if(!map || !isFinite(lat) || !isFinite(lng)) return;
   closeSheet();
-  map.setView([lat, lng], 17);
+  ukazNaMape([lat, lng], 17);
   oznacCil({ lat, lng });
 }
 
@@ -14466,7 +14810,7 @@ function flyToParcel(id){
   const p = world.parcels[id];
   if(!p) return;
   closeSheet();                       // ať je mapa vidět, ne panel přes ni
-  map.setView([p.lat, p.lng], 18);
+  ukazNaMape([p.lat, p.lng], 18);
   oznacCil(p);                        // pulzující kroužek, aby šlo poznat KTERÝ dům to je
   selectParcel(id);
 }
@@ -14490,7 +14834,7 @@ function flyToBusiness(bizId){
   const biz = world.businesses[bizId];
   if(!biz) return;
   closeSheet();
-  map.setView([biz.lat, biz.lng], 18);
+  ukazNaMape([biz.lat, biz.lng], 18);
   if(window.__bizMarkers && window.__bizMarkers[bizId]){
     window.__bizMarkers[bizId].bindPopup(businessPopupHtml(bizId)).openPopup();
   }
@@ -14761,15 +15105,15 @@ async function buyHouseStake(id){
   });
   p.popularity = (p.popularity || 0) + pct/100;
 
-  zapisDoDeniku('buy', `Koupil jsem ${des(pct, 0)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
+  zapisDoDeniku('buy', `Koupil jsem ${pctText(pct)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, -cost);
   {
     const trzni = houseMarketPricePerPercent(p) * pct;
     const rozdil = trzni > 0 ? (cost / trzni - 1) * 100 : 0;
     const dodatek = Math.abs(rozdil) < 6 ? '' : (rozdil > 0 ? ` — o ${Math.round(rozdil)} % nad tržní cenou` : ` — o ${Math.round(-rozdil)} % pod tržní cenou`);
     addNews('buy', znění(`koupe|${p.id}|${currentUser.name}`, [
-      `🏠 ${currentUser.name} koupil ${des(pct, 0)} % domu ${domKratce(p)} za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
-      `🏠 Dům ${domKratce(p)} má nového spolumajitele: ${currentUser.name} bere ${des(pct, 0)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
-      `🏠 V domě ${domKratce(p)} se obchodovalo — ${currentUser.name} koupil ${des(pct, 0)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`
+      `🏠 ${currentUser.name} koupil ${pctText(pct)} % domu ${domKratce(p)} za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
+      `🏠 Dům ${domKratce(p)} má nového spolumajitele: ${currentUser.name} bere ${pctText(pct)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`,
+      `🏠 V domě ${domKratce(p)} se obchodovalo — ${currentUser.name} koupil ${pctText(pct)} % za ${cost.toLocaleString('cs-CZ')} Kč${dodatek}.`
     ]), p.id);
   }
   saveWorld(); refreshAll();
@@ -14795,7 +15139,7 @@ async function claimStarterHome(id){
   // a pořád platil plné náklady bez bydlení — nabídneme mu vycouvat.
   if(pct <= 50){
     const ok = await showConfirm(
-      `Pozor: tenhle dům je drahý, zdarma z něj dostaneš jen ${des(pct, 0)} %.\n\n` +
+      `Pozor: tenhle dům je drahý, zdarma z něj dostaneš jen ${pctText(pct)} %.\n\n` +
       `Na vlastní bydlení potřebuješ VÍC než 50 % domu. S menšinovým podílem budeš dál platit ` +
       `${LIVING_COST} Kč/den jako bez bydlení.\n\n` +
       `Doporučuju vybrat levnější dům (nárok máš jen jednou). Chceš přesto tenhle?`);
@@ -14806,12 +15150,12 @@ async function claimStarterHome(id){
   me.starterHomeAvailable = false;
   if((p.owners[currentUser.name] || 0) > 50 && !p.useType){ p.useType = 'residence'; stampHouse(p); } // hned kde bydlet
 
-  addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${des(pct, 0)} % domu ${domKratce(p)} zdarma.`, p.id);
+  addNews('buy', `🎁 ${currentUser.name} získal svou první nemovitost — ${pctText(pct)} % domu ${domKratce(p)} zdarma.`, p.id);
   saveWorld(); refreshAll();
   playSound('buy');
   showAlert(p.useType === 'residence'
-    ? `Gratuluju! Získal jsi ${des(pct, 0)} % domu zdarma a rovnou v něm bydlíš — klesly ti denní náklady. Další nemovitosti už se kupují za peníze.`
-    : `Získal jsi ${des(pct, 0)} % domu zdarma. Je to ale menšinový podíl, takže tu zatím nebydlíš — dokup podíl přes 50 %, nebo si zatím najmi byt. Podíl ti mezitím vydělává na hodnotě.`);
+    ? `Gratuluju! Získal jsi ${pctText(pct)} % domu zdarma a rovnou v něm bydlíš — klesly ti denní náklady. Další nemovitosti už se kupují za peníze.`
+    : `Získal jsi ${pctText(pct)} % domu zdarma. Je to ale menšinový podíl, takže tu zatím nebydlíš — dokup podíl přes 50 %, nebo si zatím najmi byt. Podíl ti mezitím vydělává na hodnotě.`);
 }
 
 async function sellHouseStake(id){
@@ -14861,8 +15205,8 @@ async function sellHouseStake(id){
   // Prodej městu se do kroniky nezapisoval, takže v příběhu domu chyběly celé převody.
   recordSale(p, refund, pct, currentUser.name, 'město', false);   // výkup se slevou ≠ tržní cena
   if(!houseHasOwner(p)){ p.useType = null; delete p.units; delete p.provoz; stampHouse(p); }
-  zapisDoDeniku('sell', `Prodal jsem městu ${des(pct, 0)} % domu ${domKratce(p)}`, refund);
-  addNews('sell', `💸 ${currentUser.name} prodal ${des(pct, 0)} % domu ${domKratce(p)} za ${refund} Kč.`, p.id);
+  zapisDoDeniku('sell', `Prodal jsem městu ${pctText(pct)} % domu ${domKratce(p)}`, refund);
+  addNews('sell', `💸 ${currentUser.name} prodal ${pctText(pct)} % domu ${domKratce(p)} za ${refund} Kč.`, p.id);
   saveWorld(); refreshAll();
   playSound('sell');
   showAlert(`Prodáno ${des(pct, 1)} % za ${refund} Kč.`);
@@ -14901,7 +15245,7 @@ async function listHouseStake(id){
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'auction', mod: Date.now(),
       startBid, currentBid:startBid, highestBidder:null, endsAtDay: world.day + AUCTION_DURATION_DAYS};
-    addNews('market', `🔨 ${currentUser.name} vydražuje ${des(pct, 0)} % domu ${domKratce(p)} (od ${startBid} Kč).`, p.id);
+    addNews('market', `🔨 ${currentUser.name} vydražuje ${pctText(pct)} % domu ${domKratce(p)} (od ${startBid} Kč).`, p.id);
     showAlert(`Aukce spuštěna — končí za ${AUCTION_DURATION_DAYS} herní dny.`);
   } else {
     const vstup = parseInt(await showPrompt(`Pevná cena za ${des(pct, 1)} % (tržní odhad ${marketRef} Kč):`, marketRef), 10);
@@ -14911,7 +15255,7 @@ async function listHouseStake(id){
     const price = overeno.cena;
     const lid = newListingId();
     world.listings[lid] = {id:lid, houseId:id, seller:currentUser.name, pct, type:'fixed', price, mod: Date.now()};
-    addNews('market', `🏷️ ${currentUser.name} nabízí ${des(pct, 0)} % domu ${domKratce(p)} za ${price} Kč.`, p.id);
+    addNews('market', `🏷️ ${currentUser.name} nabízí ${pctText(pct)} % domu ${domKratce(p)} za ${price} Kč.`, p.id);
     showAlert(`Podíl nabídnut na tržišti za ${price} Kč.`);
   }
   saveWorld(); refreshAll(); renderMarket();
@@ -15411,7 +15755,7 @@ async function buyHouseStakeOnMortgage(id){
   });
 
   recordSale(p2, cena, pct, 'město', currentUser.name);
-  addNews('trade', `🏦 ${currentUser.name} koupil ${des(pct, 0)} % domu ${domKratce(p2)} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`, p2.id);
+  addNews('trade', `🏦 ${currentUser.name} koupil ${pctText(pct)} % domu ${domKratce(p2)} na hypotéku (${cena.toLocaleString('cs-CZ')} Kč).`, p2.id);
   saveWorld(); refreshAll(); playSound('buy');
   showAlert(`Hotovo! Vlastníš ${des(pct, 1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
 }
@@ -15979,10 +16323,25 @@ function muzeRolovatNahoru(el){
     }
     el = el.parentElement;
   }
-  return (window.scrollY || document.documentElement.scrollTop || 0) > 0;
+  return (window.scrollY || document.documentElement.scrollTop || 0) > 1;   // 1 px drží drzOdrolovano
 }
 
+// Android aplikace (WebView v obalu) má nativní „táhni dolů pro obnovení". Obal tah dolů
+// sebere vždycky, když je stránka úplně nahoře — JavaScript ho nezastaví. Hráčka proto
+// nemohla posunout mapu prstem dolů (na sever), jen ostatními směry. Když je stránka
+// odrolovaná aspoň o 1 px, obal si myslí, že se dá rolovat nahoru, a tah pustí do mapy.
+function drzOdrolovano(){
+  const se = document.scrollingElement || document.documentElement;
+  if(se && se.scrollTop < 1 && se.scrollHeight > se.clientHeight) se.scrollTop = 1;
+  // Vyrovnat ten 1 px, ať appka sedí přesně na obrazovce (jinak by dole byl proužek).
+  document.documentElement.classList.toggle('odrol', !!(se && se.scrollTop >= 1));
+}
 function nastavOchranuProtiObnoveni(){
+  drzOdrolovano();
+  window.addEventListener('scroll', drzOdrolovano, { passive: true });
+  window.addEventListener('resize', () => setTimeout(drzOdrolovano, 50));
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) setTimeout(drzOdrolovano, 50); });
+  setTimeout(drzOdrolovano, 500);
   document.addEventListener('touchstart', (e) => {
     if(e.touches.length !== 1) return;
     dotykStartY = e.touches[0].clientY;
@@ -16524,8 +16883,8 @@ function renderDaily(){
   if(playerPos){
     const cile = [];
     const sebrane = myCollectedToday();
-    asArray(world.pickups && world.pickups.list).forEach(pk => { if(!sebrane.includes(pk.id)) cile.push({ druh:'balik', ik: pk.bonus ? '🎁' : '💰', nazev: pk.bonus ? 'Bonusový balík' : 'Balík peněz', odm: pk.reward * inflationMult() * eventMult('pickupMult'), bod: pk, akce: `map.setView([${pk.lat},${pk.lng}],18);closeSheet()` }); });
-    lms.forEach(lm => { if(!got.includes(lm.id)) cile.push({ druh:'zajem', ik: escapeHtml(lm.emoji || '📍'), nazev: escapeHtml(lm.name), odm: LANDMARK_REWARD * inflationMult() * eventMult('landmarkMult'), bod: lm, akce: `map.setView([${lm.lat},${lm.lng}],18);closeSheet()` }); });
+    asArray(world.pickups && world.pickups.list).forEach(pk => { if(!sebrane.includes(pk.id)) cile.push({ druh:'balik', ik: pk.bonus ? '🎁' : '💰', nazev: pk.bonus ? 'Bonusový balík' : 'Balík peněz', odm: pk.reward * inflationMult() * eventMult('pickupMult'), bod: pk, akce: `ukazNaMape([${pk.lat},${pk.lng}],18);closeSheet()` }); });
+    lms.forEach(lm => { if(!got.includes(lm.id)) cile.push({ druh:'zajem', ik: escapeHtml(lm.emoji || '📍'), nazev: escapeHtml(lm.name), odm: LANDMARK_REWARD * inflationMult() * eventMult('landmarkMult'), bod: lm, akce: `ukazNaMape([${lm.lat},${lm.lng}],18);closeSheet()` }); });
     if(mistaStav === 'hotovo'){
       const nav = mojeMista(u);
       Object.values(MISTA).filter(m => !nav[m.id]).map(m => ({ m, d: haversine(playerPos, m) })).sort((a, b) => a.d - b.d).slice(0, 3)
@@ -18001,6 +18360,20 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.13', datum:'2026-10-09', body:[
+    ['novinka','🧭 Mapa jako v navigaci: klepni na kompas v pravém sloupci tlačítek a mapa se bude otáčet podle toho, kam jdeš — co je před tebou, je nahoře. Když stojíš, otáčí se podle kompasu v telefonu. Červená střelka ukazuje, kde je sever; dalším klepnutím vrátíš sever nahoru.'],
+  ]},
+  { verze:'21.12', datum:'2026-10-09', body:[
+    ['oprava','🗺️ Když se nepodaří načíst žádný podklad mapy, hra to teď oznámí („zkontroluj připojení") — dřív to místo upozornění spadlo.'],
+    ['novinka','🧭 Vlevo dole na mapě jsou šipky. Klepnutím posuneš mapu o kus, podržením se posouvá plynule. Prostřední tlačítko 🏰 tě vrátí do centra Bučovic — hodí se, když jsi mimo město. Vypnout jdou v Nastavení vzhledu.'],
+  ]},
+  { verze:'21.11', datum:'2026-10-09', body:[
+    ['oprava','🗺️ Mapa jde v aplikaci posouvat prstem i dolů (na sever). Dřív tah dolů zachytilo „obnovení stránky" a kdo stál jižně od Bučovic, nepodíval se do města.'],
+    ['oprava','📰 Malé podíly se v novinách a deníku píšou s desetinami — „0,3 % za 600 Kč" místo „0 % za 600 Kč".'],
+  ]},
+  { verze:'21.10', datum:'2026-10-09', body:[
+    ['oprava','🗺️ „Ukázat na mapě" (revizorka Eva, přivýdělky, balíky, zprávy z novin, domy) už neskočí hned zpátky na tvou polohu. Zobrazení místa teď vypne sledování polohy — zapneš ho zase tlačítkem 📍.'],
+  ]},
   { verze:'21.9', datum:'2026-10-09', body:[
     ['zmena','🌦️ Obloha v horním panelu jde podle skutečného počasí v Bučovicích: počet mraků odpovídá opravdové oblačnosti, vítr je žene rychleji, za mraky slunce zbledne. Když prší, padají kapky (šikmo podle větru), když sněží, padají vločky a střechy zbělají. V mlze se město ztrácí v oparu, při bouřce se blýská.'],
   ]},
@@ -19978,7 +20351,7 @@ function ukazNpc(id){
   const p = npcKde(id);
   if(!p || !map) return;
   closeSheet();
-  map.setView([p.lat, p.lng], 18);
+  ukazNaMape([p.lat, p.lng], 18);
   oznacCil(p);
 }
 
@@ -21166,7 +21539,7 @@ async function buyStake(bizId){
   me.balance -= cost;
   biz.owners[currentUser.name] = (biz.owners[currentUser.name] || 0) + pct;
   stampBizOwners(biz, currentUser.name);
-  addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${des(pct, 0)} % za ${cost} Kč).`,
+  addNews('invest', `📈 ${currentUser.name} investoval do podniku ${biz.name} (${pctText(pct)} % za ${cost} Kč).`,
     (biz.lat ? { lat: biz.lat, lng: biz.lng } : undefined));
   saveWorld(); refreshAll();
   showAlert(`Koupeno ${des(pct, 1)} % podílu za ${cost} Kč.`);
