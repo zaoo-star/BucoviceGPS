@@ -1566,8 +1566,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.16';
-const APP_BUILD = '09.10.2026 21:30';
+const APP_VERSION = '21.17';
+const APP_BUILD = '10.10.2026 19:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -12569,6 +12569,13 @@ function doplnPopiskyIkon(){
   });
 }
 
+// Uplatní uložené nastavení vzhledu na všechno, co už je na obrazovce.
+function uplatniVzhled(){
+  safeCall(() => prekresliVrstvy(true));
+  safeCall(() => renderPudorysy(true));
+  safeCall(() => kresliNebe(true));
+  safeCall(() => aktualizujSipky());
+}
 function prepniVzhled(id){
   if(!VZHLED_VOLBY.some(v => v.id === id)) return;
   VZHLED[id] = !VZHLED[id];
@@ -18373,6 +18380,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.17', datum:'2026-10-10', body:[
+    ['oprava','⚙️ Vypnuté šipky (a další volby v Nastavení vzhledu, třeba půdorysy budov) zůstanou po spuštění appky opravdu vypnuté. Dřív se při startu ukázaly a zmizely až po zapnutí a vypnutí.'],
+  ]},
   { verze:'21.16', datum:'2026-10-09', body:[
     ['oprava','🏠 Nájem přesně na hranici, kterou nájemník unese, už nehlásí „rozdíl 0 Kč" a nájemník se kvůli němu nestěhuje. Hranice se dřív porovnávala na haléře, ale ukazovala zaokrouhlená, takže u některých bytů „nejvýš 44 Kč" ve skutečnosti znamenalo 43,75 Kč.'],
   ]},
@@ -22168,6 +22178,9 @@ window.onload = async () => {
     await ensureCityHouses();
   }
   loadWorld();          // nejdřív rychle lokálně (funguje okamžitě, i offline)
+  // Nastavení vzhledu MUSÍ být načtené dřív, než vznikne mapa. Jinak se šipky, půdorysy
+  // ap. postavily podle výchozího „zapnuto" a vypnutí z nastavení se neprojevilo (hlášení hráče).
+  safeCall(() => nactiVzhled());
   initMap();
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
@@ -22187,7 +22200,7 @@ window.onload = async () => {
   safeCall(() => oznacNoveZmeny());
   safeCall(() => nactiAdresy());
   // Místa do sbírky: z paměti hned, z OpenStreetMap až po chvíli, ať start appky nezdržuje.
-  safeCall(() => nactiVzhled());
+  safeCall(() => uplatniVzhled());
   safeCall(() => doplnPopiskyIkon());
   setTimeout(() => safeCall(() => doruciVzkazy()), 3000);
   safeCall(() => zkontrolujDataZmen());   // upozorní v konzoli, když u verze zůstalo staré datum
