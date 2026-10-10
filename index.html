@@ -1566,8 +1566,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.15';
-const APP_BUILD = '09.10.2026 17:45';
+const APP_VERSION = '21.16';
+const APP_BUILD = '09.10.2026 21:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -8456,7 +8456,10 @@ function plnyDumMult(p){
 
 function npcMaxNajem(p, u){
   if(!u || !u.npc) return Infinity;
-  return fairRentForHouse(p) * NAJEMNIK_TOLERANCE;
+  // V CELÝCH korunách, zaokrouhleno stejně, jak to hra všude ukazuje. Dřív se porovnávalo
+  // s haléři (třeba 43,75), ale ukazovalo zaokrouhleně (44) — hráčka nastavila „nejvýš 44"
+  // a hra hlásila „44 Kč je moc, rozdíl 0 Kč" a nájemník se začal stěhovat (Eva).
+  return Math.round(fairRentForHouse(p) * NAJEMNIK_TOLERANCE);
 }
 
 // Kolik majiteli z bytu DOOPRAVDY přijde. Nájemník víc, než unese, nezaplatí — rozdíl
@@ -18370,6 +18373,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.16', datum:'2026-10-09', body:[
+    ['oprava','🏠 Nájem přesně na hranici, kterou nájemník unese, už nehlásí „rozdíl 0 Kč" a nájemník se kvůli němu nestěhuje. Hranice se dřív porovnávala na haléře, ale ukazovala zaokrouhlená, takže u některých bytů „nejvýš 44 Kč" ve skutečnosti znamenalo 43,75 Kč.'],
+  ]},
   { verze:'21.15', datum:'2026-10-09', body:[
     ['zmena','🧭 Šipky na mapě jsou průhlednější — pod nimi je vidět mapa.'],
   ]},
