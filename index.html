@@ -1126,6 +1126,23 @@
   .najdiMeBar a.sleduje{ background:var(--accent2);color:#06121f;border-color:var(--accent2);box-shadow:0 0 0 4px rgba(56,189,248,0.25), 0 4px 12px rgba(0,0,0,0.45); }
   .najdiMeBar a:active{ transform:scale(0.94); }
 
+  /* ===== NASTAVENÍ (21.18) ===== */
+  .nastSkupina h3{ margin-bottom:2px; }
+  .nastRadek{ display:flex;align-items:center;gap:12px;padding:11px 2px;border-top:1px solid var(--border);cursor:pointer;
+    -webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none; }
+  .nastSkupina h3 + .nastRadek{ border-top:none; }
+  .nastRadek:active{ background:rgba(255,255,255,0.03); }
+  .nastRadek.nastBezPrepinace{ cursor:default;padding-bottom:4px; }
+  .nastIkona{ font-size:1.35em;width:28px;text-align:center;flex:none; }
+  .nastText{ flex:1;min-width:0; }
+  .nastNazev{ display:block;font-weight:600;font-size:0.95em; }
+  .nastPopis{ display:block;font-size:0.8em;color:var(--muted);margin-top:2px;line-height:1.35; }
+  .prepinac{ position:relative;flex:none;width:46px;height:28px;border-radius:14px;background:#3a4150;transition:background .2s; }
+  .prepinac::after{ content:'';position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;
+    box-shadow:0 1px 3px rgba(0,0,0,0.4);transition:left .2s; }
+  .prepinac.zap{ background:var(--accent); }
+  .prepinac.zap::after{ left:21px; }
+
   /* ===== MAPA PODLE SMĚRU CHŮZE (21.13) ===== */
   #mapaOvladani{ position:absolute;inset:0;z-index:2;pointer-events:none;background:transparent !important;outline:none;cursor:auto; }
   #navigaceBtn svg{ vertical-align:middle;transition:none; }
@@ -1367,6 +1384,9 @@
       <div class="panelContent" id="tab-finance">
         <div id="financeContent" class="empty-state">Načítám finanční přehled...</div>
       </div>
+      <div class="panelContent" id="tab-nastaveni">
+        <div id="nastaveniContent" class="empty-state">Načítám…</div>
+      </div>
       <div class="panelContent" id="tab-guide">
         <div id="guideContent" class="empty-state">Načítám nápovědu...</div>
       </div>
@@ -1566,8 +1586,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.17';
-const APP_BUILD = '10.10.2026 19:30';
+const APP_VERSION = '21.18';
+const APP_BUILD = '10.10.2026 20:15';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -2529,15 +2549,15 @@ async function enableNotifications(){
       notifyPlayer('Upozornění zapnuta', 'Dám vědět, když splníš úkol nebo přijdou nové balíky.');
       showAlert('🔔 Upozornění zapnuta.');
     } else {
-      showAlert('Upozornění nebyla povolena. Povolit je můžeš v nastavení appky.');
+      showAlert('Upozornění nebyla povolena. Povolit je můžeš v nastavení telefonu (oprávnění appky).');
     }
   } catch(e){ showAlert('Upozornění se nepodařilo zapnout.'); }
-  renderDaily();
+  safeCall(() => renderDaily());
 }
 function disableNotifications(){
   notifyEnabled = false;
   try { localStorage.removeItem('bucovice_notify'); } catch(e){}
-  renderDaily();
+  safeCall(() => renderDaily());
 }
 // Vzkazy, které pro hráče nechalo jiné zařízení (přehození v aukci apod.). Ukážou se,
 // až si hru otevře — jinak by se o tom nedozvěděl vůbec.
@@ -12569,6 +12589,65 @@ function doplnPopiskyIkon(){
   });
 }
 
+// ===== NASTAVENÍ (21.18) =====
+// Všechno, co jde zapnout a vypnout, na jednom místě (dřív bylo schované v Průvodci).
+// Platí jen pro tohle zařízení — ukládá se do telefonu, ne do světa.
+function nastRadek(klic, zap, ikona, nazev, popis){
+  return `<div class="nastRadek" role="switch" tabindex="0" aria-checked="${zap}" onclick="nastavPrepni('${klic}')"
+      onkeydown="if(event.key===' '||event.key==='Enter'){event.preventDefault();nastavPrepni('${klic}');}">
+    <span class="nastIkona">${ikona}</span>
+    <span class="nastText"><span class="nastNazev">${nazev}</span>${popis ? `<span class="nastPopis">${popis}</span>` : ''}</span>
+    <span class="prepinac${zap ? ' zap' : ''}" aria-hidden="true"></span>
+  </div>`;
+}
+function renderNastaveni(){
+  const el = document.getElementById('nastaveniContent');
+  if(!el) return;
+  const v = id => VZHLED_VOLBY.find(x => x.id === id) || { nazev: id, popis: '' };
+  const vz = (id, ikona) => nastRadek('vzhled:' + id, !!VZHLED[id], ikona, v(id).nazev, v(id).popis);
+  const umiOznameni = typeof Notification !== 'undefined';
+  let pismo = 1;
+  try { pismo = parseFloat(localStorage.getItem('bucovice_fontscale')) || 1; } catch(e){}
+  const velikosti = [[1, 'malé', '0.85em'], [1.2, 'větší', '1em'], [1.45, 'velké', '1.2em']];
+  setHtml(el, `
+    <div class="card nastSkupina"><h3>🔔 Upozornění a zvuky</h3>
+      ${nastRadek('oznameni', !!notifyEnabled, '🔔', 'Upozornění', umiOznameni
+        ? 'Dám vědět o nových balících, splněných úkolech, škodách na domech a vzkazech od hráčů.'
+        : 'Tenhle telefon nebo prohlížeč upozornění nepodporuje.')}
+      ${nastRadek('zvuky', !!soundEnabled, '🔊', 'Zvuky', 'Cinknutí při výdělku, nákupu a splněném úkolu.')}
+    </div>
+    <div class="card nastSkupina"><h3>🗺️ Mapa</h3>
+      ${vz('sipky', '🧭')}
+      ${nastRadek('navigace', !!navZap, '🔄', 'Mapa podle směru chůze', 'Jako v navigaci — co je před tebou, je nahoře. Stejné jako tlačítko s kompasem na mapě.')}
+      ${vz('pudorysy', '🏘️')}
+      ${vz('denNoc', '🌙')}
+      ${vz('pocasi', '🌦️')}
+    </div>
+    <div class="card nastSkupina"><h3>✨ Vzhled</h3>
+      ${vz('nebe', '🌇')}
+      ${vz('sezony', '🎃')}
+      <div class="nastRadek nastBezPrepinace">
+        <span class="nastIkona">🔤</span>
+        <span class="nastText"><span class="nastNazev">Velikost písma</span></span>
+      </div>
+      <div class="row" style="gap:6px;margin-top:2px;">
+        ${velikosti.map(([k, n, f]) => `<button class="${Math.abs(pismo - k) < 0.01 ? '' : 'secondary'}" style="flex:1;min-height:38px;" onclick="setFontScale(${k});renderNastaveni();">A <span style="font-size:${f}">${n}</span></button>`).join('')}
+      </div>
+    </div>
+    <p class="fPozn" style="text-align:center;margin:6px 0 2px;">Nastavení platí jen pro tenhle telefon. Na slabším telefonu může vypnutí efektů hru zrychlit.</p>
+    <div class="row"><button class="secondary" onclick="closeSheet();startTutorial();">▶ Znovu spustit úvodní návod</button></div>`);
+}
+async function nastavPrepni(klic){
+  if(klic.startsWith('vzhled:')){ prepniVzhled(klic.slice(7)); return; }   // překreslí i tuhle stránku
+  if(klic === 'zvuky'){ toggleSound(); }
+  else if(klic === 'oznameni'){
+    if(notifyEnabled) disableNotifications();
+    else await enableNotifications();
+  }
+  else if(klic === 'navigace'){ await navNastav(!navZap); }
+  safeCall(() => renderNastaveni());
+}
+
 // Uplatní uložené nastavení vzhledu na všechno, co už je na obrazovce.
 function uplatniVzhled(){
   safeCall(() => prekresliVrstvy(true));
@@ -12584,7 +12663,7 @@ function prepniVzhled(id){
   safeCall(() => renderPudorysy(true));
   safeCall(() => kresliNebe(true));
   safeCall(() => aktualizujSipky());
-  safeCall(() => renderGuide());
+  safeCall(() => renderNastaveni());
 }
 
 // ===== DENNÍ DOBA NAD MAPOU =====
@@ -12876,7 +12955,7 @@ async function navNastav(zap, tise){
     if(!tise) showToast('🧭 Sever je zase nahoře');
   }
 }
-function prepniNavigaci(){ navNastav(!navZap); }
+function prepniNavigaci(){ navNastav(!navZap).then(() => safeCall(() => renderNastaveni())); }
 
 // ===== ŠIPKY NA POSUN MAPY =====
 // Klepnutí posune mapu o třetinu obrazovky, podržení posouvá plynule (zrychluje).
@@ -13417,7 +13496,7 @@ function nebeBlesky(bourka){
 // Admin: celý den v panelu za 30 vteřin.
 function testNebeDen(){
   closeSheet();
-  if(!VZHLED.nebe){ showToast('Obloha v panelu je vypnutá v Nastavení vzhledu'); return; }
+  if(!VZHLED.nebe){ showToast('Obloha v panelu je vypnutá ve Víc → Nastavení'); return; }
   NEBE_ANIM = { od: Date.now(), delka: 30000 };
   showToast('🌗 Celý den v horním panelu za 30 vteřin');
   const krok = () => {
@@ -17904,7 +17983,7 @@ function renderStatDetail(which){
     html += `<div class="card"><h3>📅 Den ${clock.day}</h3>
       <p>Do půlnoci zbývá <b>${hrsLeft} h ${minLeft} min</b>.</p>
       <p style="font-size:0.9em;">${denniDoba().nazev === 'den' ? '☀️ Je den' : '🌙 Denní doba: ' + denniDoba().nazev}${
-        VZHLED.denNoc ? '' : ' <span style="color:var(--orange)">(ztmavování mapy máš vypnuté v Průvodci → Nastavení)</span>'}</p>
+        VZHLED.denNoc ? '' : ' <span style="color:var(--orange)">(ztmavování mapy máš vypnuté ve Víc → Nastavení)</span>'}</p>
       <p style="font-size:0.8em;color:var(--muted)">Hraješ verzi <b>${APP_VERSION}</b>${
         VZHLED.denNoc ? '' : ' · ztmavování mapy vypnuté'} — podle tohohle řádku poznáš, jestli máš nejnovější hru.</p>
       <p style="font-size:0.9em;color:var(--muted)">Herní den je skutečný kalendářní den — čas v liště sedí s hodinami na telefonu.</p>
@@ -18380,6 +18459,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.18', datum:'2026-10-10', body:[
+    ['novinka','⚙️ V menu Víc je nová dlaždice Nastavení — všechno, co jde zapnout a vypnout, na jednom místě: upozornění, zvuky, šipky, mapa podle směru chůze, půdorysy, efekty počasí a denní doby, obloha v panelu, sezónní ozdoby a velikost písma. Dřív to bylo schované v Průvodci.'],
+  ]},
   { verze:'21.17', datum:'2026-10-10', body:[
     ['oprava','⚙️ Vypnuté šipky (a další volby v Nastavení vzhledu, třeba půdorysy budov) zůstanou po spuštění appky opravdu vypnuté. Dřív se při startu ukázaly a zmizely až po zapnutí a vypnutí.'],
   ]},
@@ -19320,23 +19402,12 @@ function renderFinance(){
 
 function renderGuide(){
   const el = document.getElementById('guideContent');
-  let html = `<div class="card"><h3>🔤 Velikost písma</h3>
-    <p>Zvětši si text, aby se ti dobře četl.</p>
-    <div class="row">
-      <button class="secondary" onclick="setFontScale(1)">A <span style="font-size:0.8em">malé</span></button>
-      <button class="secondary" onclick="setFontScale(1.2)">A <span style="font-size:1em">větší</span></button>
-      <button class="secondary" onclick="setFontScale(1.45)">A <span style="font-size:1.2em">velké</span></button>
-    </div>
-    <div class="row"><button class="secondary" onclick="closeSheet();startTutorial();">▶ Znovu spustit úvodní návod</button></div>
-    <div class="row"><button class="secondary" onclick="toggleSound();renderGuide();">${soundEnabled?'🔊 Zvuky: zapnuté':'🔇 Zvuky: vypnuté'}</button></div>
-    <p style="margin-top:10px;"><b>Efekty nad mapou</b></p>
-    <p style="font-size:0.86em;color:var(--muted);margin:0 0 6px;">Na starším telefonu se bez nich hra může chovat svižněji. Nastavení platí jen pro tohle zařízení.</p>
-    ${VZHLED_VOLBY.map(v => `<div class="row" style="margin:4px 0;">
-      <button class="secondary" style="text-align:left;" onclick="prepniVzhled('${v.id}')">
-        ${VZHLED[v.id] ? '✅' : '⬜'} ${v.nazev}
-        <span style="display:block;font-size:0.8em;color:var(--muted);font-weight:400;">${v.popis}</span>
-      </button></div>`).join('')}
-  </div>`;
+  // Nastavení (písmo, zvuky, efekty) se přestěhovalo do vlastní dlaždice ⚙️ Nastavení v menu Víc.
+  let html = `<div class="card" style="display:flex;align-items:center;gap:10px;">
+    <span style="font-size:1.6em;">⚙️</span>
+    <span style="flex:1;font-size:0.92em;">Zvuky, upozornění, šipky, efekty na mapě a velikost písma najdeš v <b>Nastavení</b>.</span>
+    <button class="secondary" style="flex:none;" onclick="openSheet('nastaveni')">Otevřít</button></div>
+    <div class="row"><button class="secondary" onclick="closeSheet();startTutorial();">▶ Znovu spustit úvodní návod</button></div>`;
   html += `<p style="font-size:0.92em;color:var(--muted);margin-bottom:8px;">Vysvětlení všech peněžních věcí ve hře — jednoduše, ať víš přesně, co se s tvými penězi děje.</p>`;
 
   html += guideSection('💰','Jak vydělat peníze', `
@@ -21823,7 +21894,7 @@ function tryAutoLogin(){
 // ===== BOČNÍ LIŠTA + SPODNÍ PANEL (bottom sheet) =====
 const SHEET_TITLES = {
   selected:'Vybraný dům', mine:'Moje nemovitosti',
-  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy', zmeny:'🆕 Co je nového', vic:'Všechno ve hře'
+  jobs:'Zaměstnání', businesses:'Investice', market:'Tržiště nemovitostí', bank:'Banka', leaderboard:'Žebříček hráčů', profile:'Můj profil', news:'Městské noviny', chat:'Chat', finance:'Finanční přehled', guide:'Jak to funguje', nastaveni:'⚙️ Nastavení', statdetail:'Detail', admin:'🔧 Admin panel', daily:'🎯 Denní výzvy', zmeny:'🆕 Co je nového', vic:'Všechno ve hře'
 };
 
 function openSheet(tabName){
@@ -21866,6 +21937,7 @@ function openSheet(tabName){
   if(tabName === 'chat') renderChat(true);   // při otevření ukázat nejnovější
   if(tabName === 'finance') renderFinance();
   if(tabName === 'guide') renderGuide();
+  if(tabName === 'nastaveni') renderNastaveni();
   if(tabName === 'admin') renderAdmin();
   if(tabName === 'daily') renderDaily();
   if(tabName === 'vic') renderVic();
@@ -21893,14 +21965,16 @@ const VIC_SKUPINY = [
     ['leaderboard','🏆', 'Žebříček',  'jmění, ulice, sezóna'],
     ['news',       '📰', 'Noviny',    'co se děje'],
     ['zmeny',      '🆕', 'Co je nového', 'změny ve hře'],
-    ['guide',      '📖', 'Průvodce',  'jak to funguje'],
-    ['profile',    '👤', 'Můj profil', 'avatar, PIN, barva'] ]}
+    ['guide',      '📖', 'Průvodce',  'jak to funguje'] ]},
+  { nazev:'Ty a appka', polozky:[
+    ['profile',    '👤', 'Můj profil', 'avatar, PIN, barva'],
+    ['nastaveni',  '⚙️', 'Nastavení', 'zvuky, mapa, vzhled'] ]}
 ];
 function renderVic(){
   const el = document.getElementById('vicContent');
   if(!el) return;
   const skupiny = VIC_SKUPINY.map(sk => ({ nazev: sk.nazev, polozky: sk.polozky.slice() }));
-  if(isAdmin) skupiny[1].polozky.push(['admin', '🔧', 'Admin', 'správa hry']);
+  if(isAdmin) skupiny[skupiny.length - 1].polozky.push(['admin', '🔧', 'Admin', 'správa hry']);
   const nove = maNoveZmeny();
   setHtml(el, skupiny.map(sk => `<div class="vicSkupina">${sk.nazev}</div><div class="vicMrizka">` +
     sk.polozky.map(([tab, ikona, nazev, popis]) => `<button class="vicPolozka" onclick="otevriZVic('${tab}')">
