@@ -1586,8 +1586,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.18';
-const APP_BUILD = '10.10.2026 20:15';
+const APP_VERSION = '21.19';
+const APP_BUILD = '10.10.2026 20:45';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -14187,6 +14187,7 @@ function renderSelected(id){
         Hodnota domu se dělí mezi ${p.units.length} byty, takže na byt vychází málo. Malé byty mají nájem trochu nad hodnotou domu (nejvýš o ${Math.round((NAJEM_STROP_DOMU-1)*100)} %) — na byt je to míň než u domu s jedním bytem, ale celý dům vynese víc.</p>` : ''}
       <p style="font-size:0.92em;color:var(--muted)">Odhadované tržní nájemné v této lokalitě: <b>${rentEstimateRange(p)}</b>/byt/den (přesnou cenu nikdo nezná — musíš odhadnout). Vyšší nájem = víc peněz za obsazený byt, ale menší šance, že bude obsazený.</p>
       ${!iDecide ? '<p style="font-size:0.92em;color:var(--muted)">Nájem a opravy nastavuje jen správce domu.</p>' : ''}
+      ${safeCall(() => stavBytuSouhrnHtml(p, iDecide, near)) || ''}
     </div>`;
 
     // --- Renovační projekty (větší investice s návratností) ---
@@ -14215,11 +14216,6 @@ function renderSelected(id){
       html += `</div>`;
     }
 
-    // Hromadná oprava — hráčka opravovala dům po bytu a každý zvlášť potvrzovala.
-    if(iDecide){
-      const ho = hromadnaOprava(p);
-      if(ho.pocet >= 2) html += `<div class="row" style="margin:6px 0;"><button class="gold" ${near?'':'disabled'} onclick="repairAllUnits('${p.id}')">🔧 Opravit všech ${ho.pocet} bytů za ${ho.cena.toLocaleString('cs-CZ')} Kč</button></div>`;
-    }
     p.units.forEach((u, idx) => {
       const occ = (u.condition>0 && (u.tenant||u.npc)) ? 1 : 0;   // buď někdo bydlí, nebo ne
       const occPct = Math.round(occ*100);
@@ -18459,6 +18455,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.19', datum:'2026-10-10', body:[
+    ['zmena','🔧 Hromadná oprava bytů je teď hned nahoře v detailu domu, v kartě Pronájem — se souhrnem, jak na tom byty jsou (průměrný stav a kolik jich potřebuje opravu). Ukáže se už od jednoho bytu. Dřív bylo tlačítko schované pod renovačními projekty.'],
+  ]},
   { verze:'21.18', datum:'2026-10-10', body:[
     ['novinka','⚙️ V menu Víc je nová dlaždice Nastavení — všechno, co jde zapnout a vypnout, na jednom místě: upozornění, zvuky, šipky, mapa podle směru chůze, půdorysy, efekty počasí a denní doby, obloha v panelu, sezónní ozdoby a velikost písma. Dřív to bylo schované v Průvodci.'],
   ]},
@@ -21052,6 +21051,27 @@ async function installUpgrade(id, key){
   showAlert(`${up.icon} ${up.name} — hotovo. Investice se ti postupně vrátí.`);
 }
 
+// Souhrn stavu bytů s hromadnou opravou — nahoře v kartě Pronájem, ať se nemusí hledat.
+// (Dřív bylo tlačítko až pod renovačními projekty a jen od dvou bytů — hráčka ho nenašla.)
+function stavBytuSouhrnHtml(p, iDecide, near){
+  const byty = asArray(p.units).filter(Boolean);
+  if(!byty.length) return '';
+  const prumer = byty.reduce((a, u) => a + Math.max(0, Math.min(100, u.condition || 0)), 0) / byty.length;
+  const ho = hromadnaOprava(p);
+  const barva = prumer < 35 ? 'var(--danger)' : (prumer < 60 ? 'var(--orange, #f59e0b)' : 'var(--accent)');
+  let h = `<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+    <p style="margin:0 0 4px;font-size:0.92em;">🔧 Stav bytů: průměr <b style="color:${barva}">${Math.round(prumer)} %</b>${
+      ho.pocet ? ` · opravu potřebuje <b>${ho.pocet}</b> ${sklonuj(ho.pocet, 'byt', 'byty', 'bytů')}` : ' · všechny v pořádku ✅'}</p>
+    <div class="condBar"><div class="condBarFill" style="width:${prumer}%;background:${barva}"></div></div>`;
+  if(iDecide && ho.pocet){
+    h += `<div class="row" style="margin-top:8px;"><button class="gold" ${near ? '' : 'disabled'} onclick="repairAllUnits('${p.id}')">🔧 ${textOpravy(ho.pocet)} na 100 % za ${ho.cena.toLocaleString('cs-CZ')} Kč</button></div>`;
+    if(!near) h += `<p style="font-size:0.82em;color:var(--muted);margin:4px 0 0;">Opravit jde, jen když stojíš u domu (do ${INTERACTION_RADIUS} m).</p>`;
+  }
+  return h + `</div>`;
+}
+function textOpravy(n){
+  return n === 1 ? 'Opravit byt' : n === 2 ? 'Opravit oba byty' : n < 5 ? `Opravit všechny ${n} byty` : `Opravit všech ${n} bytů`;
+}
 function hromadnaOprava(p){
   const byty = asArray(p.units).filter(u => u && 100 - (u.condition || 0) >= 1);
   const body = byty.reduce((a, u) => a + (100 - (u.condition || 0)), 0);
@@ -21064,7 +21084,7 @@ async function repairAllUnits(id){
   if(!iAmDecider(p)){ showAlert('Opravy hradí a řídí jen největší podílník.'); return; }
   const ho = hromadnaOprava(p);
   if(!ho.pocet){ showToast('Všechny byty jsou v pořádku.'); return; }
-  if(!(await showConfirm(`Opravit všech ${ho.pocet} ${sklonuj(ho.pocet, 'byt', 'byty', 'bytů')} v domě ${domKratce(p)} na 100 %?\n\nCelkem ${ho.cena.toLocaleString('cs-CZ')} Kč (${Math.round(ho.body)} bodů stavu).`))) return;
+  if(!(await showConfirm(`${textOpravy(ho.pocet)} v domě ${domKratce(p)} na 100 %?\n\nCelkem ${ho.cena.toLocaleString('cs-CZ')} Kč (${Math.round(ho.body)} bodů stavu).`))) return;
   const me = world.users[currentUser.name];
   // Ceny se mohly změnit, zatímco byl otevřený dialog — přepočítat.
   const znovu = hromadnaOprava(p);
