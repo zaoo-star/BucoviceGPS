@@ -1586,8 +1586,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.20';
-const APP_BUILD = '11.10.2026 11:30';
+const APP_VERSION = '21.22';
+const APP_BUILD = '11.10.2026 23:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -1763,16 +1763,27 @@ function hasUpgrade(p, key){ return !!(p.upgrades && p.upgrades[key]); }
 // sahá ke dvěma stovkám, takže do dražších domů nemohl nikdo — i když hráč udělal všechna
 // vylepšení, která zájemci požadovali. Hráči to hlásili jako „mají požadavky, i když je
 // na bytě splním" (Jerry).
+// Jmen bylo dřív jen 38 a každé smělo ve městě bydlet jednou — jakmile se zaplnilo 38 bytů,
+// nikdo další se nenastěhoval (Eva: „dva dny žádný zájemce"). Teď je jmen přes 200
+// a když by i tak došla, smí se opakovat (viz jmenoNajemnika).
 const NPC_TENANT_TYPES = [
-  {avatar:'👵', ochota:0.95, minCondition:40, needs:[],                    names:['Paní Nováková','Paní Svobodová','Paní Horáková','Paní Marková','Paní Kučerová']},
-  {avatar:'🎓', ochota:0.80, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam']},
-  {avatar:'👪', ochota:1.10, minCondition:70, needs:['insulation'],        names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových']},
-  {avatar:'💼', ochota:1.25, minCondition:75, needs:['insulation','ac'],   names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban']},
-  {avatar:'👴', ochota:0.85, minCondition:50, needs:['insulation'],        names:['Důchodce Karel','Důchodkyně Marie','Pan Jaroslav','Paní Věra','Pan Bohumil']},
-  {avatar:'💑', ochota:1.05, minCondition:60, needs:['renovation'],        names:['Novomanželé Malí','Mladý pár Novákovi','Snoubenci Veselí','Pár Dvořákovi']},
-  {avatar:'💻', ochota:1.20, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza']},
-  {avatar:'🎨', ochota:1.00, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela']},
+  {avatar:'👵', ochota:0.95, minCondition:40, needs:[],                    names:['Paní Nováková','Paní Svobodová','Paní Horáková','Paní Marková','Paní Kučerová','Paní Dvořáková','Paní Černá','Paní Veselá','Paní Krejčí','Paní Fialová','Paní Zemanová','Paní Kolářová','Paní Navrátilová','Paní Čermáková','Paní Urbanová','Paní Blažková','Paní Kratochvílová','Paní Šťastná','Paní Holubová','Paní Pospíšilová','Paní Benešová','Paní Říhová','Paní Sýkorová','Paní Vlčková','Paní Kopecká','Paní Machová']},
+  {avatar:'🎓', ochota:0.80, minCondition:20, needs:[],                    names:['Student Tomáš','Studentka Petra','Student Jakub','Studentka Klára','Student Adam','Student Filip','Studentka Anna','Student Matěj','Studentka Eliška','Student Vojtěch','Studentka Natálie','Student Ondřej','Studentka Kristýna','Student Lukáš','Studentka Barbora','Student David','Studentka Veronika','Student Šimon','Studentka Adéla','Student Marek','Studentka Tereza','Student Daniel','Studentka Lucie','Student Patrik','Studentka Simona']},
+  {avatar:'👪', ochota:1.10, minCondition:70, needs:['insulation'],        names:['Rodina Dvořákových','Rodina Novotných','Rodina Černých','Rodina Procházkových','Rodina Kučerových','Rodina Veselých','Rodina Horákových','Rodina Němcových','Rodina Pokorných','Rodina Marešových','Rodina Pospíšilových','Rodina Hájkových','Rodina Jelínkových','Rodina Králových','Rodina Růžičkových','Rodina Benešových','Rodina Fialových','Rodina Sedláčkových','Rodina Doležalových','Rodina Zemanových','Rodina Kolářových','Rodina Navrátilových','Rodina Čermákových','Rodina Vaňkových','Rodina Bartošových']},
+  {avatar:'💼', ochota:1.25, minCondition:75, needs:['insulation','ac'],   names:['Ing. Svoboda','Ing. Veselá','Ing. Beneš','Dr. Pokorná','Ing. Urban','Ing. Kříž','Mgr. Hrubá','Ing. Moravec','JUDr. Šimková','Ing. Kubát','MUDr. Konečná','Ing. Vacek','Mgr. Tichý','Ing. Bartáková','Dr. Pešek','Ing. Hron','Mgr. Lukášová','Ing. Šindelář','MUDr. Hanák','Ing. Matoušková','JUDr. Stejskal','Ing. Vondráček','Mgr. Řezníčková','Ing. Kadlec','Dr. Šafránková']},
+  {avatar:'👴', ochota:0.85, minCondition:50, needs:['insulation'],        names:['Důchodce Karel','Důchodkyně Marie','Pan Jaroslav','Paní Věra','Pan Bohumil','Pan Miroslav','Paní Jarmila','Pan Zdeněk','Paní Libuše','Pan Ladislav','Paní Zdenka','Pan Vladimír','Paní Božena','Pan Josef','Paní Hana','Pan Stanislav','Paní Dagmar','Pan Oldřich','Paní Jiřina','Pan František','Paní Milada','Pan Antonín','Paní Vlasta','Pan Václav','Paní Ludmila']},
+  {avatar:'💑', ochota:1.05, minCondition:60, needs:['renovation'],        names:['Novomanželé Malí','Mladý pár Novákovi','Snoubenci Veselí','Pár Dvořákovi','Novomanželé Kratochvílovi','Mladý pár Sýkorovi','Snoubenci Holubovi','Pár Vlčkovi','Novomanželé Kopečtí','Mladý pár Machovi','Snoubenci Říhovi','Pár Šťastní','Novomanželé Blažkovi','Mladý pár Urbanovi','Snoubenci Fialovi','Pár Krejčí','Novomanželé Zemanovi','Mladý pár Kolářovi','Snoubenci Navrátilovi','Pár Čermákovi','Novomanželé Pospíšilovi','Mladý pár Benešovi','Snoubenci Hájkovi','Pár Jelínkovi']},
+  {avatar:'💻', ochota:1.20, minCondition:65, needs:['ac'],                names:['Programátor Petr','Programátorka Lucie','Grafik Martin','Analytik David','IT-ařka Tereza','Programátor Jan','Designérka Markéta','Tester Roman','Analytička Pavla','Programátor Michal','Grafička Ivana','Správce sítě Libor','Programátorka Jana','Vývojář Radek','UX designérka Monika','Programátor Aleš','Datová analytička Iva','Vývojář Pavel','Grafik Robert','Programátorka Zuzana','Tester Jiří','Vývojářka Klára','Analytik Milan','Programátor Tomáš','Grafička Šárka']},
+  {avatar:'🎨', ochota:1.00, minCondition:55, needs:['renovation'],        names:['Umělkyně Klára','Malíř Vojtěch','Fotografka Nina','Hudebník Ondřej','Sochařka Ela','Spisovatel Karel','Herečka Dana','Keramička Jitka','Houslista Viktor','Ilustrátorka Sára','Fotograf Jakub','Tanečnice Lenka','Malířka Alžběta','Kytarista Libor','Básnířka Irena','Zpěvák Dominik','Scénografka Hedvika','Truhlář Bohdan','Šperkařka Romana','Hudebnice Kamila','Grafik Lubomír','Restaurátorka Věra','Klavírista Igor','Výtvarnice Olga','Režisér Hynek']},
 ];
+// Jméno pro nového nájemníka daného typu. Nejdřív ta, která ve městě ještě nikdo nemá;
+// když by všechna došla, vezme se libovolné (dva lidé se stejným jménem nevadí — hlavně
+// ať se do bytu někdo nastěhuje). `nahoda` je číslo 0–1 (deterministické u tryFill).
+function jmenoNajemnika(t, obsazena, nahoda){
+  const volna = t.names.filter(n => !obsazena.has(n));
+  const z = volna.length ? volna : t.names;
+  return z[Math.floor((nahoda || 0) * z.length) % z.length];
+}
 
 // Kolik zájemce v TOMHLE domě nejvíc zaplatí. Staré uložené profily měly `maxRent`
 // v korunách — ty bereme jako dřív, ať se nikomu nezmění nájemník pod rukama.
@@ -1815,9 +1826,12 @@ function refreshNpcTenants(force){
     const ti = Math.floor(Math.random()*types.length);
     const t = types[ti];
     // vybrat z typu jméno, které ještě není použité
+    // Bez opakování v rámci jedné nabídky; když ve městě došla volná jména, smí se opakovat.
     const free = t.names.filter(n => !usedNames.has(n));
-    if(!free.length){ types.splice(ti,1); continue; }   // z tohoto typu došla jména
-    const name = free[Math.floor(Math.random()*free.length)];
+    const vNabidce = new Set(pick.map(x => x.name));
+    const name = free.length ? free[Math.floor(Math.random()*free.length)]
+      : jmenoNajemnika(t, vNabidce, Math.random());
+    if(vNabidce.has(name)){ types.splice(ti,1); continue; }
     usedNames.add(name);
     pick.push({ id:'npc_'+now+'_'+pick.length, name, avatar:t.avatar, ochota:t.ochota, minCondition:t.minCondition, needs:t.needs });
   }
@@ -6775,7 +6789,10 @@ function migrateWorld(){
       if(!world.jobs || typeof world.jobs !== 'object' || Array.isArray(world.jobs)) world.jobs = {};
       if(!world.listings || typeof world.listings !== 'object' || Array.isArray(world.listings)) world.listings = {};
       safeCall(() => ocistiSvet());
-      safeCall(() => prizpusobNajmyStropu());
+      // prizpusobNajmyStropu() byla JEDNORÁZOVÁ úprava z verze 17.5, ale běžela při každém
+      // sloučení světa (každých pár vteřin) — a vracela každý nájem nad 1,25× férovky zpátky
+      // na férovou cenu, i ten, který si hráč právě nastavil (Eva: „ceny jsou zase zpět").
+      // Svou práci udělala dávno, proto se už nevolá.
       const fresh = generateHouses();
       Object.keys(fresh).forEach(id => {
         if(!world.parcels[id]){
@@ -6927,7 +6944,7 @@ function migrateWorld(){
         if(p.ownerMods && (typeof p.ownerMods !== 'object' || Array.isArray(p.ownerMods))) delete p.ownerMods;
         // Srovnat gentrifikaci, která se u starších světů stihla vyšplhat do nesmyslných čísel.
         p.gentrifyMult = gentrify(p);
-        if(!isFinite(p.basePrice) || p.basePrice <= 0) p.basePrice = (fresh[id] && fresh[id].basePrice) || 1000;
+        if(!isFinite(p.basePrice) || p.basePrice <= 0) p.basePrice = (fresh[p.id] && fresh[p.id].basePrice) || 1000;   // dřív `fresh[id]` → id neexistovalo a načtení spadlo
         if(p.units) p.units = asArray(p.units);
         // Doplnit stálá ID bytům ze starších verzí. Odvozená z ID domu a pořadí, aby
         // vyšla STEJNĚ na všech zařízeních — jinak by si každý telefon vyrobil vlastní
@@ -8474,12 +8491,15 @@ function plnyDumMult(p){
   return plno ? 1 + PLNY_DUM_BONUS : 1;
 }
 
+// Kolik nájemník-NPC v tomhle domě nejvýš zaplatí — v celých korunách. Jediné místo,
+// ze kterého to berou výpočty, výhledy i texty, ať se nikde nerozchází.
+function hraniceNajemnika(p){ return Math.round(fairRentForHouse(p) * NAJEMNIK_TOLERANCE); }
 function npcMaxNajem(p, u){
   if(!u || !u.npc) return Infinity;
   // V CELÝCH korunách, zaokrouhleno stejně, jak to hra všude ukazuje. Dřív se porovnávalo
   // s haléři (třeba 43,75), ale ukazovalo zaokrouhleně (44) — hráčka nastavila „nejvýš 44"
   // a hra hlásila „44 Kč je moc, rozdíl 0 Kč" a nájemník se začal stěhovat (Eva).
-  return Math.round(fairRentForHouse(p) * NAJEMNIK_TOLERANCE);
+  return hraniceNajemnika(p);
 }
 
 // Kolik majiteli z bytu DOOPRAVDY přijde. Nájemník víc, než unese, nezaplatí — rozdíl
@@ -8764,9 +8784,7 @@ function tryFillVacantUnits(){
 
       const typ = NPC_TENANT_TYPES[Math.abs(seed) % NPC_TENANT_TYPES.length];
       const obsazena = occupiedTenantNames();
-      const volnaJmena = typ.names.filter(n => !obsazena.has(n));
-      if(!volnaJmena.length) return;
-      const jmeno = volnaJmena[Math.abs(seed >> 3) % volnaJmena.length];
+      const jmeno = jmenoNajemnika(typ, obsazena, (Math.abs(seed >> 3) % 1000) / 1000);
       un.npc = { name: jmeno, avatar: typ.avatar, minCondition: typ.minCondition };
       stampUnit(un);
       npcZapamatujNajem(p, un);
@@ -12328,7 +12346,7 @@ function iconFor(p){
     stav: !owned ? 'volny' : (allBroken ? 'rozbity' : (safeCall(() => stavDomuIkona(p)) || 'normal')),
     moje, ulice,
     provoz: provoz ? (PROVOZ_TYPY[p.provoz.typ] || {}).emoji : '',
-    upg: ikonyVylepseni(p)
+    upg: vynosRezim ? '' : ikonyVylepseni(p)   // na mapě výnosů je nad střechou procento — ikony by ho zakryly (Eva)
   });
   // Kotva dole uprostřed — dům „stojí" na svém místě na mapě, místo aby se kolem něj vznášel.
   return L.divIcon({ html:`<div class="${cls}" style="width:${d.w}px;height:${d.h}px;">${d.html}${cedulka}${safeCall(() => dekorDomu(p, owned)) || ''}</div>`,
@@ -14011,7 +14029,7 @@ function renderSelected(id){
     const jednotek = (p.useType === 'rental' && asArray(p.units).length) ? asArray(p.units).filter(un => un && un.condition > 0).length
                                                                          : Math.max(1, p.levels || 1);
     const ocekavany = (p.useType === 'rental' && asArray(p.units).length)
-      ? asArray(p.units).reduce((s2, un) => s2 + ((un && un.condition > 0) ? Math.min(un.rentPrice || 0, ferBytu * NAJEMNIK_TOLERANCE) : 0), 0)
+      ? asArray(p.units).reduce((s2, un) => s2 + ((un && un.condition > 0) ? Math.min(un.rentPrice || 0, hraniceNajemnika(p)) : 0), 0)
       : najemDenne;
     const bonusPlno = (jednotek >= 2 ? 1 + PLNY_DUM_BONUS : 1) * ulicniMult(p);
     const udrzbaDen = jednotek * RENT_DECAY * cenaOpravyBod() * (hasUpgrade(p, 'renovation') ? RENOVATION_DECAY_MULT : 1);
@@ -14277,8 +14295,8 @@ function renderSelected(id){
       else if(ratio <= 1.15) priceNote = '<span style="color:var(--accent)">kolem tržní ceny — dobrá rovnováha</span>';
       // Hranice se řídí tím, kolik nájemníci unesou (NAJEMNIK_TOLERANCE). Nad ní už vyšší
       // nájem nic nepřinese — nájemník rozdíl nezaplatí a byt se navíc obsazuje hůř.
-      else if(ratio <= NAJEMNIK_TOLERANCE) priceNote = '<span style="color:var(--gold)">nad trhem — nájemníci to ještě unesou, ale byt se obsadí pomaleji</span>';
-      else priceNote = `<span style="color:var(--danger)">víc, než nájemníci unesou (~${Math.round(fair * NAJEMNIK_TOLERANCE)} Kč) — rozdíl nezaplatí a budou se stěhovat pryč</span>`;
+      else if((u.rentPrice || 0) <= hraniceNajemnika(p)) priceNote = '<span style="color:var(--gold)">nad trhem — nájemníci to ještě unesou, ale byt se obsadí pomaleji</span>';
+      else priceNote = `<span style="color:var(--danger)">víc, než nájemníci unesou (~${hraniceNajemnika(p)} Kč) — rozdíl nezaplatí a budou se stěhovat pryč</span>`;
       html += `<div class="card">
         <h3>Byt ${idx+1}. patro <span class="badge" style="background:transparent;color:${occColor};border:1px solid ${occColor}">${occLabel}</span></h3>
         <p style="font-size:1em;">${occupantLine}</p>
@@ -14472,7 +14490,7 @@ function renderMine(){
     // cena, takže u přemrštěného nájmu výhled sliboval peníze, které nikdo nezaplatí.
     const najemPlne = p.useType === 'rental'
       ? byty.filter(u => u && !u.ownerOccupied && (u.condition||0) > 0)
-          .reduce((a, u) => a + (u.tenant ? (u.rentPrice || 0) : Math.min(u.rentPrice || 0, fairRentForHouse(p) * NAJEMNIK_TOLERANCE)), 0)
+          .reduce((a, u) => a + (u.tenant ? (u.rentPrice || 0) : Math.min(u.rentPrice || 0, hraniceNajemnika(p))), 0)
       : 0;
     const provoz = maProvoz(p);
     const provozCisty = provoz ? provozCistyVynos(p) : 0;     // potenciál s plnými zásobami
@@ -17446,7 +17464,7 @@ function adminAddLandmarkHere(){
     name, emoji, lat: playerPos.lat, lng: playerPos.lng, desc: ''
   });
   if(nameEl) nameEl.value = '';
-  addNews('event', `📍 Ve městě přibylo nové místo zájmu: ${name}.`, { lat, lng });
+  addNews('event', `📍 Ve městě přibylo nové místo zájmu: ${name}.`, { lat: playerPos.lat, lng: playerPos.lng });   // dřív nedefinované lat/lng → pád před uložením
   saveWorld(); renderAdmin(); renderLandmarkMarkers();
   showAlert(`Místo „${name}" přidáno na tvou aktuální polohu.`);
 }
@@ -18473,6 +18491,15 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.22', datum:'2026-10-11', body:[
+    ['oprava','🏠 Nájem přesně na hranici, kterou nájemník unese, už v detailu bytu nesvítí červeně „víc, než nájemníci unesou". A výhled příjmu z domu teď počítá se stejnou hranicí, jakou nájemník opravdu zaplatí.'],
+    ['oprava','🔧 Dvě skryté chyby, které mohly shodit hru: načtení světa s poškozenou cenou domu (telefon pak přestal přebírat změny od ostatních) a přidání místa zájmu v Admin panelu (místo se neuložilo).'],
+  ]},
+  { verze:'21.21', datum:'2026-10-11', body:[
+    ['oprava','🏠 Nastavené nájmy se už nevracejí zpátky. Stará jednorázová úprava nájmů z verze 17.5 omylem běžela pořád dokola a každý nájem nad 1,25× férové ceny (i ten přesně na hranici, co nájemník snese) vracela na férovou cenu.'],
+    ['oprava','📥 Do prázdných bytů se zase stěhují nájemníci. Ve hře bylo jen 38 jmen nájemníků a každé smělo ve městě bydlet jednou — když se zaplnilo 38 bytů, nikdo další nepřišel. Teď je jmen přes 200 a když dojdou, můžou se opakovat.'],
+    ['zmena','📈 Na mapě výnosů je nad domem jen procento výnosu — ikony vylepšení ho už nezakrývají.'],
+  ]},
   { verze:'21.20', datum:'2026-10-11', body:[
     ['oprava','🗺️ Když jsi měl zapnutou mapu podle směru chůze (🧭), po dalším spuštění appky mohla zůstat mapa prázdná — bez domů i podkladu, jen s efekty počasí. Mapa se teď přepočítá, jakmile je po přihlášení vidět.'],
   ]},
