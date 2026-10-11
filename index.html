@@ -1586,8 +1586,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.19';
-const APP_BUILD = '10.10.2026 20:45';
+const APP_VERSION = '21.20';
+const APP_BUILD = '11.10.2026 11:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -12857,6 +12857,16 @@ function navNapojMapu(){
     };
   }
   window.addEventListener('resize', () => { if(navZap) setTimeout(navRozmer, 60); });
+  // Přepočítat i tehdy, když se plocha s mapou objeví nebo změní velikost bez události
+  // resize (přihlášení, zavření panelu, otočení telefonu ve WebView).
+  if(window.ResizeObserver){
+    let posledni = '';
+    new ResizeObserver(() => {
+      const par = cont.parentNode; const k = par.clientWidth + 'x' + par.clientHeight;
+      if(k === posledni) return; posledni = k;
+      if(navZap) navRozmer(); else safeCall(() => map.invalidateSize({ animate:false }));
+    }).observe(cont.parentNode);
+  }
   try { if(localStorage.getItem('bp_navigace') === '1') navNastav(true, true); } catch(e){}
 }
 
@@ -12866,7 +12876,15 @@ function navRozmer(){
   if(!el || !map) return;
   const par = el.parentNode;
   if(navZap){
-    const W = par.clientWidth, H = par.clientHeight, D = Math.ceil(Math.hypot(W, H)) + 4;
+    const W = par.clientWidth, H = par.clientHeight;
+    // Mapa ještě není vidět (přihlašovací obrazovka, appka na pozadí) — rozměr 0 by z ní
+    // udělal čtvereček 4 × 4 px a po přihlášení zůstala prázdná (hlášení od Evy).
+    // Necháme normální velikost a přepočítáme, až bude mapa na obrazovce (ResizeObserver).
+    if(W < 50 || H < 50){
+      ['left', 'top', 'right', 'bottom', 'width', 'height'].forEach(k => { el.style[k] = ''; });
+      return;
+    }
+    const D = Math.ceil(Math.hypot(W, H)) + 4;
     Object.assign(el.style, { left: ((W - D) / 2) + 'px', top: ((H - D) / 2) + 'px', right: 'auto', bottom: 'auto', width: D + 'px', height: D + 'px' });
   } else {
     ['left', 'top', 'right', 'bottom', 'width', 'height', 'transform'].forEach(k => { el.style[k] = ''; });
@@ -18455,6 +18473,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.20', datum:'2026-10-11', body:[
+    ['oprava','🗺️ Když jsi měl zapnutou mapu podle směru chůze (🧭), po dalším spuštění appky mohla zůstat mapa prázdná — bez domů i podkladu, jen s efekty počasí. Mapa se teď přepočítá, jakmile je po přihlášení vidět.'],
+  ]},
   { verze:'21.19', datum:'2026-10-10', body:[
     ['zmena','🔧 Hromadná oprava bytů je teď hned nahoře v detailu domu, v kartě Pronájem — se souhrnem, jak na tom byty jsou (průměrný stav a kolik jich potřebuje opravu). Ukáže se už od jednoho bytu. Dřív bylo tlačítko schované pod renovačními projekty.'],
   ]},
