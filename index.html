@@ -1611,8 +1611,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.24';
-const APP_BUILD = '12.10.2026 17:15';
+const APP_VERSION = '21.25';
+const APP_BUILD = '12.10.2026 17:45';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -1914,7 +1914,7 @@ async function vyhovPozadavku(houseId, unitIdx){
   if(akce === 'sleva'){
     if(!(await showConfirm(`Slevit ${kdo} z ${u.rentPrice} na ${z.cil} Kč/den?\n\n` +
         `Přijdeš o ${u.rentPrice - z.cil} Kč denně, ale ${POZADAVEK_VERNOST} dní se neodstěhuje, ani kdyby byl nájem vyšší.`))) return;
-    u.rentPrice = z.cil;
+    nastavNajem(u, z.cil);
   } else if(akce === 'zaplatit'){
     if((me.balance || 0) < z.cena){ showAlert(`Potřebuješ ${z.cena} Kč, máš ${Math.round(me.balance)} Kč.`); return; }
     if(!(await showConfirm(`Zaplatit ${z.cena} Kč a zjednat v domě pořádek?`))) return;
@@ -1925,7 +1925,7 @@ async function vyhovPozadavku(houseId, unitIdx){
     if(!(await showConfirm(`Vzít ${z.castka.toLocaleString('cs-CZ')} Kč dopředu za slevu ${z.sleva} Kč/den?\n\n` +
         `Peníze dostaneš hned, nájem klesne na ${u.rentPrice - z.sleva} Kč/den.`))) return;
     me.balance += z.castka;
-    u.rentPrice = Math.max(1, u.rentPrice - z.sleva);
+    nastavNajem(u, Math.max(1, u.rentPrice - z.sleva));
     zapisDoDeniku('rent', `${kdo} zaplatil ${z.dni} dní dopředu (${domKratce(p)})`, z.castka);
     z.hotovo = true;
   } else if(akce === 'odpustit'){
@@ -5460,10 +5460,17 @@ function mergeUnits(zalohaUnits, cloudUnits){
     if(!mujU) return cloudU;
     const vyhrava = (mujU.umod || 0) > (cloudU.umod || 0) ? mujU : cloudU;
     const vysledek = Object.assign({}, cloudU, {
-      rentPrice: vyhrava.rentPrice,
+      rentPrice: vyhrava.rentPrice,   // jen pro data bez razítka nájmu (viz níž)
       condition: Math.max(mujU.condition || 0, cloudU.condition || 0),   // jen pro data bez časového bodu (viz níž)
       umod: Math.max(mujU.umod || 0, cloudU.umod || 0)
     });
+    // Nájem: rozhoduje razítko skutečné změny nájmu (rentTs). Při shodě zůstává můj — změnu
+    // bez nového razítka udělala starší verze hry (srážení nájmů), a ta platit nemá.
+    const rtM = typeof mujU.rentTs === 'number' ? mujU.rentTs : 0, rtC = typeof cloudU.rentTs === 'number' ? cloudU.rentTs : 0;
+    if(rtM || rtC){
+      vysledek.rentPrice = rtM >= rtC ? mujU.rentPrice : cloudU.rentPrice;
+      vysledek.rentTs = Math.max(rtM, rtC);
+    }
     // Stav bytu: vyhraje NOVĚJŠÍ výchozí bod (oprava, škoda, změna obsazenosti). Při shodě
     // je výchozí bod stejný a stav se v příštím ticku dopočítá stejně na všech zařízeních.
     const tsM = typeof mujU.cTs === 'number' ? mujU.cTs : 0, tsC = typeof cloudU.cTs === 'number' ? cloudU.cTs : 0;
@@ -7769,6 +7776,7 @@ function saveWorld(){
   // Značka poslední aktivity hráče — při sloučení světů z více zařízení vyhraje NOVĚJŠÍ verze hráče.
   if(currentUser && world.users && world.users[currentUser.name]){
     world.users[currentUser.name].lastActive = Date.now();
+    world.users[currentUser.name].verze = APP_VERSION;   // admin pak vidí, kdo hraje starou verzi
   }
   // Verze světa: rostoucí číslo, aby šlo poznat, který stav je novější (proti přepsání postupu).
   world.rev = Math.max((world.rev || 0) + 1, Date.now());
@@ -8521,6 +8529,18 @@ function plnyDumMult(p){
   if(k_pronajmu.length < 2) return 1;
   const plno = k_pronajmu.every(u => (u.tenant || u.npc) && (u.condition || 0) > 0);
   return plno ? 1 + PLNY_DUM_BONUS : 1;
+}
+
+// ===== NÁJEM S VLASTNÍM RAZÍTKEM (21.25) =====
+// Starší verze hry (21.20 a dřív) na telefonech ostatních hráčů pořád stahují nájmy nad
+// 1,25× férovky zpátky na férovou cenu a změnu orazítkují jako nejnovější — při slučování
+// pak vyhrála i na telefonu majitele (Eva: „zvedla jsem nájmy a jsou zase dole").
+// Každá skutečná změna nájmu proto dostane `rentTs`, které staré verze neumí posunout,
+// a při slučování o nájmu rozhoduje jen ono.
+function nastavNajem(u, cena){
+  if(!u) return;
+  u.rentPrice = cena;
+  u.rentTs = noveRazitko();
 }
 
 // ===== STAV BYTU PODLE ČASU (21.23) =====
@@ -9799,7 +9819,7 @@ async function encounterNajemnik(enc, u){
   if(!ok){ showToast('Zájemce šel jinam.'); return; }
   cil.p.units[cil.idx].npc = { name: 'Nájemník z ulice', avatar: '🧑', minCondition: 35 };
   npcZapamatujNajem(cil.p, cil.p.units[cil.idx]);
-  cil.p.units[cil.idx].rentPrice = nabidka;
+  nastavNajem(cil.p.units[cil.idx], nabidka);
   stampUnit(cil.p.units[cil.idx]);
   stampHouse(cil.p);
   addNews('rental', `🔑 Do domu ${domKratce(cil.p)} se nastěhoval nový nájemník (${nabidka} Kč/den).`, cil.p.id);
@@ -17211,12 +17231,25 @@ function adminSyncKartaHtml(){
   let nalezy = [];
   try { nalezy = pripravProCloud(worldForCloud()).nalezy; } catch(e){ nalezy = ['kontrola spadla: ' + ((e && e.message) || e)]; }
   const ok = syncStav.ok ? `${Math.round((Date.now() - syncStav.ok) / 1000)} s` : '—';
+  // Kdo hraje jakou verzi (aktivní za poslední 3 dny). Staré verze můžou dělat starou chybu
+  // (srážení nájmů, rušení chátrání) i ostatním — tady je vidět, koho poprosit o aktualizaci.
+  const aktivni = Object.values(world.users || {}).filter(u => u && (Date.now() - (u.lastActive || 0)) < 3 * 86400000)
+    .sort((a, b) => (b.lastActive || 0) - (a.lastActive || 0));
+  const stari = aktivni.filter(u => !u.verze || novejsiVerze(APP_VERSION, u.verze));
+  const verzeHtml = `<p style="font-size:0.88em;margin:8px 0 2px;"><b>Verze hry u hráčů</b> (aktivní za 3 dny): ${
+    stari.length ? `<span style="color:var(--danger)">${stari.length} ${sklonuj(stari.length, 'hráč má', 'hráči mají', 'hráčů má')} starou verzi</span>` : '<span style="color:var(--accent)">všichni mají aktuální</span>'}</p>
+    <div style="font-size:0.82em;line-height:1.6;">${aktivni.map(u => {
+      const stara = !u.verze || novejsiVerze(APP_VERSION, u.verze);
+      return `<span style="display:inline-block;margin:0 8px 0 0;${stara ? 'color:var(--danger);font-weight:600;' : 'color:var(--muted);'}">${escapeHtml(u.name)} ${u.verze ? 'v' + escapeHtml(String(u.verze)) : '(stará, bez čísla)'}</span>`;
+    }).join('')}</div>
+    ${stari.length ? '<p class="fPozn" style="margin-top:4px;">Hráč se starou verzí ať appku úplně zavře (i z přehledu aplikací) a otevře znovu.</p>' : ''}`;
   return `<div class="card" style="border-left:3px solid ${syncStav.chyba || nalezy.length ? 'var(--danger)' : 'var(--accent)'};">
     <h3>🔄 Synchronizace</h3>
     <p style="font-size:0.88em;margin:2px 0;">Poslední úspěšný zápis: <b>${ok}</b> zpátky${syncStav.chyba ? ` · <span style="color:var(--danger)">poslední chyba: ${escapeHtml(syncStav.chyba)}</span>` : ''}</p>
     <p style="font-size:0.88em;margin:2px 0;">Kontrola dat proti pravidlům Firebase: ${nalezy.length
       ? `<b style="color:var(--danger)">${nalezy.length} ${sklonuj(nalezy.length, 'problém', 'problémy', 'problémů')}</b> (před odesláním se opraví)</p><ul style="font-size:0.82em;margin:4px 0 0 16px;padding:0;">${nalezy.slice(0, 8).map(n => `<li>${escapeHtml(n)}</li>`).join('')}</ul>`
       : '<b style="color:var(--accent)">v pořádku</b></p>'}
+    ${verzeHtml}
   </div>
   <div class="card">
     <h3>🛠️ Náprava po chybě v synchronizaci</h3>
@@ -18552,6 +18585,10 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.25', datum:'2026-10-12', body:[
+    ['oprava','🏠 Nastavený nájem už nesrazí telefon hráče se starší verzí hry. Starší verze pořád stahovaly nájmy nad 1,25× férové ceny zpátky a jejich změna při synchronizaci vyhrála i u majitele. Teď o nájmu rozhoduje jen skutečná změna majitelem.'],
+    ['info','Pro správce: v Adminu (karta Synchronizace) je vidět, kdo z hráčů hraje jakou verzi hry.'],
+  ]},
   { verze:'21.24', datum:'2026-10-12', body:[
     ['oprava','⌨️ Při nákupu podílu je v okénku přepínač Kč / % — procenta se zadávají klepnutím na „%", ne psaním znaku (ten na číselné klávesnici v telefonu není).'],
   ]},
@@ -20818,7 +20855,7 @@ async function zavritProvozovnuPrizemi(id){
   delete p.provoz;
   const byt = { uid: newUnitId(), rentPrice: 0, condition: 100 };
   p.units = [byt].concat(asArray(p.units));
-  byt.rentPrice = fairRentForHouse(p);
+  nastavNajem(byt, fairRentForHouse(p));
   stampUnit(byt); stampHouse(p);
   zapisDoDeniku('provoz', `Zavřel jsem provozovnu v přízemí domu ${domKratce(p)}`, null);
   saveWorld(); refreshAll();
@@ -21012,7 +21049,7 @@ async function startRental(id){
     if(isNaN(novyNajem) || novyNajem <= 0) return;
     if(novyNajem > maxRentForHouse(p)){ showAlert(`Nejvyšší povolený nájem je ${maxRentForHouse(p)} Kč/den.`); return; }
     p.useType = 'rental';
-    p.units.forEach(u => { if(u){ u.rentPrice = novyNajem; stampUnit(u); } });
+    p.units.forEach(u => { if(u){ nastavNajem(u, novyNajem); stampUnit(u); } });
     stampHouse(p);
     addNews('rental', `🏘️ ${currentUser.name} zase pronajímá dům ${domKratce(p)} (nájem ${novyNajem} Kč).`, p.id);
     saveWorld(); refreshAll();
@@ -21111,7 +21148,7 @@ async function setUnitRentPrice(id, idx){
     if(!ok) return;
   }
 
-  unit.rentPrice = rent;
+  nastavNajem(unit, rent);
   stampUnit(unit);
   stampHouse(p);
   safeCall(() => resPozadavky());   // sleva mohla splnit prosbu nájemníka — poděkuje hned, ne až zítra
@@ -21159,7 +21196,7 @@ async function installUpgrade(id, key){
   if(kZdrazeni.length && await showConfirm(`${up.icon} ${up.name} — hotovo.\n\nFérový nájem tu stoupl z ${ferovyPred} na ${ferovyPo} Kč/den. ` +
       `Zvednout nájem v ${kZdrazeni.length} ${sklonuj(kZdrazeni.length, 'bytě', 'bytech', 'bytech')} na ${ferovyPo} Kč? ` +
       `(+${(ferovyPo - ferovyPred) * kZdrazeni.length} Kč/den za dům)\n\nNájemníci to unesou — je to pořád férová cena.`)){
-    kZdrazeni.forEach(un => { un.rentPrice = ferovyPo; stampUnit(un); });
+    kZdrazeni.forEach(un => { nastavNajem(un, ferovyPo); stampUnit(un); });
     stampHouse(p);
     saveWorld(); refreshAll();
     showToast(`Nájem zvednut na ${ferovyPo} Kč/den`);
