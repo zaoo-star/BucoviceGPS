@@ -1611,8 +1611,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.25';
-const APP_BUILD = '12.10.2026 17:45';
+const APP_VERSION = '21.26';
+const APP_BUILD = '15.10.2026 10:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -2077,7 +2077,25 @@ function upgradePrinosZaklad(p, key){
   return { denne: 0, dni: null, popis: '' };
 }
 
-function houseUpgradeCost(p, key){ return Math.round(effectiveHousePrice(p) * HOUSE_UPGRADES[key].costRatio); }
+// Vylepšení zlevňuje i denní akce „Výprodej stavebnin" — dřív se sleva počítala jen
+// u oprav a projektů, u vylepšení ne (hlásila Eva). bezSlevy = běžná cena pro porovnání.
+function houseUpgradeCost(p, key, bezSlevy){
+  return Math.round(effectiveHousePrice(p) * HOUSE_UPGRADES[key].costRatio * (bezSlevy ? 1 : eventMult('repairMult')));
+}
+// Je dnes ve městě sleva na opravy a vylepšení?
+function slevaStavebnin(){ return eventMult('repairMult') < 1; }
+function slevaStavebninPct(){ return Math.round((1 - eventMult('repairMult')) * 100); }
+// Krátká cedulka do detailu domu, ať je sleva vidět i bez otevírání novin.
+function slevaStavebninHtml(){
+  if(!slevaStavebnin()) return '';
+  const bezne = Math.round(cenaOpravyBod()), dnes = Math.round(cenaOpravyBod() * eventMult('repairMult'));
+  return `<p style="margin:6px 0;padding:6px 8px;border-radius:8px;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.5);font-size:0.86em;">🏷️ <b>Výprodej stavebnin</b> — opravy a vylepšení jsou dnes o ${slevaStavebninPct()} % levnější. Oprava stojí <b>${dnes} Kč</b> za bod místo ${bezne} Kč.</p>`;
+}
+// Cena s přeškrtnutou běžnou cenou, když je sleva.
+function cenaSeSlevou(cena, bezna){
+  const t = cena.toLocaleString('cs-CZ') + ' Kč';
+  return (bezna > cena) ? `${t} <s style="opacity:0.65;font-weight:400">${bezna.toLocaleString('cs-CZ')} Kč</s>` : t;
+}
 // Solární bonus za celý dům/den (nezávisí na obsazenosti)
 function solarBonusForHouse(p){
   if(!hasUpgrade(p, 'solar')) return 0;
@@ -14227,8 +14245,8 @@ function renderSelected(id){
     // U domu, ve kterém sám bydlím, mají vylepšení jiný smysl než u pronájmu —
     // šetří na účtech místo toho, aby lákala nájemníky.
     const bydlimTu = p.useType === 'residence' || asArray(p.units).some(u => u && u.ownerOccupied);
-    html += `<div class="card"><h3>🛠️ Vylepšení domu</h3>
-      <p style="font-size:0.9em;color:var(--muted)">Jednorázová investice, která dům trvale zlepší.${bydlimTu ? ' V domě, kde bydlíš, ti sníží účty za energie.' : ' Vrátí se ti kolem 2-3 měsíců.'}</p>`;
+    html += `<div class="card"><h3>🛠️ Vylepšení domu${iDecide && slevaStavebnin() ? ` · 🏷️ dnes −${slevaStavebninPct()} %` : ''}</h3>
+      <p style="font-size:0.9em;color:var(--muted)">Jednorázová investice, která dům trvale zlepší.${bydlimTu ? ' V domě, kde bydlíš, ti sníží účty za energie.' : ' Vrátí se ti kolem 2-3 měsíců.'}</p>${slevaStavebninHtml()}`;
     upKeys.forEach(k => {
       const up = HOUSE_UPGRADES[k];
       const has = hasUpgrade(p, k);
@@ -14274,7 +14292,7 @@ function renderSelected(id){
             💡 U tohohle domu ${pr.popis} — dohromady <b>${des(pr.denne, 1)} Kč/den</b>${
             pr.dni ? `, takže se vrátí za <b>${pr.dni} dní</b>` : ''}.</p>`;
         })()}
-        ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
+        ${!has && iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="installUpgrade('${p.id}','${k}')">Nainstalovat za ${cenaSeSlevou(cost, houseUpgradeCost(p, k, true))}</button></div>` : ''}
       </div>`;
     });
     if(bydlimTu){
@@ -14303,7 +14321,7 @@ function renderSelected(id){
 
     // --- Renovační projekty (větší investice s návratností) ---
     if(iDecide || p.project){
-      html += `<div class="card"><h3>🏗️ Renovační projekty</h3>`;
+      html += `<div class="card"><h3>🏗️ Renovační projekty${iDecide && !p.project && slevaStavebnin() ? ` · 🏷️ dnes −${slevaStavebninPct()} %` : ''}</h3>`;
       if(p.project){
         const def = PROJECT_DEFS[p.project.key];
         const zbyva = Math.max(0, p.project.endDay - (world.day || 1));
@@ -14433,7 +14451,7 @@ function renderSelected(id){
         <div class="condBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':'var(--accent)'}"></div></div>
         ${iDecide ? `<div class="row">
           <button ${near?'':'disabled'} onclick="setUnitRentPrice('${p.id}',${idx})">Nastavit nájemné</button>
-          ${100 - u.condition >= OPRAVA_MIN ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit za ${Math.max(1, Math.round((100 - u.condition) * cenaOpravyBod() * eventMult('repairMult')))} Kč</button>` : ''}
+          ${100 - u.condition >= OPRAVA_MIN ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit za ${cenaSeSlevou(Math.max(1, Math.round((100 - u.condition) * cenaOpravyBod() * eventMult('repairMult'))), Math.max(1, Math.round((100 - u.condition) * cenaOpravyBod())))}</button>` : ''}
         </div>` : ''}
         ${iDecide && u.npc ? `<div class="row"><button class="danger" onclick="evictNpc('${p.id}',${idx})">Vystěhovat ${escapeHtml(u.npc.name)}</button></div>` : ''}
         ${iDecide && u.ownerOccupied ? `<div class="row"><button class="secondary" onclick="leaveOwnUnit('${p.id}',${idx})">📤 Vystěhovat se (byt se zase pronajme)</button></div>` : ''}
@@ -14507,7 +14525,7 @@ function renderSelected(id){
     <p style="margin:2px 0;">• <b style="color:var(--accent)">70–100 %</b> — v pořádku, bydlí se dobře<br>
        • <b style="color:var(--gold)">40–70 %</b> — začíná to být znát, náročnější nájemníci odejdou<br>
        • <b style="color:var(--danger)">pod 40 %</b> — kritické, byt se vylidňuje</p>
-    <p><b>Oprava</b> stojí ${Math.round(cenaOpravyBod())} Kč za každý chybějící bod. Vyplatí se opravovat průběžně — spravit z 90 % je levnější než nechat byt spadnout na 20 % a přijít mezitím o nájemné.</p>
+    <p><b>Oprava</b> stojí ${Math.round(cenaOpravyBod())} Kč za každý chybějící bod${slevaStavebnin() ? ` (dnes ve výprodeji stavebnin jen ${Math.round(cenaOpravyBod() * eventMult('repairMult'))} Kč)` : ''}. Vyplatí se opravovat průběžně — spravit z 90 % je levnější než nechat byt spadnout na 20 % a přijít mezitím o nájemné.</p>
   `);
 
   html += infoBox('Kolik stojí bydlení', `
@@ -14526,7 +14544,7 @@ function renderSelected(id){
     <p><b>Přepínání tam a zpět.</b> Za přestavbu na pronájem platíš <b>jen jednou</b>. Když se pak rozhodneš, že v domě chceš bydlet, byty ti zůstanou zachované — jen se z nich vystěhují nájemníci. Kdykoliv později můžeš dům zase otevřít k pronájmu <b>zdarma</b>.</p>
     <p><b>Nájem za byt.</b> Nastavíš si cenu sám. Nad férovou cenou začnou nájemníci ubývat — hra ti u každého bytu ukáže, jak je obsazený.</p>
     <p><b>Kam jde nájem.</b> Nájemník platí <b>celou</b> částku, ale rozdělí se mezi majitele podle podílů. Máš-li 18 % domu, z nájmu 90 Kč ti přijde 16 Kč. Neprodaná část domu patří městu a jeho díl nájmu propadne — proto se vyplatí podíl dokupovat.</p>
-    <p><b>Stav bytu.</b> Obydlené byty chátrají. Pod hranicí, kterou nájemník snese, se odstěhuje. Oprava stojí ${Math.round(cenaOpravyBod())} Kč za bod.</p>
+    <p><b>Stav bytu.</b> Obydlené byty chátrají. Pod hranicí, kterou nájemník snese, se odstěhuje. Oprava stojí ${Math.round(cenaOpravyBod())} Kč za bod${slevaStavebnin() ? ` (dnes ve výprodeji stavebnin jen ${Math.round(cenaOpravyBod() * eventMult('repairMult'))} Kč)` : ''}.</p>
     <p><b>Vylepšení.</b> Jednorázová investice, která dům trvale zlepší (zateplení, klimatizace, rekonstrukce, solár). Vrátí se za pár měsíců.</p>
     <p><b>Projekty.</b> Větší stavby, které pár dní trvají — podkroví přidá byt, fasáda a zahrada zvednou hodnotu.</p>
     <p><b>Prodej.</b> Podíl můžeš prodat zpátky městu (hned, ale za nižší cenu) nebo nabídnout na tržišti ostatním hráčům (za víc, ale musíš počkat).</p>
@@ -18585,6 +18603,10 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.26', datum:'2026-10-15', body:[
+    ['oprava','🏷️ Výprodej stavebnin teď zlevňuje i vylepšení domů (zateplení, klimatizace, solár, rekonstrukce). Dřív platila sleva jen u oprav.'],
+    ['novinka','V den výprodeje je sleva vidět přímo v detailu domu — u oprav i u vylepšení je dnešní cena a přeškrtnutá běžná cena.'],
+  ]},
   { verze:'21.25', datum:'2026-10-12', body:[
     ['oprava','🏠 Nastavený nájem už nesrazí telefon hráče se starší verzí hry. Starší verze pořád stahovaly nájmy nad 1,25× férové ceny zpátky a jejich změna při synchronizaci vyhrála i u majitele. Teď o nájmu rozhoduje jen skutečná změna majitelem.'],
     ['info','Pro správce: v Adminu (karta Synchronizace) je vidět, kdo z hráčů hraje jakou verzi hry.'],
@@ -21170,7 +21192,8 @@ async function installUpgrade(id, key){
   // dům bude" — i u soláru, který vydělává bez ohledu na to, co v domě je (hlásila Eva).
   if(hasUpgrade(p, key)){ showAlert('Tohle vylepšení už dům má.'); return; }
   const cost = houseUpgradeCost(p, key);
-  if(!(await showConfirm(`${up.icon} ${up.name} za ${cost.toLocaleString('cs-CZ')} Kč?\n\n${up.desc}`))) return;
+  const bezna = houseUpgradeCost(p, key, true);
+  if(!(await showConfirm(`${up.icon} ${up.name} za ${cost.toLocaleString('cs-CZ')} Kč?${bezna > cost ? `\n🏷️ Dnes výprodej stavebnin — běžně ${bezna.toLocaleString('cs-CZ')} Kč.` : ''}\n\n${up.desc}`))) return;
   const me = world.users[currentUser.name];
   if(me.balance < cost){ showAlert('Nemáš dost peněz na vylepšení.'); return; }
   const ferovyPred = fairRentForHouse(p, spoctiCenuDomu(p));
@@ -21217,8 +21240,9 @@ function stavBytuSouhrnHtml(p, iDecide, near){
     <p style="margin:0 0 4px;font-size:0.92em;">🔧 Stav bytů: průměr <b style="color:${barva}">${Math.round(prumer)} %</b>${
       ho.pocet ? ` · opravu potřebuje <b>${ho.pocet}</b> ${sklonuj(ho.pocet, 'byt', 'byty', 'bytů')}` : ' · všechny v pořádku ✅'}</p>
     <div class="condBar"><div class="condBarFill" style="width:${prumer}%;background:${barva}"></div></div>`;
+  if(iDecide && ho.pocet) h += slevaStavebninHtml();
   if(iDecide && ho.pocet){
-    h += `<div class="row" style="margin-top:8px;"><button class="gold" ${near ? '' : 'disabled'} onclick="repairAllUnits('${p.id}')">🔧 ${textOpravy(ho.pocet)} na 100 % za ${ho.cena.toLocaleString('cs-CZ')} Kč</button></div>`;
+    h += `<div class="row" style="margin-top:8px;"><button class="gold" ${near ? '' : 'disabled'} onclick="repairAllUnits('${p.id}')">🔧 ${textOpravy(ho.pocet)} na 100 % za ${cenaSeSlevou(ho.cena, Math.max(1, Math.round(ho.body * cenaOpravyBod())))}</button></div>`;
     if(!near) h += `<p style="font-size:0.82em;color:var(--muted);margin:4px 0 0;">Opravit jde, jen když stojíš u domu (do ${INTERACTION_RADIUS} m).</p>`;
   }
   return h + `</div>`;
