@@ -1611,8 +1611,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.26';
-const APP_BUILD = '15.10.2026 10:00';
+const APP_VERSION = '21.29';
+const APP_BUILD = '17.10.2026 13:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -5252,6 +5252,17 @@ const VYLEPSENI_HODNOTA = { insulation:0.04, ac:0.03, renovation:0.07, solar:0.0
 const PRISTAVBA_HODNOTA = 0.25;   // každý byt navíc nad počet pater (vestavba podkroví)
 const PRISTAVBA_MAX = 2;          // víc přístaveb se na dům nevejde
 
+// Co se domu ještě dá natrvalo přidat (vylepšení a přístavby). Prázdný seznam = dům je
+// dostavěný. Eva u domu pět minut počítala, jestli se vyplatí přístavba, a pak jí hra
+// řekla, že už to nejde — tohle má být vidět hned.
+function coJesteJde(p){
+  if(!p) return [];
+  const zbyva = Object.keys(HOUSE_UPGRADES).filter(k => !hasUpgrade(p, k)).map(k => `${HOUSE_UPGRADES[k].icon} ${HOUSE_UPGRADES[k].name.toLowerCase()}`);
+  const pr = PRISTAVBA_MAX - Math.min(PRISTAVBA_MAX, pristavebNavic(p));
+  if(pr > 0) zbyva.push(`🏗️ ${pr === 1 ? (pristavebNavic(p) ? 'poslední přístavba' : '1 přístavba') : pr + ' přístavby'}`);
+  return zbyva;
+}
+function domDostaveny(p){ return !!p && coJesteJde(p).length === 0; }
 function pristavebNavic(p){
   if(!p) return 0;
   const bytu = asArray(p.units).length + (p.provoz && p.provoz.prizemi ? 1 : 0);
@@ -7222,6 +7233,7 @@ function adoptWorldVnitrni(incoming){
   const mojeVylepseni = {};   // parcelId -> mapa zaplacených vylepšení
   const mojeByty = {};        // parcelId -> byty (nájem, stav, obsazenost)
   const mojeProdeje = {};     // parcelId -> historie prodejů (drží cenu domu)
+  const mojeKroniky = {};     // parcelId -> kronika domu a hodnoty po dnech
   const mojeProjekty = {};    // parcelId -> rozdělaný stavební projekt
   const mojeBizVlastnictvi = {}; // bizId -> {omod, owners}
   const myTenancies = [];     // {id, uid, idx} — pronajaté byty (uid je stálý, index se přestavbou mění)
@@ -7282,6 +7294,7 @@ function adoptWorldVnitrni(incoming){
       if(p && p.upgrades && Object.keys(p.upgrades).length) mojeVylepseni[id] = Object.assign({}, p.upgrades);
       if(p && asArray(p.units).length) mojeByty[id] = JSON.parse(JSON.stringify(asArray(p.units)));
       if(p && asArray(p.salesHistory).length) mojeProdeje[id] = JSON.parse(JSON.stringify(asArray(p.salesHistory)));
+      if(p && (asArray(p.kronika).length || asArray(p.hodnoty).length)) mojeKroniky[id] = { k: JSON.parse(JSON.stringify(asArray(p.kronika))), h: JSON.parse(JSON.stringify(asArray(p.hodnoty))) };
       if(p && p.project) mojeProjekty[id] = JSON.parse(JSON.stringify(p.project));
       asArray(p.units).forEach((u, idx) => { if(u && u.tenant === myName) myTenancies.push({id, uid: u.uid, idx}); });
     });
@@ -7634,7 +7647,16 @@ function adoptWorldVnitrni(incoming){
       [...asArray(p.salesHistory), ...prodeje].forEach(z => {
         if(z && z.ts) mapa.set(z.ts + '|' + (z.pct || 0), z);
       });
-      p.salesHistory = Array.from(mapa.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0)).slice(-20);
+      // Nejnovější NAHOŘE — tak je zapisuje prodej i čte kronika. Dřív se tu řadilo
+      // obráceně, takže se po synchronizaci kronika otočila a šipky trendu lhaly.
+      p.salesHistory = Array.from(mapa.values()).sort((a, b) => (b.ts || 0) - (a.ts || 0)).slice(0, 20);
+    });
+    Object.entries(mojeKroniky).forEach(([id, z]) => {
+      const p = world.parcels[id];
+      if(!p) return;
+      const k = slucKroniku(p.kronika, z.k), h = slucHodnoty(p.hodnoty, z.h);
+      if(k.length) p.kronika = k;
+      if(h.length) p.hodnoty = h;
     });
 
     // OPRAVA STŘETU: byt nemůže mít zároveň nájemníka a bydlícího majitele. Stává se to,
@@ -8117,7 +8139,78 @@ function addNews(type, text, kde){
   else if(kde && isFinite(kde.lat) && isFinite(kde.lng)) zprava.kde = { lat: kde.lat, lng: kde.lng };
   world.news.unshift(zprava);
   if(world.news.length > NEWS_MAX) world.news.length = NEWS_MAX;
+  // Zpráva o konkrétním domě se zapíše i do jeho kroniky — noviny drží jen posledních
+  // NEWS_MAX zpráv z celého města, kronika domu jeho vlastní příběh (Eva chtěla vidět,
+  // co kdy se s domem dělo).
+  if(typeof kde === 'string' && world.parcels && world.parcels[kde]) safeCall(() => zapisKroniku(world.parcels[kde], zprava.text));
   // nevoláme saveWorld zde — volající už obvykle ukládá; ať se to nezdvojuje
+}
+
+// ===== KRONIKA DOMU =====
+// Co se s domem dělo (stěhování, úpravy, přístavby, prodeje…) a jak se měnila jeho hodnota.
+// Drží se jen u domů, které někdo vlastní, a jen pár posledních záznamů — celý svět se
+// do cloudu zapisuje vcelku, tak ať zbytečně nebobtná.
+const KRONIKA_MAX = 15;
+const HODNOTY_MAX = 21;
+function zapisKroniku(p, text){
+  if(!p || !p.owners || !Object.keys(p.owners).length) return;
+  const t = String(text || '').slice(0, 140);
+  if(!t) return;
+  const k = asArray(p.kronika).filter(Boolean);
+  const den = world.day || 1;
+  if(k.some(z => z.d === den && z.t === t)) return;
+  k.unshift({ ts: Date.now(), d: den, t, h: Math.round(effectiveHousePrice(p)) });
+  if(k.length > KRONIKA_MAX) k.length = KRONIKA_MAX;
+  p.kronika = k;
+}
+// Jednou denně (při přechodu dne) si u vlastněných domů zapamatujeme hodnotu.
+function zapisHodnotyDomu(){
+  const den = world.day || 1;
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p || !p.owners || !Object.keys(p.owners).length) return;
+    const h = asArray(p.hodnoty).filter(z => z && z.d !== den);
+    zapomenCeny();
+    h.unshift({ d: den, h: Math.round(spoctiCenuDomu(p)) });
+    h.sort((a, b) => b.d - a.d);
+    if(h.length > HODNOTY_MAX) h.length = HODNOTY_MAX;
+    p.hodnoty = h;
+  });
+}
+// Sloučení kroniky a hodnot ze dvou verzí domu (zařízení si je posílají celé).
+function slucKroniku(a, b){
+  const m = new Map();
+  [...asArray(a), ...asArray(b)].forEach(z => { if(z && z.t) { const kl = z.d + '|' + z.t; if(!m.has(kl)) m.set(kl, z); } });
+  return Array.from(m.values()).sort((x, y) => (y.d - x.d) || ((y.ts || 0) - (x.ts || 0))).slice(0, KRONIKA_MAX);
+}
+function slucHodnoty(a, b){
+  const m = new Map();
+  [...asArray(a), ...asArray(b)].forEach(z => { if(z && typeof z.d === 'number') m.set(z.d, z); });
+  return Array.from(m.values()).sort((x, y) => y.d - x.d).slice(0, HODNOTY_MAX);
+}
+function kronikaHtml(p){
+  const hodn = asArray(p.hodnoty).filter(Boolean);
+  const kron = asArray(p.kronika).filter(Boolean);
+  let h = '';
+  if(hodn.length){
+    h += `<p style="font-size:0.88em;margin:6px 0 2px;color:var(--text)">📈 Hodnota domu po dnech:</p>`;
+    h += hodn.slice(0, 10).map((z, i) => {
+      const starsi = hodn[i + 1];
+      let zm = '';
+      if(starsi && starsi.h){
+        const pct = Math.round((z.h / starsi.h - 1) * 100);
+        if(pct) zm = pct > 0 ? ` <span style="color:var(--accent)">▲ ${pct} %</span>` : ` <span style="color:var(--danger)">▼ ${-pct} %</span>`;
+      }
+      return `<p style="font-size:0.84em;color:var(--muted);margin:1px 0;">den ${z.d}: <b style="color:var(--text)">${z.h.toLocaleString('cs-CZ')} Kč</b>${zm}</p>`;
+    }).join('');
+  }
+  if(kron.length){
+    h += `<p style="font-size:0.88em;margin:8px 0 2px;color:var(--text)">🗓️ Co se dělo:</p>`;
+    h += kron.map(z => `<p style="font-size:0.84em;color:var(--muted);margin:2px 0;">den ${z.d}: <span style="color:var(--text)">${escapeHtml(z.t)}</span>${z.h && !/hodnot/i.test(z.t) ? ` <span style="opacity:0.7">· hodnota ${z.h.toLocaleString('cs-CZ')} Kč</span>` : ''}</p>`).join('');
+  }
+  if(!hodn.length && !kron.length){
+    h += `<p style="font-size:0.84em;color:var(--muted);margin:4px 0;">Kronika se vede od verze 21.28 — události a hodnota domu se sem začnou zapisovat od teď.</p>`;
+  }
+  return h;
 }
 
 // ===== ZVUKY (generované přes Web Audio API — žádné externí soubory) =====
@@ -9217,6 +9310,7 @@ function onNewDay(catchUp){
   Object.values(world.users || {}).forEach(x => { if(x) safeCall(() => recordWorthSnapshot(x)); });
   tickMarketCycle(1);
   world.inflation = (world.inflation || 1) * (1 + INFLATION_ANNUAL / DAYS_PER_YEAR);
+  safeCall(() => zapisHodnotyDomu());   // kronika: hodnota vlastněných domů na začátku dne
   resolveAuctions();
   // Docházka se NEřeší při dopočítání dnů po odmlce (catchUp) — hráč objektivně nemohl přijít
   // do práce, když měl appku zavřenou. Vyhazov hrozí jen za dny, kdy appka běžela a on nepřišel.
@@ -13894,9 +13988,31 @@ function renderSelected(id){
       const casti = Object.keys(VYLEPSENI_HODNOTA).filter(k => hasUpgrade(p, k)).map(k => `${HOUSE_UPGRADES[k].icon} +${Math.round(VYLEPSENI_HODNOTA[k]*100)} %`);
       const pr = Math.min(PRISTAVBA_MAX, pristavebNavic(p));
       if(pr) casti.push(`🏗️ přístavby +${Math.round(pr * PRISTAVBA_HODNOTA * 100)} %`);
-      html += `<p style="font-size:0.86em;color:var(--accent2);margin:2px 0;">🔨 Úpravy zvedají hodnotu o <b>${Math.round((sm-1)*100)} %</b> (≈ ${Math.round(effectiveHousePrice(p) * (1 - 1/sm)).toLocaleString('cs-CZ')} Kč): ${casti.join(' · ')}</p>`;
+      // Procenta se počítají ze ZÁKLADU domu (bez úprav) a sčítají se: zateplení +4 %
+      // a přístavba +25 % = +29 % základu. Dřív tu stálo jen „zvedají o 43 %", takže hráčka
+      // čekala, že přístavba přidá 25 % k celé dosavadní ceně (Eva).
+      const celkem = effectiveHousePrice(p), zaklad = celkem / sm;
+      html += `<p style="font-size:0.86em;color:var(--accent2);margin:2px 0;">🔨 Hodnota = základ domu <b>${Math.round(zaklad).toLocaleString('cs-CZ')} Kč</b> + úpravy <b>${Math.round((sm-1)*100)} % ze základu</b> (${Math.round(celkem - zaklad).toLocaleString('cs-CZ')} Kč): ${casti.join(' · ')}</p>
+        <p style="font-size:0.8em;color:var(--muted);margin:0 0 2px;">Procenta úprav se sčítají a berou se ze základu, ne z celkové ceny. Základ se mění s trhem a zájmem o lokalitu.</p>`;
     }
   }
+  if(!(maProvoz(p) && !p.provoz.prizemi) || iDecide) safeCall(() => {
+    const zbyva = coJesteJde(p);
+    html += zbyva.length
+      ? `<p style="font-size:0.86em;margin:2px 0;">🔨 Ještě jde přidat: ${zbyva.join(' · ')} <span style="color:var(--muted)">(přístavby ${Math.min(PRISTAVBA_MAX, pristavebNavic(p))}/${PRISTAVBA_MAX})</span></p>`
+      : `<p style="font-size:0.9em;margin:4px 0;padding:6px 8px;border-radius:8px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.45);">🏁 <b>Dům je dostavěný</b> — má všechna vylepšení i obě přístavby, víc se mu přidat nedá.</p>`;
+  });
+  // Co dům vynese z pronájmu — hlavně pro toho, kdo ho teprve zvažuje. Bez toho to byl
+  // „zajíc v pytli": stejně drahé domy v jedné ulici měly 21 a 43 Kč na byt (Eva). Rozdíl
+  // je v počtu bytů — hodnota domu se mezi ně dělí, takže celý dům vynese podobně.
+  if(!iDecide && !(maProvoz(p) && !p.provoz.prizemi)) safeCall(() => {
+    const n = (p.units && p.units.length) || p.levels || 1;
+    const fair = fairRentForHouse(p), hran = hraniceNajemnika(p);
+    const zaDen = fair * n;
+    const dni = zaDen > 0 ? Math.round(effectiveHousePrice(p) / zaDen) : 0;
+    html += `<p style="font-size:0.88em;margin:4px 0 2px;">💰 Pronájem: férově <b>${fair} Kč</b> na byt × ${n} ${sklonuj(n, 'byt', 'byty', 'bytů')} = <b style="color:var(--gold)">${zaDen} Kč/den</b> za dům <span style="color:var(--muted)">(nájemník unese až ${hran} Kč na byt${dni ? ` · cena domu se vrátí zhruba za ${dni} dní` : ''})</span></p>
+      <p style="font-size:0.8em;color:var(--muted);margin:0 0 4px;">Hodnota domu se dělí mezi byty: víc bytů = levnější byty, ale celý dům vynese podobně jako stejně drahý dům s méně byty.</p>`;
+  });
   const popInfo = popularityInfo(p);
   html += `<p style="font-size:0.92em;"><span style="color:${popInfo.color}">${popInfo.stars} ${popInfo.label}</span> <span style="color:var(--muted)">— historie zájmu o tuhle lokalitu (trvalé, neodeznívá)</span></p>`;
   const cyc = marketCycleLabel();
@@ -13974,10 +14090,14 @@ function renderSelected(id){
     </div>`;
   }
 
-  if(p.salesHistory && p.salesHistory.length){
-    html += `<div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
-      <p style="font-size:0.92em;margin:0 0 4px;color:var(--accent2)">📜 Kronika domu — kdo ho kdy vlastnil:</p>`;
+  if((p.salesHistory && p.salesHistory.length) || asArray(p.kronika).length || asArray(p.hodnoty).length || owned){
     const hist = asArray(p.salesHistory);
+    const pocetZ = hist.length + asArray(p.kronika).length;
+    const otevrena = SEKCE_OTEVRENE && SEKCE_OTEVRENE.has('kronika');
+    html += `<details${otevrena ? ' open' : ''} ontoggle="prepniSekci('kronika', this.open)" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
+      <summary style="font-size:0.92em;color:var(--accent2);cursor:pointer;">📜 Kronika domu — co se s ním dělo${pocetZ ? ` <span style="color:var(--muted)">(${pocetZ})</span>` : ''}</summary>`;
+    html += kronikaHtml(p);
+    if(hist.length) html += `<p style="font-size:0.88em;margin:8px 0 2px;color:var(--text)">🔑 Kdo ho kdy vlastnil:</p>`;
     hist.forEach((s, i) => {
       // Šipka porovnává cenu za procento s předchozím (starším) prodejem — hráč tak rovnou
       // vidí, jestli dům v čase zdražuje, nebo padá.
@@ -14004,13 +14124,14 @@ function renderSelected(id){
     // nebo se na něj nevešel, v seznamu není — bez vysvětlení to vypadá jako chyba.
     const vKronice = new Set(hist.map(z => z.komu).filter(Boolean));
     const chybejici = Object.keys(p.owners || {}).filter(n => !vKronice.has(n));
-    if(chybejici.length){
+    if(hist.length && chybejici.length){
       html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">
         ${chybejici.map(escapeHtml).join(', ')} ${chybejici.length === 1 ? 'tu není' : 'tu nejsou'} — dům
         ${chybejici.length === 1 ? 'získal' : 'získali'} dřív, než hra začala kroniku vést, nebo se starší
         záznam už nevešel (drží se posledních 12).</p>`;
     }
-    html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Skutečné prodeje ovlivňují cenu domu — tak vzniká tržní hodnota.</p></div>`;
+    if(hist.length) html += `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Skutečné prodeje ovlivňují cenu domu — tak vzniká tržní hodnota.</p>`;
+    html += `</details>`;
   }
 
   // --- Spoluvlastnící ---
@@ -14335,9 +14456,16 @@ function renderSelected(id){
         Object.keys(PROJECT_DEFS).forEach(k => {
           const def = PROJECT_DEFS[k];
           const cost = projectCost(p, k);
+          if(k === 'podkrovi' && pristavebNavic(p) >= PRISTAVBA_MAX){
+            html += `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;opacity:0.75;">
+              <p style="margin:0;font-weight:600;">${def.icon} ${def.name} <span style="color:var(--accent)">✓ hotovo ${PRISTAVBA_MAX}/${PRISTAVBA_MAX}</span></p>
+              <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">Dům má obě přístavby, víc bytů se do něj nevejde.</p></div>`;
+            return;
+          }
           html += `<div style="border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
-            <p style="margin:0;font-weight:600;">${def.icon} ${def.name}</p>
+            <p style="margin:0;font-weight:600;">${def.icon} ${def.name}${k === 'podkrovi' ? ` <span style="font-weight:400;color:var(--muted);font-size:0.9em">(přístavby ${pristavebNavic(p)}/${PRISTAVBA_MAX})</span>` : ''}</p>
             <p style="margin:2px 0;font-size:0.85em;color:var(--muted)">${def.desc} · trvá ${def.days} ${def.days===1?'den':(def.days<5?'dny':'dní')}</p>
+            ${k === 'podkrovi' && p.useType === 'rental' && pristavebNavic(p) < PRISTAVBA_MAX ? `<p style="margin:2px 0;font-size:0.84em;color:var(--accent2)">🏠 ${safeCall(() => podkroviNahledText(p)) || ''}</p>` : ''}
             ${iDecide ? `<div class="row"><button ${near?'':'disabled'} onclick="startProject('${p.id}','${k}')">Spustit za ${cost.toLocaleString('cs-CZ')} Kč</button></div>` : ''}
           </div>`;
         });
@@ -14490,7 +14618,7 @@ function renderSelected(id){
     <p><b>📊 Trh (${cyc.label})</b> — nálada v celém městě. Střídá se sama a hýbe cenami všech domů (teď ×${des(marketMultiplier(), 2)}). V recesi se levněji nakupuje, v konjunktuře dráž prodává.</p>
     <p><b>🔥 Zvýšený zájem</b> — když někdo koupí podíl poblíž, okolní domy krátce podraží. Bez dalších nákupů to samo odezní.</p>
     <p><b>🚧 Lokální událost</b> — rekonstrukce, nový park nebo havárie. Platí jen dnes a jen v okruhu, který je vyznačený na mapě.</p>
-    <p><b>🔨 Vylepšení a přístavby</b> — zvedají hodnotu natrvalo: zateplení +4 %, klimatizace +3 %, rekonstrukce +7 %, solár +4 %, každý byt přistavěný do podkroví +25 % (nejvýš dva). Hodnota vzroste vždycky o něco méně, než úprava stála — jako ve skutečnosti. S hodnotou roste i férový nájem.</p>
+    <p><b>🔨 Vylepšení a přístavby</b> — zvedají hodnotu natrvalo: zateplení +4 %, klimatizace +3 %, rekonstrukce +7 %, solár +4 %, každý byt přistavěný do podkroví +25 % (nejvýš dva — hodnota se pak ale dělí mezi víc bytů, takže na byt vyjde nižší nájem, za celý dům vyšší). Hodnota vzroste vždycky o něco méně, než úprava stála — jako ve skutečnosti. S hodnotou roste i férový nájem.</p>
     <div class="ex">Trvalý základ ceny mění <b>skutečné prodeje</b> a <b>stavební úpravy</b>. Zbytek jsou dočasné vlivy — hlavně tržní cyklus: v recesi (×0,75) je dům levnější i po investicích, v konjunktuře zase dražší.</div>
   `);
 
@@ -14833,7 +14961,11 @@ function renderMine(){
 
     // vylepšení
     const upg = Object.keys(p.upgrades || {}).filter(k => p.upgrades[k] && HOUSE_UPGRADES[k]);
-    if(upg.length) detail += `<p class="mineSek">🔧 Vylepšení</p><p style="font-size:0.9em;">${upg.map(k => `${HOUSE_UPGRADES[k].icon} ${HOUSE_UPGRADES[k].name}`).join(' · ')}</p>`;
+    if(upg.length || iDecide){
+      const zbyva = coJesteJde(p);
+      detail += `<p class="mineSek">🔧 Vylepšení</p><p style="font-size:0.9em;">${upg.length ? upg.map(k => `${HOUSE_UPGRADES[k].icon} ${HOUSE_UPGRADES[k].name}`).join(' · ') : 'zatím žádná'}</p>
+        <p style="font-size:0.84em;margin:2px 0;color:${zbyva.length ? 'var(--muted)' : 'var(--accent)'}">${zbyva.length ? `Ještě jde: ${zbyva.join(' · ')}` : '🏁 Dostavěno — všechna vylepšení i obě přístavby, víc se přidat nedá.'}</p>`;
+    }
 
     // problémy
     if(d.problemy.length) detail += `<p style="font-size:0.88em;color:var(--orange);margin-top:6px;">⚠️ ${d.problemy.join(' · ')}</p>`;
@@ -14851,7 +14983,7 @@ function renderMine(){
         <span class="mineJm"><b>${nazevProvozu(p) ? escapeHtml(jmenoProvozu(p)) : domLabel(p)}</b>${nazevProvozu(p) ? ` <span style="font-size:0.8em;color:var(--muted);">${domLabel(p)}</span>` : ''}<br>
           <span style="font-size:0.82em;color:var(--muted);">${des(d.pct, 0)} %${iDecide ? ' 👑' : ''}${
             p.useType === 'rental' && d.byty.length ? ` · obsazeno ${d.obsazene.length + d.mojeByty.length}/${d.byty.length}` : ''}${
-            d.provoz ? ` · zásoby ${d.zasoby} %` : ''}${d.problemy.length ? ' · <span style="color:var(--orange)">⚠️</span>' : ''}</span></span>
+            d.provoz ? ` · zásoby ${d.zasoby} %` : ''}${domDostaveny(p) ? ' · 🏁' : ''}${d.problemy.length ? ' · <span style="color:var(--orange)">⚠️</span>' : ''}</span></span>
         ${(() => { const cist = d.prijem - d.dan - d.hypoSplatka;   // stejné číslo jako „Celkem po dani" v detailu
           return `<span class="mineKc" style="color:${cist > 0.5 ? 'var(--gold)' : (cist < -0.5 ? 'var(--danger)' : 'var(--muted)')}">${cist > 0.5 ? '+' + kc(cist) : (cist < -0.5 ? '−' + kc(-cist) : '0')}<small> Kč</small></span>`; })()}
       </summary>
@@ -16423,10 +16555,31 @@ function lockAdmin(){
 const PROJECT_DEFS = {
   podkrovi: {
     name:'Vestavba podkroví', icon:'🏗️', days:5, costRatio:0.30,
-    desc:'Přidá domu další byt k pronájmu a zvedne jeho hodnotu o 25 % (a s ní i nájem). Nejvýš 2 přístavby na dům.',
+    desc:'Přidá domu další byt k pronájmu a zvedne hodnotu domu o 25 %. Dům celkem vynese víc, ale hodnota se rozdělí mezi víc bytů — nájem na jeden byt proto klesne. Nejvýš 2 přístavby na dům.',
     apply:(p) => {
       if(!p.units) p.units = [];
-      p.units.push({ uid: newUnitId(), rentPrice: fairRentForHouse(p), condition: 100 });
+      // Id z domu a dne dokončení: když projekt o půlnoci dokončí dvě zařízení naráz,
+      // vznikne stejný byt, ne dva různé.
+      const uid = 'pk' + String(p.id).replace(/[^a-z0-9]/gi, '') + '_' + ((p.project && p.project.endDay) || world.day || 0);
+      if(p.units.some(u => u && u.uid === uid)) return;
+      const novy = { uid, rentPrice: 0, condition: 100 };
+      nastavStav(novy, 100);
+      p.units.push(novy);
+      zapomenCeny();
+      // Nájem nového bytu podle férové ceny UŽ S NOVÝM BYTEM. Dřív se počítal před
+      // přidáním, takže byt hned po dokončení vyšel „drahý" (Eva: 42 Kč při férových 34).
+      nastavNajem(novy, fairRentForHouse(p, spoctiCenuDomu(p)));
+      // Nájemníci v původních bytech: hodnota domu se teď dělí mezi víc bytů a hranice,
+      // kterou unesou, klesla. Kdo platil víc, ten by se začal stěhovat — přitom majitel
+      // nic nezdražil. Nájem srovnáme na novou hranici; víc by stejně nezaplatili.
+      const hranice = hraniceNajemnika(p);
+      p.posledniPristavba = { srovnano: [] };
+      p.units.forEach((u, i) => {
+        if(!u || u === novy || !u.npc || (u.rentPrice || 0) <= hranice) return;
+        p.posledniPristavba.srovnano.push({ byt: i + 1, kdo: u.npc.name || 'Nájemník', z: u.rentPrice, na: hranice });
+        nastavNajem(u, hranice);
+        stampUnit(u);
+      });
     }
   },
   fasada: {
@@ -16447,6 +16600,24 @@ const PROJECT_DEFS = {
     }
   },
 };
+// Co udělá přístavba s nájmem v tomhle domě — konkrétní čísla, ne jen „+25 %".
+// Hodnota domu stoupne, ale dělí se mezi víc bytů, takže na byt vyjde míň (Eva čekala +25 %).
+function podkroviNahled(p){
+  const predByty = asArray(p.units).length || 1;
+  const pred = fairRentForHouse(p, spoctiCenuDomu(p));
+  if(!p.units) p.units = [];
+  const docasny = { uid: '__nahled', rentPrice: 0, condition: 100 };
+  p.units.push(docasny);
+  let po, hranicePo;
+  try { po = fairRentForHouse(p, spoctiCenuDomu(p)); hranicePo = Math.round(po * NAJEMNIK_TOLERANCE); }
+  finally { p.units.splice(p.units.indexOf(docasny), 1); zapomenCeny(); }
+  return { predByty, poByty: predByty + 1, pred, po, domPred: pred * predByty, domPo: po * (predByty + 1),
+           hranicePred: Math.round(pred * NAJEMNIK_TOLERANCE), hranicePo };
+}
+function podkroviNahledText(p){
+  const n = podkroviNahled(p);
+  return `Férový nájem na byt: ${n.pred} → ${n.po} Kč (nájemník unese nejvýš ${n.hranicePred} → ${n.hranicePo} Kč). Celý dům: ${n.domPred} → ${n.domPo} Kč/den.`;
+}
 function projectCost(p, key){
   const def = PROJECT_DEFS[key];
   if(!def) return 0;
@@ -16469,7 +16640,7 @@ async function startProject(houseId, key){
   const me = world.users[currentUser.name];
   const cost = projectCost(p, key);
   if(me.balance < cost){ showAlert(`Na projekt potřebuješ ${cost.toLocaleString('cs-CZ')} Kč.`); return; }
-  if(!(await showConfirm(`${def.icon} ${def.name}\n${def.desc}\n\nCena: ${cost.toLocaleString('cs-CZ')} Kč\nHotovo za: ${def.days} dní\n\nSpustit?`))) return;
+  if(!(await showConfirm(`${def.icon} ${def.name}\n${def.desc}${key === 'podkrovi' ? '\n\n' + podkroviNahledText(p) : ''}\n\nCena: ${cost.toLocaleString('cs-CZ')} Kč\nHotovo za: ${def.days} dní\n\nSpustit?`))) return;
   me.balance -= cost;
   p.project = { key, startDay: world.day, endDay: world.day + def.days, cost };
   stampHouse(p);
@@ -16496,10 +16667,25 @@ function finishDueProjects(){
         `${def ? def.icon : '🏗️'} Řemeslníci opustili dům ${domKratce(p)}: ${nazev} hotová, hodnota ${hod} Kč.`
       ]), p.id);
     }
+    let navic = '';
+    if(p.project.key === 'podkrovi' && p.useType === 'rental'){
+      const byty = asArray(p.units).length;
+      navic = `\n\nDům má teď ${byty} ${sklonuj(byty, 'byt', 'byty', 'bytů')}. Hodnota se dělí mezi víc bytů, takže férový nájem na byt je ${fairRentForHouse(p)} Kč (nájemník unese nejvýš ${hraniceNajemnika(p)} Kč) — celý dům ale vynese víc.`;
+      const sr = (p.posledniPristavba && p.posledniPristavba.srovnano) || [];
+      if(sr.length) navic += '\n' + sr.map(x => `Byt ${x.byt} (${x.kdo}): nájem srovnán z ${x.z} na ${x.na} Kč, ať se neodstěhuje.`).join('\n');
+    }
+    const _zapis = (p.posledniPristavba && p.posledniPristavba.srovnano) || [];
+    delete p.posledniPristavba;
+    p.posledniPristavbaZapis = _zapis;
     if(majitel && currentUser && majitel[0] === currentUser.name){
-      setTimeout(() => showAlert(`${def ? def.icon : '🏗️'} Hotovo: ${def ? def.name : 'projekt'} na domě ${domKratce(p)}.`), 800);
+      setTimeout(() => showAlert(`${def ? def.icon : '🏗️'} Hotovo: ${def ? def.name : 'projekt'} na domě ${domKratce(p)}.${navic}`), 800);
+      if(navic){
+        const sr = (p.posledniPristavbaZapis || []);
+        zapisDoDeniku('rent', `${def.icon} Přístavba hotová (${domKratce(p)}) — férový nájem na byt ${fairRentForHouse(p)} Kč, unese ${hraniceNajemnika(p)} Kč${sr.length ? '; srovnáno: ' + sr.map(x => `byt ${x.byt} ${x.z}→${x.na} Kč`).join(', ') : ''}`, null);
+      }
     }
     delete p.project;
+    delete p.posledniPristavbaZapis;
     stampHouse(p);
   });
 }
@@ -18603,6 +18789,21 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.29', datum:'2026-10-17', body:[
+    ['novinka','🏁 Na první pohled je vidět, jestli je dům dostavěný. V detailu domu je buď „Ještě jde přidat: …" (co chybí z vylepšení a kolik přístaveb zbývá), nebo zelené „Dům je dostavěný". V Mých nemovitostech má dostavěný dům vlajku 🏁.'],
+    ['zmena','Vestavba podkroví ukazuje, kolik přístaveb dům má (třeba 1/2). Když má obě, místo tlačítka je „✓ hotovo 2/2" — už se nestane, že spočítáš přístavbu a teprve pak se dozvíš, že nejde.'],
+  ]},
+  { verze:'21.28', datum:'2026-10-17', body:[
+    ['novinka','📜 Kronika domu jde rozkliknout a ukazuje, co se s domem dělo: stěhování nájemníků, vylepšení, přístavby, prodeje — u každého záznamu i tehdejší hodnotu domu. A hodnotu domu po dnech, ať je vidět, jak se mění. Zapisuje se od téhle verze.'],
+    ['novinka','💰 U cizího nebo volného domu je hned vidět, co vynese z pronájmu: férový nájem na byt, kolik bytů a kolik za celý dům denně. Stejně drahé domy mají celkem podobný výnos — dům se čtyřmi byty má jen každý byt levnější než dům se dvěma.'],
+    ['zmena','Řádek s úpravami domu teď rozepisuje hodnotu: základ domu + úpravy (procenta ze základu, ne z celé ceny). Přístavba +25 % tak znamená čtvrtinu základu, ne čtvrtinu celkové ceny.'],
+    ['oprava','Kronika prodejů se po synchronizaci občas otočila (nejstarší nahoře) a šipky zdražení/zlevnění pak ukazovaly obráceně.'],
+  ]},
+  { verze:'21.27', datum:'2026-10-17', body:[
+    ['oprava','🏗️ Po dokončení přístavby se nájemník v původním bytě nezačne stěhovat. Hodnota domu se po přístavbě dělí mezi víc bytů, takže hranice nájmu na byt klesne — kdo platil víc, tomu se nájem sám srovná na novou hranici (víc by stejně nezaplatil).'],
+    ['oprava','Nový byt z přístavby dostane férový nájem už podle nového počtu bytů. Dřív hned po dokončení vyšel „drahý".'],
+    ['zmena','Vestavba podkroví ukazuje předem konkrétní čísla: férový nájem na byt před a po, hranici nájemníka a kolik vynese celý dům. Dřív sliboval „+25 % nájmu", ale na jeden byt nájem klesne (za celý dům stoupne).'],
+  ]},
   { verze:'21.26', datum:'2026-10-15', body:[
     ['oprava','🏷️ Výprodej stavebnin teď zlevňuje i vylepšení domů (zateplení, klimatizace, solár, rekonstrukce). Dřív platila sleva jen u oprav.'],
     ['novinka','V den výprodeje je sleva vidět přímo v detailu domu — u oprav i u vylepšení je dnešní cena a přeškrtnutá běžná cena.'],
