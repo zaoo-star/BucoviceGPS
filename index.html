@@ -1611,8 +1611,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.29';
-const APP_BUILD = '17.10.2026 13:00';
+const APP_VERSION = '21.30';
+const APP_BUILD = '18.10.2026 15:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -6044,7 +6044,9 @@ function dailyHousingCost(name){
   // Vylepšení v domě, kde bydlím, srážejí životní náklady. tick() i finanční přehled to
   // počítaly, jen tahle funkce ne — takže pilulka v hlavičce hlásila plných 45 Kč i tomu,
   // kdo si pořídil zateplení nebo solár a reálně platil míň.
-  const sleva = 1 - livingCostDiscountFromUpgrades(name);
+  // Inflace a dnešní událost (třeba zdražení energií) — stejně jako se opravdu strhává
+  // v tick(). Dřív tu chyběly, takže pilulka v hlavičce ukazovala míň, než se platilo.
+  const sleva = (1 - livingCostDiscountFromUpgrades(name)) * zivotniMult();
   // Kdo má velký majetek, žije dráž — jinak by se peníze ve hře jen hromadily.
   const uroven = zivotniUrovenPriplatek(name);
   if(status === 'owner') return LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) * sleva + uroven;
@@ -6055,8 +6057,10 @@ function dailyHousingCost(name){
     });
     return TENANT_LIVING_COST * sleva + rent + uroven;   // nájem sleva neovlivní, ten platíš majiteli
   }
-  return LIVING_COST + uroven;
+  return LIVING_COST * zivotniMult() + uroven;
 }
+// Násobek životních nákladů: inflace × dnešní událost ve městě.
+function zivotniMult(){ return inflationMult() * eventMult('livingMult'); }
 
 function generateBusinesses(){
   const b = {};
@@ -8396,6 +8400,7 @@ function tickVnitrni(){
             if(castka > 0 && najemnikUcet.balance - (najemnikUcet.denSoucty?.najemne || 0) < -LIVING_COST * 3){
               addNews('rental', `📤 ${u.tenant} se odstěhoval z domu ${domKratce(p)} — na nájem ${u.rentPrice} Kč/den už neměl.`, p.id);
               u.tenant = null;
+              stampUnit(u);
               stampHouse(p);
             }
           } else if(u.npc){
@@ -8682,6 +8687,8 @@ function stavBytuTick(u, rychlost, now){
 function hraniceNajemnika(p){ return Math.round(fairRentForHouse(p) * NAJEMNIK_TOLERANCE); }
 function npcMaxNajem(p, u){
   if(!u || !u.npc) return Infinity;
+  // Nájemník, který si nájem nabídl sám (zájemce z ulice), unese aspoň tu svou cenu.
+  if(typeof u.npc.dohoda === 'number' && u.npc.dohoda > 0) return Math.max(hraniceNajemnika(p), Math.round(u.npc.dohoda));
   // V CELÝCH korunách, zaokrouhleno stejně, jak to hra všude ukazuje. Dřív se porovnávalo
   // s haléři (třeba 43,75), ale ukazovalo zaokrouhleně (44) — hráčka nastavila „nejvýš 44"
   // a hra hlásila „44 Kč je moc, rozdíl 0 Kč" a nájemník se začal stěhovat (Eva).
@@ -9017,14 +9024,22 @@ function listDormantPlayersHouses(){
     if(dni < DORMANT_DAYS) return;
 
     Object.values(world.parcels || {}).forEach(p => {
-      const pct = p.owners?.[u.name] || 0;
+      let pct = p.owners?.[u.name] || 0;
+      if(pct <= 0.001) return;
+      // Zastavený podíl (hypotéka) se nabízet nesmí — prodat ho nejde ani majiteli.
+      const k = muzuProdat(u.name, p.id, pct);
+      if(!k.ok) pct = Math.floor(k.volne * 10) / 10;
       if(pct <= 0.001) return;
       // už je tenhle podíl nabízený?
       const uzNabizeno = Object.values(world.listings).some(l => l && l.houseId === p.id && l.seller === u.name);
       if(uzNabizeno) return;
       const cena = Math.round(houseMarketPricePerPercent(p) * pct * DORMANT_PRICE_RATIO);
       if(cena <= 0) return;
-      const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'');
+      // Id i se dnem. Dřív bylo pro dům a hráče pořád stejné — když se nabídka jednou uzavřela
+      // (prodej nebo návrat hráče), její „náhrobek" pak každou další hned smazal a hra ji
+      // druhý den vypsala znovu, i se zprávou v novinách. Den drží dvě zařízení u stejného id.
+      const lid = 'dorm_' + p.id + '_' + u.name.replace(/\s/g,'') + '_' + (world.day || 0);
+      if(world.closedListings && world.closedListings[lid]) return;
       world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct, mod: Date.now(),
         type: 'fixed', price: cena, dormant: true };
       addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${pctText(pct)} % za ${cena.toLocaleString('cs-CZ')} Kč).`, p.id);
@@ -9359,7 +9374,7 @@ function onNewDay(catchUp){
         : (world.jobs[u.currentJobId]?.name || 'práci');
       if(!posudDochazku(u)){
         if(currentUser && u.name === currentUser.name)
-          notifyPlayer('Dostal jsi výpověď', `${jmenoPozice} — dva dny bez omluvy. Novou práci si můžeš najít za ${JOB_BAN_DAYS} dní. Příště si vezmi dovolenou.`);
+          notifyPlayer('Dostal jsi výpověď', `${jmenoPozice} — ${JOB_SICK_DAYS_ALLOWED + 1} pracovní dny za sebou bez omluvy. Novou práci si můžeš najít za ${JOB_BAN_DAYS} dní. Příště si vezmi dovolenou.`);
         addNews('job', `📉 ${u.name} dostal výpověď — ${jmenoPozice}, neomluvené absence.`,
           safeCall(() => jobPlace(privateJobById(u.currentJobId) || world.jobs[u.currentJobId])) ||
           { lat: CITY_CENTER[0], lng: CITY_CENTER[1] });
@@ -9747,7 +9762,7 @@ const ENCOUNTER_DEFS = {
     // nastěhuje se do volného bytu za vyšší nájem
     dostupne: (u) => Object.values(world.parcels).some(p =>
       (p.owners?.[u.name] || 0) > 50 && p.useType === 'rental' &&
-      asArray(p.units).some(un => un && !un.tenant && !un.npc)),
+      asArray(p.units).some(un => un && !un.tenant && !un.npc && !un.ownerOccupied && (un.condition || 0) > 0)),
   },
   brigada:   { emoji: '💪', jmeno: 'Soused s prosbou', dostupne: () => true },
   penezenka: { emoji: '🎒', jmeno: 'Ztracená peněženka', dostupne: () => true },
@@ -9913,7 +9928,9 @@ async function encounterNajemnik(enc, u){
   Object.values(world.parcels).forEach(p => {
     if(cil) return;
     if((p.owners?.[u.name] || 0) <= 50 || p.useType !== 'rental') return;
-    const idx = asArray(p.units).findIndex(un => un && !un.tenant && !un.npc);
+    // Ne do bytu, kde bydlí sám majitel (dřív se tam zájemce nastěhoval a majitel přišel
+    // o bydlení), a ne do zchátralého bytu.
+    const idx = asArray(p.units).findIndex(un => un && !un.tenant && !un.npc && !un.ownerOccupied && (un.condition || 0) > 0);
     if(idx >= 0) cil = { p, idx };
   });
   if(!cil){
@@ -9929,9 +9946,11 @@ async function encounterNajemnik(enc, u){
     `(Běžný nájem: ${ferovy} Kč · stav bytu: ${stav} %)\n\n` +
     `${stav < 50 ? '⚠️ Byt je ve špatném stavu — brzy se odstěhuje.\n\n' : ''}Nastěhovat?`);
   if(!ok){ showToast('Zájemce šel jinam.'); return; }
-  cil.p.units[cil.idx].npc = { name: 'Nájemník z ulice', avatar: '🧑', minCondition: 35 };
-  npcZapamatujNajem(cil.p, cil.p.units[cil.idx]);
+  // `dohoda`: tenhle nájemník si cenu nabídl sám, takže ji unese, i když je nad běžnou
+  // hranicí (+25 %). Dřív nabídl až +45 %, hra mu pak strhávala jen hranici a začal se stěhovat.
+  cil.p.units[cil.idx].npc = { name: 'Nájemník z ulice', avatar: '🧑', minCondition: 35, dohoda: nabidka };
   nastavNajem(cil.p.units[cil.idx], nabidka);
+  npcZapamatujNajem(cil.p, cil.p.units[cil.idx]);
   stampUnit(cil.p.units[cil.idx]);
   stampHouse(cil.p);
   addNews('rental', `🔑 Do domu ${domKratce(cil.p)} se nastěhoval nový nájemník (${nabidka} Kč/den).`, cil.p.id);
@@ -9949,6 +9968,11 @@ async function encounterBrigada(enc, u){
     `Dám ti za to ${enc.odmena} Kč."\n\nPomoct?`);
   if(!ok){ showToast('Odmítl jsi pomoc.'); return; }
   u.balance += enc.odmena;
+  // Dřív bez zápisu: peníze nebyly v deníku ani v souhrnu dne a bez uložení se mohly
+  // při sloučení se starším snímkem ztratit.
+  pricti(u, 'akce', enc.odmena);
+  zapisDoDeniku('other', `💪 Pomohl jsem sousedovi (${co})`, enc.odmena);
+  saveWorld();
   await showAlert(`💪 Hotovo! Soused ti dal ${enc.odmena} Kč a poděkoval.`);
   checkQuests();
   refreshAll();
@@ -9962,10 +9986,16 @@ async function encounterPenezenka(enc, u){
     `Nechat si peníze?`);
   if(ok){
     u.balance += enc.nalez;
+    pricti(u, 'akce', enc.nalez);
+    zapisDoDeniku('other', '🎒 Nechal jsem si peníze z nalezené peněženky', enc.nalez);
+    saveWorld();
     await showAlert(`Nechal sis ${enc.nalez} Kč. Nikdo se to nedozví… ale majitel je bude hledat.`);
   } else {
     const odmena = Math.round(enc.nalez * 0.4);
     u.balance += odmena;
+    pricti(u, 'akce', odmena);
+    zapisDoDeniku('other', '🎒 Vrátil jsem peněženku — odměna od majitele', odmena);
+    saveWorld();
     addNews('event', `🎒 ${u.name} vrátil nalezenou peněženku majiteli. Slušnost se cení.`,
       playerPos ? { lat: playerPos.lat, lng: playerPos.lng } : undefined);
     await showAlert(`Odnesl jsi peněženku na radnici. Majitel ti z vděčnosti dal ${odmena} Kč — a ve městě se o tom mluví.`);
@@ -11028,6 +11058,9 @@ async function prijmoutNabidku(id){
   const ja = currentUser.name;
   const mam = (p && p.owners && p.owners[ja]) || 0;
   if(!p || mam < n.pct - 0.001){ showAlert(`Tolik už v domě nemáš (máš ${des(mam, 1)} %). Nabídku můžeš jen odmítnout.`); return; }
+  // Zastavený podíl prodat nejde — ani přímou nabídkou (dřív se tu hypotéka nekontrolovala).
+  { const k = muzuProdat(ja, p.id, n.pct);
+    if(!k.ok){ showAlert(`Tenhle podíl ručí za hypotéku, prodat ho nejde.\n\nVázáno: ${des(k.vazano, 1)} %\nVolně k prodeji: ${des(k.volne, 1)} %\nZbývá doplatit: ${k.dluh.toLocaleString('cs-CZ')} Kč\n\nNabídku můžeš odmítnout, nebo nejdřív doplatit hypotéku.`); return; } }
   const fee = Math.round(n.cena * MARKET_FEE);
   const trzni = Math.round(houseMarketPricePerPercent(p) * n.pct);
   if(!(await showConfirm(`Prodat ${des(n.pct, 1)} % domu ${domKratce(p)} hráči ${n.od} za ${n.cena.toLocaleString('cs-CZ')} Kč?\n\n` +
@@ -14523,7 +14556,7 @@ function renderSelected(id){
         <p style="font-size:1em;">${occupantLine}</p>
         <p${bydlimTady ? ' style="display:none"' : ''}>Nájemné: <b style="color:var(--gold)">${u.rentPrice} Kč/den</b> <span style="font-size:0.92em;color:var(--muted)">(férová cena ${fair} Kč)</span></p>
         ${bydlimTady
-          ? `<p style="font-size:0.93em;">Nájem se tu neplatí — byt obýváš ty. Díky tomu máš <b style="color:var(--accent)">nižší životní náklady</b> (${Math.round(dailyHousingCost(currentUser.name))} Kč místo ${LIVING_COST} Kč denně).</p>
+          ? `<p style="font-size:0.93em;">Nájem se tu neplatí — byt obýváš ty. Díky tomu máš <b style="color:var(--accent)">nižší životní náklady</b> (${Math.round(dailyHousingCost(currentUser.name))} Kč místo ${Math.round(LIVING_COST * zivotniMult() + zivotniUrovenPriplatek(currentUser.name))} Kč denně).</p>
              <p style="font-size:0.88em;color:var(--muted);">Kdybys ho pronajal, vynesl by kolem <b>${Math.round(fair)} Kč/den</b> — ale přišel bys o bydlení, pokud nemáš jiné.</p>`
           : `<p style="font-size:0.92em;">${priceNote}</p>`}
         ${myPct > 0 && !bydlimTady ? `<div style="background:var(--panel);border-left:3px solid ${occColor};border-radius:6px;padding:7px 9px;margin:6px 0;">
@@ -14588,7 +14621,7 @@ function renderSelected(id){
           Nikoho nevystěhuje — obsadíš jen tenhle jeden volný byt${pocetObsazenych ? `, zbylé ${pocetObsazenych} pronajímáš dál` : ''}.
           Náklady na bydlení ti klesnou na ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.
           <i>(Tlačítko „Bydlet" dole u celého domu je něco jiného — to vystěhuje všechny.)</i></p>` : ''}
-        ${iDecide && !u.tenant && !u.npc && u.condition>0 ? npcApplicantsHtml(p, idx) : ''}
+        ${iDecide && !u.tenant && !u.npc && !u.ownerOccupied && u.condition>0 ? npcApplicantsHtml(p, idx) : ''}
         ${canRent ? `<div class="row"><button ${near?'':'disabled'} onclick="rentUnit('${p.id}',${idx})">Najmout si tento byt (${u.rentPrice} Kč/den)</button></div>` : ''}
         ${iAmTenant ? `<div class="row"><button class="danger" onclick="endTenancy('${p.id}',${idx})">Dát výpověď z nájmu</button></div>` : ''}
       </div>`;
@@ -14769,7 +14802,7 @@ function renderMine(){
   // Úspora na bydlení: vlastní bydlení a vylepšení (zateplení, klimatizace, solár) snižují
   // životní náklady. Na účet nic nepřijde, ale o tolik míň odejde — a to je taky zásluha domů.
   const bydleniTed = dailyHousingCost(ja);
-  const usporaBydleni = Math.max(0, LIVING_COST - bydleniTed);
+  const usporaBydleni = Math.max(0, LIVING_COST * zivotniMult() + zivotniUrovenPriplatek(ja) - bydleniTed);
   const udrzbaCelkem = sum('udrzba');
   const hodnotaPodilu = data.reduce((a, d) => a + d.hodnota * d.dil, 0);
   const bytuCelkem = data.reduce((a, d) => a + d.byty.length, 0);
@@ -14889,7 +14922,7 @@ function renderMine(){
           : `<p style="font-size:0.86em;color:var(--muted);margin-top:4px;">🔧 Byty chátrají asi o ${des(tydne, 1)} % týdně, opravy vyjdou zhruba na ${kc(oprava)} Kč týdně. S rekonstrukcí by to bylo 4× méně (${kc(oprava * RENOVATION_DECAY_MULT)} Kč) a noční škody by byly poloviční.</p>`;
       }
       if(d.mojeByty.length){
-        const usetri = Math.round(LIVING_COST - dailyHousingCost(ja));
+        const usetri = Math.round(LIVING_COST * zivotniMult() + zivotniUrovenPriplatek(ja) - dailyHousingCost(ja));
         detail += `<p style="font-size:0.86em;color:var(--muted);">🏠 Z bytu, ve kterém bydlíš, nájem nechodí${usetri > 0 ? ` — zato šetříš ${usetri} Kč/den na životních nákladech` : ''}.</p>`;
       }
     }
@@ -15222,7 +15255,7 @@ function renderJobs(){
     if(weekend) attendanceNote = `<p style="font-size:0.92em;color:var(--accent2)">🌴 Víkend — volno. Do práce se dá zase v pondělí.</p>`;
     else if(workedToday) attendanceNote = `<p style="font-size:0.92em;color:var(--accent)">✅ Dnes odpracováno</p>`;
     else if(asArray(me.dovolenaDny).includes(calendarDay())) attendanceNote = `<p style="font-size:0.92em;color:var(--accent2)">🏖️ Dnes máš dovolenou — místo ti zůstává.</p>`;
-    else if(missed > 0) attendanceNote = `<p style="font-size:0.92em;color:var(--danger)">⚠️ Vynechal jsi ${missed}/${JOB_SICK_DAYS_ALLOWED} omluvených směn v řadě — další vynechání = vyhazov!</p>`;
+    else if(missed > 0) attendanceNote = `<p style="font-size:0.92em;color:var(--danger)">⚠️ Vynechal jsi ${missed}/${JOB_SICK_DAYS_ALLOWED} omluvených směn v řadě — ${missed >= JOB_SICK_DAYS_ALLOWED ? 'další vynechání = vyhazov!' : `tolerují se ještě ${JOB_SICK_DAYS_ALLOWED - missed}, pak přijde vyhazov.`}</p>`;
     else attendanceNote = `<p style="font-size:0.92em;color:var(--gold)">⚠️ Dnes ještě musíš odpracovat směnu (toleruje se ${JOB_SICK_DAYS_ALLOWED} vynechání v řadě, pak vyhazov). Když nemůžeš, vezmi si dovolenou.</p>`;
     const canWorkNow = !workedToday && !weekend && nearCityHall;
     // Dnešní mzdový násobek musí být vidět PŘED směnou, ne až v hlášení po ní.
@@ -16043,12 +16076,16 @@ function mortgageForHouse(u, houseId){
 
 // Společná kontrola pro všechny způsoby prodeje podílu.
 function muzuProdat(name, houseId, pct){
-  const m = mortgageForHouse(world.users[name], houseId);
-  if(!m) return { ok: true };
+  // Na jeden dům může být víc hypoték (dva nákupy na úvěr). Dřív se brala jen první,
+  // takže podíl ze druhé hypotéky šel prodat, i když za ni ručil.
+  const hypo = asArray(world.users[name] && world.users[name].loans).filter(l => l && l.type === 'mortgage' && l.houseId === houseId);
+  if(!hypo.length) return { ok: true };
+  const vazano = hypo.reduce((a, l) => a + (l.pct || 0), 0);
+  const dluh = hypo.reduce((a, l) => a + (l.balance || 0), 0);
   const mam = world.parcels[houseId]?.owners?.[name] || 0;
-  const volne = Math.max(0, mam - (m.pct || 0));
+  const volne = Math.max(0, mam - vazano);
   if(pct <= volne + 0.001) return { ok: true };
-  return { ok: false, volne, vazano: m.pct || 0, dluh: Math.round(m.balance) };
+  return { ok: false, volne, vazano, dluh: Math.round(dluh) };
 }
 
 async function buyHouseStakeOnMortgage(id){
@@ -16199,7 +16236,7 @@ function seizeAssetForDebt(user, loan){
     applySeizureProceeds(user, loan, proceeds);
     delete house.owners[owner];
     stampOwners(house, owner);
-    if(!houseHasOwner(house)){ house.useType = null; delete house.units; stampHouse(house); }
+    if(!houseHasOwner(house)){ house.useType = null; delete house.units; delete house.provoz; stampHouse(house); }
   } else {
     const biz = Object.values(world.businesses).find(b => (b.owners[owner] || 0) > 0);
     if(biz){
@@ -18789,6 +18826,17 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.30', datum:'2026-10-18', body:[
+    ['oprava','🏠 Kdo se nastěhoval do bytu ve svém domě, „vystěhoval" tím z vlastních bytů i ostatní hráče ve městě — přišli o bydlení a platili plné náklady. Teď se to týká jen tvých domů.'],
+    ['oprava','🔑 Výpověď z nájmu se při synchronizaci se zařízením majitele vracela zpátky a nájem se strhával dál. Stejně tak vystěhování nájemníků při přepnutí domu na bydlení a odstěhování z vlastního bytu.'],
+    ['oprava','🔑 Zájemce z ulice, který sám nabídl vyšší nájem (až +45 %), platil jen do běžné hranice +25 % a začal se stěhovat. Teď platí, co slíbil. A už se nenastěhuje do bytu, ve kterém bydlí majitel.'],
+    ['oprava','🏦 Zastavený podíl (hypotéka) šel prodat přímou nabídkou, a u dvou hypoték na jeden dům i běžně. Teď se počítají všechny hypotéky a hlídá to i přímá nabídka a automatický prodej domů neaktivních hráčů.'],
+    ['oprava','🏚️ Domy hráčů, kteří dlouho nehrají, se po prvním uzavření nabídky vypisovaly na tržiště každý den znovu (i se zprávou v novinách) a hned zase mizely.'],
+    ['oprava','💪 Odměna od souseda a peníze z peněženky se nezapsaly do deníku ani do souhrnu dne.'],
+    ['oprava','Náklady na bydlení v hlavičce teď počítají s inflací a dnešní událostí (třeba zdražení energií) — stejně jako se opravdu strhávají.'],
+    ['oprava','Docházka: upozornění psalo „další vynechání = vyhazov" už po prvním vynechání (tolerují se dvě) a výpověď uváděla dva dny místo tří.'],
+    ['oprava','Po exekuci domu zůstávala v prázdném domě provozovna.'],
+  ]},
   { verze:'21.29', datum:'2026-10-17', body:[
     ['novinka','🏁 Na první pohled je vidět, jestli je dům dostavěný. V detailu domu je buď „Ještě jde přidat: …" (co chybí z vylepšení a kolik přístaveb zbývá), nebo zelené „Dům je dostavěný". V Mých nemovitostech má dostavěný dům vlajku 🏁.'],
     ['zmena','Vestavba podkroví ukazuje, kolik přístaveb dům má (třeba 1/2). Když má obě, místo tlačítka je „✓ hotovo 2/2" — už se nestane, že spočítáš přístavbu a teprve pak se dozvíš, že nejde.'],
@@ -20659,9 +20707,15 @@ async function occupyOwnUnit(id, idx){
 
   // jinde už bydlí? (v jiném bytě nebo v domě určeném na bydlení)
   const jinyByt = [];
-  Object.values(world.parcels).forEach(q => asArray(q.units).forEach((un, i) => {
-    if(un && un.ownerOccupied && !(q.id === p.id && i === idx)) jinyByt.push({ q, i });
-  }));
+  // Jen v MÝCH domech (kde mám většinu). Byt nemá zapsané, kdo v něm bydlí, takže se dřív
+  // braly všechny obývané byty ve městě — nastěhováním se z vlastního bytu „odstěhoval"
+  // i jiný hráč a přišel o bydlení.
+  Object.values(world.parcels).forEach(q => {
+    if((q.owners?.[currentUser.name] || 0) <= 50) return;
+    asArray(q.units).forEach((un, i) => {
+      if(un && un.ownerOccupied && !(q.id === p.id && i === idx)) jinyByt.push({ q, i });
+    });
+  });
   const jinyDum = Object.values(world.parcels).find(q => q.useType === 'residence' && (q.owners?.[currentUser.name] || 0) > 0);
 
   let zprava = `Nastěhovat se do ${idx+1}. bytu?\n\nTenhle byt přestane vydělávat (${u.rentPrice} Kč/den), ale ostatní byty v domě pronajímáš dál.\n\nKlesnou ti životní náklady na ${Math.round(LIVING_COST*(1-RESIDENCE_LIVING_DISCOUNT))} Kč/den.`;
@@ -20679,7 +20733,7 @@ async function occupyOwnUnit(id, idx){
     refreshAll();
     return;
   }
-  jinyByt.forEach(({ q, i }) => { if(q.units[i]) q.units[i].ownerOccupied = false; stampHouse(q); });
+  jinyByt.forEach(({ q, i }) => { if(q.units[i]){ q.units[i].ownerOccupied = false; stampUnit(q.units[i]); } stampHouse(q); });
   cil.ownerOccupied = true;
   stampUnit(cil);
   stampHouse(p2 || p);
@@ -20692,8 +20746,12 @@ async function leaveOwnUnit(id, idx){
   if(!p || !currentUser) return;
   const u = asArray(p.units)[idx];
   if(!u || !u.ownerOccupied) return;
+  // Vystěhovat se může správce domu (i při 50/50, kdy nikdo nemá většinu — jinak by byt
+  // zůstal „obsazený majitelem" navždy). Cizí hráč ne.
+  if(!iHaveMajority(p) && !iAmDecider(p)){ showAlert('V tomhle bytě nebydlíš ty — bydlí v něm správce domu.'); return; }
   if(!(await showConfirm(`Vystěhovat se z ${idx+1}. bytu?\n\nByt se zase začne pronajímat (${u.rentPrice} Kč/den), ale přijdeš o vlastní bydlení — životní náklady vzrostou na ${LIVING_COST} Kč/den, dokud si nenajdeš jiné.`))) return;
   u.ownerOccupied = false;
+  stampUnit(u);
   stampHouse(p);
   saveWorld(); refreshAll();
   showAlert(`Vystěhoval ses. Byt se zase pronajímá.`);
@@ -20751,7 +20809,9 @@ function evaRada(u){
     return { text:`Splátky ti berou ${Math.round(splatky.amount / f.totalIncome * 100)} % příjmu. Zvaž doplacení půjčky, nebo si zvyš příjem — takhle se z toho nedostaneš.` };
 
   // 6) Nikde nebydlí — platí nejvyšší sazbu.
-  if(dailyHousingCost(u.name) >= LIVING_COST)
+  // Podle stavu bydlení, ne podle ceny — bohatý vlastník má kvůli životní úrovni náklady
+  // nad 90 Kč, a Eva mu pak radila, ať si najde bydlení.
+  if(housingStatus(u.name) === 'homeless' && !isNewbieProtected(u))
     return { text:`Nemáš kde bydlet, tak platíš plných ${LIVING_COST} Kč denně. Vlastní bydlení je o polovinu levnější.` };
 
   // 7) Hodně hotovosti leží ladem.
@@ -21229,6 +21289,7 @@ async function setUseType(id, type){
       }
       if(u.npc){ u.npc = null; }
       u.ownerOccupied = false;   // celý dům je teď bydlení, jednotlivý byt už není potřeba
+      stampUnit(u);              // ať se vystěhování při sloučení s jiným zařízením nevrátí
     });
   }
 
@@ -21529,7 +21590,7 @@ async function rentUnit(id, idx){
   if(p.useType !== 'rental'){ showAlert('Tenhle dům se momentálně nepronajímá — majitel v něm bydlí.'); return; }
   const unit = p.units[idx];
   if(unit.ownerOccupied){ showAlert('V tomhle bytě bydlí majitel domu. Zkus jiný volný byt v okolí.'); return; }
-  if(unit.tenant){ showAlert('Tento byt už má nájemníka.'); return; }
+  if(unit.tenant || unit.npc){ showAlert('Tento byt už má nájemníka.'); return; }
   if(unit.condition <= 0){ showAlert('Byt je zchátralý, nedá se v něm bydlet.'); return; }
   if((p.owners?.[currentUser.name]||0) > 0){ showAlert('Ve vlastním domě si byt nenajímáš — jsi spoluvlastník.'); return; }
   const status = housingStatus(currentUser.name);
@@ -21537,7 +21598,12 @@ async function rentUnit(id, idx){
   if(status === 'tenant'){ showAlert('Už bydlíš v nájmu jinde. Nejdřív dej výpověď.'); return; }
   const totalDaily = TENANT_LIVING_COST + unit.rentPrice;
   if(!(await showConfirm(`Najmout byt ${idx+1}. patro za ${unit.rentPrice} Kč/den? Celkem za bydlení zaplatíš ${totalDaily} Kč/den (nájem + životní složka) — pořád míň než ${LIVING_COST} Kč bez bydlení.`))) return;
-  unit.tenant = currentUser.name;
+  // Byt si znovu vyzvedneme — mezitím se do něj mohl nastěhovat někdo jiný.
+  const p2 = world.parcels[id] || p;
+  const cil = asArray(p2.units).find(x => x && unit.uid && x.uid === unit.uid) || unit;
+  if(cil.tenant || cil.npc || cil.ownerOccupied){ showAlert('Do bytu se mezitím někdo nastěhoval. Zkus jiný volný byt.'); refreshAll(); return; }
+  cil.tenant = currentUser.name;
+  stampUnit(cil); stampHouse(p2);
   addNews('rental', `🔑 ${currentUser.name} se nastěhoval do nájmu v domě ${domKratce(p)}.`, p.id);
   saveWorld(); refreshAll();
   showAlert(`Nastěhoval ses do nájmu (${idx+1}. patro). Nájem se platí průběžně.`);
@@ -21551,6 +21617,11 @@ async function endTenancy(id, idx){
   if(!unit || unit.tenant !== currentUser.name) return;
   if(!(await showConfirm('Dát výpověď z nájmu? Budeš zase platit plné životní náklady, dokud si nenajdeš jiné bydlení.'))) return;
   unit.tenant = null;
+  // Bez razítka bytu se výpověď při sloučení se zařízením majitele vrátila zpátky
+  // a hráči se dál strhával nájem (ověřeno simulací dvou zařízení).
+  stampUnit(unit);
+  if(p) stampHouse(p);
+  addNews('rental', `📤 ${currentUser.name} dal výpověď z nájmu v domě ${domKratce(p)}.`, p && p.id);
   saveWorld(); refreshAll();
 }
 
