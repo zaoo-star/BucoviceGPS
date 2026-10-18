@@ -1622,8 +1622,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.31';
-const APP_BUILD = '18.10.2026 13:30';
+const APP_VERSION = '21.33';
+const APP_BUILD = '18.10.2026 16:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -2665,6 +2665,10 @@ async function denniUvitaniVnitrni(){
   try { navodHotovy = localStorage.getItem('bucovice_tutorial_done') === '1'; } catch(e){}
   if(!navodHotovy) return;
   if(!currentUser) return;
+  // Uvítání se ukazuje 2,5 s po startu, ale první tick (který přepne den) běží až po 5 s.
+  // Ráno tak uvítání ukazovalo VČEREJŠÍ den i s včerejší událostí ve městě a bez výplaty
+  // za včerejšek (hlásila Eva). Nejdřív proto den dotáhneme na dnešek.
+  safeCall(() => { if((world.lastProcessedDay || 0) < gameClock().day) tick(); });
   const u = world.users[currentUser.name];
   if(!u) return;
   const dnes = calendarDay();
@@ -8091,13 +8095,13 @@ function uzavriDen(u, denKtery){
   const vydaje = kStrzeni;
   // Den bez pohybu se nezapisuje — ale nachozené kilometry se za pohyb počítají taky,
   // jinak by se den strávený chůzí bez příjmu do deníku vůbec nedostal.
-  if(prijem < 1 && vydaje < 1 && (s.metry || 0) < 100) return;
+  if(prijem < 1 && vydaje < 1 && (s.prodej || 0) < 1 && (s.metry || 0) < 100) return;
   u.souhrny = asArray(u.souhrny);
   u.souhrny.unshift({
     den: denKtery, ts: Date.now(),
     najem: Math.round(s.najem||0), firmy: Math.round(s.firmy||0), solar: Math.round(s.solar||0),
     provoz: Math.round(s.provoz||0),
-    mzdy: Math.round(s.mzdy||0), akce: Math.round(s.akce||0),
+    mzdy: Math.round(s.mzdy||0), akce: Math.round(s.akce||0), prodej: Math.round(s.prodej||0),
     naklady: Math.round(s.naklady||0), dane: Math.round(s.dane||0), uroky: Math.round(s.uroky||0),
     najemne: Math.round(s.najemne||0), sporeni: Math.round(s.uroky_sporeni||0),
     danPrijem: Math.round(pulnocniVyplata(s).danPrijem),
@@ -9919,7 +9923,7 @@ async function encounterKupec(enc, u){
   // Chybělo tu razítko podílů — bez něj se prodej při synchronizaci nemusel udržet
   // a hráč mohl skončit s penězi i podílem, nebo naopak přijít o obojí.
   stampOwners(p, u.name);
-  pricti(u, 'akce', nabidka);
+  pricti(u, 'prodej', nabidka);   // prodej majetku není výdělek — v souhrnu má vlastní řádek (Eva)
   zapisDoDeniku('sell', `Prodal jsem kupci ${pctText(pct)} % domu ${domKratce(p)}${orientacniBod(p) ? ' (' + orientacniBod(p) + ')' : ''}`, nabidka);
   recordSale(p, nabidka, pct, u.name, 'kupec z okolí');
   addNews('sale', `🧳 ${u.name} prodal ${pctText(pct)} % domu ${domKratce(p)} kupci z okolí za ${nabidka.toLocaleString('cs-CZ')} Kč.`, p.id);
@@ -11083,6 +11087,7 @@ async function prijmoutNabidku(id){
   stampOwners(p, ja, n.od);
   stampHouse(p);
   world.users[ja].balance += (n.cena - fee);
+  pricti(world.users[ja], 'prodej', n.cena - fee);
   recordSale(p, n.cena, n.pct, ja, n.od);
   n.stav = 'prijata'; n.ts = Date.now();
   zapisDoDeniku('sell', `🤝 Prodáno ${des(n.pct, 1)} % domu ${domKratce(p)} hráči ${n.od}`, n.cena - fee);
@@ -11105,6 +11110,7 @@ async function prijmoutNabidkuFirmy(n){
   biz.owners[n.od] = (biz.owners[n.od] || 0) + n.pct;
   stampBizOwners(biz, ja, n.od);
   world.users[ja].balance += (n.cena - fee);
+  pricti(world.users[ja], 'prodej', n.cena - fee);
   n.stav = 'prijata'; n.ts = Date.now();
   zapisDoDeniku('sell', `🤝 Prodáno ${des(n.pct, 1)} % firmy ${biz.name} hráči ${n.od}`, n.cena - fee);
   addNews('invest', `🤝 ${n.od} koupil ${pctText(n.pct)} % firmy ${biz.name} od hráče ${ja} za ${n.cena.toLocaleString('cs-CZ')} Kč (přímá nabídka).`, { lat: biz.lat, lng: biz.lng });
@@ -15675,6 +15681,7 @@ async function sellHouseStake(id){
   }
   if(!(await showConfirm(varovani + `\nProdat?`))) return;
   world.users[currentUser.name].balance += refund;
+  pricti(world.users[currentUser.name], 'prodej', refund);
   p.owners[currentUser.name] -= pct;
   if(p.owners[currentUser.name] <= 0.001) delete p.owners[currentUser.name];
   stampOwners(p, currentUser.name);
@@ -18846,8 +18853,10 @@ function renderDenik(el){
       </div>`;
     } else {
       const sh = it.sh;
-      const prijem = sh.najem + sh.firmy + sh.solar + sh.mzdy + sh.akce;
-      const vydaje = sh.naklady + sh.dane + sh.uroky;
+      // Bilance ze VŠECH řádků, které souhrn ukazuje. Dřív chyběly provozovny, daň z příjmu
+      // a placené nájemné, takže bilance neseděla se součtem řádků nad ní.
+      const prijem = (sh.najem||0) + (sh.firmy||0) + (sh.solar||0) + (sh.provoz||0) + (sh.mzdy||0) + (sh.akce||0);
+      const vydaje = (sh.naklady||0) + (sh.dane||0) + (sh.uroky||0) + (sh.danPrijem||0) + (sh.najemne||0);
       const bilance = prijem - vydaje;
       // Výdaje se v souhrnu ukládají jako KLADNÁ čísla, takže se vypisovaly jako
       // „Splátky: +605 Kč" — vypadalo to, že hráč vydělal, i když ho to stálo.
@@ -18862,7 +18871,7 @@ function renderDenik(el){
         ${radek('☀️ Solár', sh.solar, 'var(--accent)')}
         ${radek('🏪 Provozovny', sh.provoz || 0, 'var(--accent)')}
         ${radek('💼 Mzda', sh.mzdy, 'var(--accent)')}
-        ${radek('🎯 Balíky a úkoly', sh.akce, 'var(--accent)')}
+        ${radek('🎯 Balíky, úkoly a odměny', sh.akce, 'var(--accent)')}
         ${sh.danPrijem ? radek('🏛️ Daň z příjmu', sh.danPrijem, 'var(--danger)', true) : ''}
         ${radek('🍞 Život a bydlení', sh.naklady, 'var(--danger)', true)}
         ${radek('🏛️ Daně', sh.dane, 'var(--danger)', true)}
@@ -18871,8 +18880,10 @@ function renderDenik(el){
         ${typeof sh.vyplaceno === 'number' ? `<p style="margin:3px 0 0;font-size:0.82em;color:var(--muted);">
           Z toho o půlnoci ${sh.vyplaceno >= 0 ? 'přišlo' : 'odešlo'} <b>${sh.vyplaceno >= 0 ? '+' : '−'}${Math.abs(sh.vyplaceno).toLocaleString('cs-CZ')} Kč</b> —
           zbytek (plat, balíky, úkoly) jsi dostal hned během dne.</p>` : ''}
+        ${(sh.prodej || 0) >= 1 ? `<p style="margin:3px 0 0;font-size:0.86em;color:var(--muted);">🏷️ Prodej majetku: <b style="color:var(--gold)">+${sh.prodej.toLocaleString('cs-CZ')} Kč</b>
+          <span style="font-size:0.92em;">— do bilance se nepočítá, majetek se jen přesunul z domu do hotovosti.</span></p>` : ''}
         <p style="margin:4px 0 0;border-top:1px solid var(--border);padding-top:3px;font-size:0.92em;">
-          Bilance dne: <b style="color:${bilance >= 0 ? 'var(--accent)' : 'var(--danger)'}">${bilance >= 0 ? '+' : ''}${Math.round(bilance).toLocaleString('cs-CZ')} Kč</b>
+          Bilance dne: <b style="color:${bilance >= 0 ? 'var(--accent)' : 'var(--danger)'}">${bilance >= 0 ? '+' : '−'}${Math.abs(Math.round(bilance)).toLocaleString('cs-CZ')} Kč</b>
           · nachozeno <b>${(sh.metry/1000).toFixed(1).replace('.', ',')} km</b>
           · zůstatek na konci <b>${sh.zustatek.toLocaleString('cs-CZ')} Kč</b></p>
       </div>`;
@@ -18910,6 +18921,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.33', datum:'2026-10-18', body:[
+    ['oprava','📅 Ranní uvítání ukazovalo včerejší den — i se včerejší událostí ve městě a výplatou za předevčírem (hlásila Eva). Uvítání se ukázalo dřív, než hra stihla přepnout den. Teď se den přepne nejdřív.'],
+  ]},
+  { verze:'21.32', datum:'2026-10-18', body:[
+    ['oprava','📊 Peníze za prodej domu kupci z okolí se v souhrnu dne objevily mezi „Balíky a úkoly" a nafoukly bilanci dne (hlásila Eva). Prodej majetku má teď v souhrnu vlastní řádek a do bilance se nepočítá — dům se jen proměnil v hotovost. Platí to i pro prodej městu, na tržišti, v aukci a přímou nabídkou.'],
+    ['oprava','Bilance dne v deníku teď sedí se součtem řádků nad ní. Dřív v ní chyběly provozovny, daň z příjmu a placené nájemné.'],
+  ]},
   { verze:'21.31', datum:'2026-10-18', body:[
     ['zmena','🏠 Přehlednější detail domu. Nahoře čtyři hlavní čísla (hodnota, cena za 1 %, tvůj podíl, nájem), pod nimi štítky s tím, co dnes hýbe cenou. Zbytek je rozdělený do sekcí Vlastnictví, Co dům vynese, Koupit podíl a Co s domem. Vysvětlení ceny, hypotéky a kronika jsou sbalené — rozklikneš, když je potřebuješ.'],
   ]},
@@ -22224,6 +22242,7 @@ async function sellStake(bizId){
     `Přijdeš o příjem ${Math.round(ztrataDenne)} Kč/den.\n` +
     `Zpátky dostáváš jen ${Math.round(BUSINESS_SELL_RATIO*100)} % ceny — prodej se prodělává.`))) return;
   world.users[currentUser.name].balance += refund;
+  pricti(world.users[currentUser.name], 'prodej', refund);
   biz.owners[currentUser.name] -= pct;
   if(biz.owners[currentUser.name] <= 0.001) delete biz.owners[currentUser.name];
   stampBizOwners(biz, currentUser.name);
@@ -22330,6 +22349,8 @@ function vyzvedniPlatby(){
     u.balance += g.amount;
     celkem += g.amount;
     vyzvednute.push(g.id);
+    // Peníze za prodej na tržišti a v aukci = prodej majetku (vrácené příhozy ne).
+    if(/^(trh_|aukce_)/.test(String(g.id)) && g.amount > 0) pricti(u, 'prodej', g.amount);
     zapisDoDeniku(g.amount >= 0 ? 'sell' : 'other', `${g.note || 'Platba'}${g.from ? ' (' + g.from + ')' : ''}`, g.amount);
     hlaseniProHrace(u, `${g.amount >= 0 ? '💰' : '💸'} ${g.note || 'Platba'}: ${g.amount >= 0 ? '+' : '−'}${Math.abs(g.amount).toLocaleString('cs-CZ')} Kč`);
     if(Math.abs(g.amount) >= 1) notifyPlayer(g.amount >= 0 ? 'Přišly peníze' : 'Strženo z účtu',
