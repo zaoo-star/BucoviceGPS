@@ -442,6 +442,17 @@
   .mineKc small{ font-weight:400;font-size:0.75em; }
   .mineDetail{ padding:6px 12px 12px; }
   .mineDetail p{ margin:2px 0; }
+  .detMeta{ margin:0 0 2px;font-size:0.9em;color:var(--muted); }
+  .detStaty{ display:grid;grid-template-columns:repeat(2, minmax(0, 1fr));gap:6px;margin:8px 0 6px; }
+  .detStat{ background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:6px 9px;min-width:0; }
+  .detStat span{ display:block;font-size:0.76em;color:var(--muted);margin-bottom:1px; }
+  .detStat b{ font-size:1.05em; }
+  .detMale{ display:inline !important;font-size:0.8em !important;margin:0 !important; }
+  .detChipy{ display:flex;flex-wrap:wrap;gap:4px;margin:2px 0 6px; }
+  .detChip{ font-size:0.78em;padding:2px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--border); }
+  .detSek{ margin:12px 0 5px;padding-top:9px;border-top:1px solid var(--border);font-size:0.8em;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted); }
+  .detVysv{ margin-top:10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px; }
+  .detVysv summary{ font-size:0.92em;color:var(--accent2);cursor:pointer; }
   .mineSek{ margin:10px 0 3px !important;font-size:0.8em;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted); }
 
   /* ===== KRESLENÉ ZNAČKY DOMŮ =====
@@ -1611,8 +1622,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.30';
-const APP_BUILD = '18.10.2026 15:00';
+const APP_VERSION = '21.31';
+const APP_BUILD = '18.10.2026 13:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -13999,6 +14010,49 @@ function sbalitelneKarty(html, vynechatPrvni){
   return zabalNapovedu(vysledek);
 }
 
+// Nadpis sekce v hlavní kartě domu — prázdnou sekci (bez textu i tlačítek) vynechá.
+function detailSekce(nazev, obsah){
+  if(!obsah || !obsah.replace(/<[^>]*>/g, '').trim()) return '';
+  return `<div class="detSek">${nazev}</div>${obsah}`;
+}
+// Čtyři hlavní čísla domu na první pohled.
+function detailStatyHtml(p, myPct, free){
+  const kc = x => Math.round(x).toLocaleString('cs-CZ');
+  const dlazdice = [];
+  dlazdice.push(['💎 Hodnota domu', `<b style="color:var(--gold)">${kc(effectiveHousePrice(p))} Kč</b>`]);
+  dlazdice.push(['🔑 Cena za 1 %', `<b>${kc(houseMarketPricePerPercent(p))} Kč</b>`]);
+  dlazdice.push(myPct > 0
+    ? ['👤 Tvůj podíl', `<b style="color:var(--accent)">${des(myPct, myPct >= 99.95 ? 0 : 1)} %</b>${iAmDecider(p) ? ' 👑' : ''}`]
+    : (free > 0 ? ['🛒 Volné k odkupu', `<b>${des(free, free >= 99.95 ? 0 : 1)} %</b>`] : ['🛒 Volné k odkupu', '<b>nic</b>']));
+  let vynos = null;
+  safeCall(() => {
+    if(p.useType === 'rental' && asArray(p.units).length){
+      const den = asArray(p.units).reduce((a, u) => a + vybranyNajem(p, u), 0) * najemBonusMult(p);
+      vynos = ['🏘️ Nájem teď', `<b>${kc(den)} Kč/den</b>${myPct > 0 && myPct < 99.95 ? ` <span class="detMale">(tvých ${kc(den * myPct / 100)})</span>` : ''}`];
+    } else if(maProvoz(p)){
+      vynos = ['🏪 Provozovna', `<b>${kc(provozCistyVynos(p))} Kč/den</b> <span class="detMale">čistě</span>`];
+    } else if(p.useType === 'residence'){
+      vynos = ['🏠 Využití', '<b>bydlení</b>'];
+    } else {
+      const n = (p.units && p.units.length) || p.levels || 1;
+      vynos = ['🏘️ Pronájmem až', `<b>${kc(fairRentForHouse(p) * n)} Kč/den</b>`];
+    }
+  });
+  if(vynos) dlazdice.push(vynos);
+  return `<div class="detStaty">${dlazdice.map(([n, v]) => `<div class="detStat"><span>${n}</span>${v}</div>`).join('')}</div>`;
+}
+// Co dnes hýbe cenou — krátké štítky. Vysvětlení je sbalené dole („Proč dům stojí tolik").
+function detailVlivyHtml(p){
+  const st = [];
+  const cyc = marketCycleLabel();
+  st.push(`<span class="detChip" style="color:${cyc.color}">${cyc.label} ×${des(marketMultiplier(), 2)}</span>`);
+  const pop = popularityInfo(p);
+  st.push(`<span class="detChip" style="color:${pop.color}">${pop.stars} ${pop.label}</span>`);
+  if(gentrify(p) > 1.01) st.push(`<span class="detChip" style="color:var(--gold)">🔥 zájem v okolí ×${des(gentrify(p), 2)}</span>`);
+  const sm = stavebniMult(p);
+  if(sm > 1.001) st.push(`<span class="detChip" style="color:var(--accent2)">🔨 úpravy +${Math.round((sm - 1) * 100)} %</span>`);
+  return `<div class="detChipy">${st.join('')}</div>`;
+}
 function renderSelected(id){
   const p = world.parcels[id];
   const el = document.getElementById('selectedContent');
@@ -14011,9 +14065,13 @@ function renderSelected(id){
   const owned = houseHasOwner(p);
 
   let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>${nazevProvozu(p) ? `<p style="margin:-2px 0 4px;font-weight:700;color:var(--gold);">${(PROVOZ_TYPY[p.provoz.typ] || {}).emoji || '🏪'} ${escapeHtml(jmenoProvozu(p))}</p>` : ''}`;
+  html += `<p class="detMeta">${typDomu(pocetPater(p)).ikona} ${typDomu(pocetPater(p)).nazev} · ${p.levels||1} ${sklonuj(p.levels||1, 'patro', 'patra', 'pater')}${
+    pristavebNavic(p) ? ` + ${pristavebNavic(p)} ${pristavebNavic(p)===1?'přístavba':'přístavby'}` : ''}</p>`;
   html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
-  html += `<p style="font-size:0.92em;color:var(--muted)">${typDomu(pocetPater(p)).ikona} ${typDomu(pocetPater(p)).nazev} · ${p.levels||1} ${sklonuj(p.levels||1, 'patro', 'patra', 'pater')}${
-    pristavebNavic(p) ? ` + ${pristavebNavic(p)} ${pristavebNavic(p)===1?'přístavba':'přístavby'}` : ''} · Celková hodnota domu: <b style="color:var(--gold)">${Math.round(effectiveHousePrice(p))} Kč</b> · Cena za 1 %: ${Math.round(houseMarketPricePerPercent(p))} Kč</p>`;
+  // PŘEHLEDNĚJŠÍ DETAIL (21.31): části se skládají do kousků a na konci se poskládají
+  // v pořadí, ve kterém je hráč potřebuje — nahoře čísla, pak vlastnictví, výnos, nákup,
+  // co s domem, a vysvětlivky k ceně a kronika dole sbalené. Výpočty zůstaly beze změny.
+  const kTitul = html; html = '';
   // Kolik z hodnoty dělají úpravy — hráčka se ptala, proč se hodnota po investicích nehne.
   {
     const sm = stavebniMult(p);
@@ -14029,12 +14087,14 @@ function renderSelected(id){
         <p style="font-size:0.8em;color:var(--muted);margin:0 0 2px;">Procenta úprav se sčítají a berou se ze základu, ne z celkové ceny. Základ se mění s trhem a zájmem o lokalitu.</p>`;
     }
   }
+  const kUpravy = html; html = '';
   if(!(maProvoz(p) && !p.provoz.prizemi) || iDecide) safeCall(() => {
     const zbyva = coJesteJde(p);
     html += zbyva.length
       ? `<p style="font-size:0.86em;margin:2px 0;">🔨 Ještě jde přidat: ${zbyva.join(' · ')} <span style="color:var(--muted)">(přístavby ${Math.min(PRISTAVBA_MAX, pristavebNavic(p))}/${PRISTAVBA_MAX})</span></p>`
       : `<p style="font-size:0.9em;margin:4px 0;padding:6px 8px;border-radius:8px;background:rgba(34,197,94,0.12);border:1px solid rgba(34,197,94,0.45);">🏁 <b>Dům je dostavěný</b> — má všechna vylepšení i obě přístavby, víc se mu přidat nedá.</p>`;
   });
+  const kJeste = html; html = '';
   // Co dům vynese z pronájmu — hlavně pro toho, kdo ho teprve zvažuje. Bez toho to byl
   // „zajíc v pytli": stejně drahé domy v jedné ulici měly 21 a 43 Kč na byt (Eva). Rozdíl
   // je v počtu bytů — hodnota domu se mezi ně dělí, takže celý dům vynese podobně.
@@ -14046,6 +14106,7 @@ function renderSelected(id){
     html += `<p style="font-size:0.88em;margin:4px 0 2px;">💰 Pronájem: férově <b>${fair} Kč</b> na byt × ${n} ${sklonuj(n, 'byt', 'byty', 'bytů')} = <b style="color:var(--gold)">${zaDen} Kč/den</b> za dům <span style="color:var(--muted)">(nájemník unese až ${hran} Kč na byt${dni ? ` · cena domu se vrátí zhruba za ${dni} dní` : ''})</span></p>
       <p style="font-size:0.8em;color:var(--muted);margin:0 0 4px;">Hodnota domu se dělí mezi byty: víc bytů = levnější byty, ale celý dům vynese podobně jako stejně drahý dům s méně byty.</p>`;
   });
+  const kNajemCizi = html; html = '';
   const popInfo = popularityInfo(p);
   html += `<p style="font-size:0.92em;"><span style="color:${popInfo.color}">${popInfo.stars} ${popInfo.label}</span> <span style="color:var(--muted)">— historie zájmu o tuhle lokalitu (trvalé, neodeznívá)</span></p>`;
   const cyc = marketCycleLabel();
@@ -14053,6 +14114,7 @@ function renderSelected(id){
   if(gentrify(p) > 1.01){
     html += `<p style="font-size:0.92em;"><span style="color:var(--gold)">🔥 Zvýšený zájem v okolí</span> <span style="color:var(--muted)">— cena je dočasně vyšší (×${des(gentrify(p), 2)}), bez dalších nákupů poblíž postupně odezní</span></p>`;
   }
+  const kLokalita = html; html = '';
   // Lokální událost u tohohle konkrétního domu — ať hráč ví, proč jsou dnes čísla jiná.
   const lokU = localEventFor(p);
   if(lokU){
@@ -14068,6 +14130,7 @@ function renderSelected(id){
     </div>`;
   }
 
+  const kLokUdalost = html; html = '';
   // Karta provozovny — stav zásob, poptávka a co ji ovlivňuje.
   if(maProvoz(p)){
     const typ = PROVOZ_TYPY[p.provoz.typ];
@@ -14123,6 +14186,7 @@ function renderSelected(id){
     </div>`;
   }
 
+  const kProvoz = html; html = '';
   if((p.salesHistory && p.salesHistory.length) || asArray(p.kronika).length || asArray(p.hodnoty).length || owned){
     const hist = asArray(p.salesHistory);
     const pocetZ = hist.length + asArray(p.kronika).length;
@@ -14167,10 +14231,12 @@ function renderSelected(id){
     html += `</details>`;
   }
 
+  const kKronika = html; html = '';
   // --- Spoluvlastnící ---
   if(owned){
-    html += `<p style="font-size:1em;">Spoluvlastníci:</p>`;
-    Object.entries(p.owners).sort((a,b)=>b[1]-a[1]).forEach(([name, pct]) => {
+    // Když je dům celý můj, seznam s jediným jménem nic neříká — stačí věta nad ním.
+    const jenJa = currentUser && Object.keys(p.owners).length === 1 && (p.owners[currentUser.name] || 0) > 0;
+    if(!jenJa) Object.entries(p.owners).sort((a,b)=>b[1]-a[1]).forEach(([name, pct]) => {
       const isDec = name === decider;
       const isMeOwner = name===currentUser?.name;
       html += `<p style="font-size:1em;margin:2px 0;">${isDec ? '👑 ' : '• '}<b ${isMeOwner?'':'style="cursor:pointer;text-decoration:underline;"'} ${isMeOwner?'':profileAttr(name)}>${escapeHtml(name)}</b>: ${des(pct, 1)} %${isDec ? ' <span style="color:var(--muted)">(rozhoduje)</span>' : ''}${isMeOwner ? ' <span style="color:var(--accent)">(ty)</span>' : ''}</p>`;
@@ -14192,12 +14258,15 @@ function renderSelected(id){
     }
   }
 
+  const kVlastnici = html; html = '';
   // --- Co s tím můžeš dělat (jasný popis práv) ---
   const iMajority = iHaveMajority(p);
-  html += `<p style="font-size:0.92em;color:var(--muted);margin-top:8px;border-top:1px solid var(--border);padding-top:8px;">`;
+  html += `<p style="font-size:0.9em;color:var(--muted);margin:0 0 6px;">`;
   if(myPct > 0){
     if(iMajority){
-      html += `Vlastníš ${des(myPct, 1)} % (většina) — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájmu i opravách. Výnos se dělí všem podle podílů.`;
+      html += myPct >= 99.95
+        ? `Dům je <b>celý tvůj</b> — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájem i opravy.`
+        : `Vlastníš ${des(myPct, 1)} % (většina) — <b style="color:var(--accent)">rozhoduješ o všem</b>: využití domu, nájmu i opravách. Výnos se dělí všem podle podílů.`;
     } else if(decider){
       const chybi = Math.max(0, 50.1 - myPct);
       html += `Vlastníš ${des(myPct, 1)} %, ale rozhoduje <b>${decider}</b> (má přes polovinu). Bereš svůj podíl z nájmu, ale o domě nerozhoduješ.`;
@@ -14218,6 +14287,7 @@ function renderSelected(id){
   }
   html += `</p>`;
 
+  const kPrava = html; html = '';
   // --- Nákup / prodej podílu ---
   const meUser = currentUser ? world.users[currentUser.name] : null;
   const canClaimFree = meUser && meUser.starterHomeAvailable && free > 0 && (!houseHasOwner(p) || (p.owners[currentUser.name]||0) > 0);
@@ -14251,14 +14321,16 @@ function renderSelected(id){
     const akontace = Math.round(cenaUkazka * MORTGAGE_DOWNPAYMENT_RATIO);
     const uver = Math.round(cenaUkazka - akontace);
     const splatka = Math.round(uver * MORTGAGE_MIN_PAYMENT_RATIO);
-    html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0 0;">
+    html += `<details class="detVysv" style="margin-top:6px;"><summary>🏦 Jak funguje hypotéka u tohohle domu</summary><p style="font-size:0.85em;color:var(--muted);margin:6px 0 0 0;">
       🏦 <b>Hypotéka</b> = zaplatíš jen ${Math.round(MORTGAGE_DOWNPAYMENT_RATIO*100)} % ceny, zbytek půjčí banka za ${urokText(MORTGAGE_ANNUAL_RATE)}
       (běžná půjčka stojí ${urokText(LOAN_ANNUAL_RATE)}). Dům jí ručí, proto je levnější.<br>
       Třeba ${des(ukazkaPct, 0)} % tohoto domu: dáš <b>${akontace.toLocaleString('cs-CZ')} Kč</b> hned,
       banka půjčí ${uver.toLocaleString('cs-CZ')} Kč a strhává si ~${splatka} Kč denně.
-      Když přestaneš splácet, vezme si zpátky <b>právě tenhle podíl</b>.</p>`;
+      Když přestaneš splácet, vezme si zpátky <b>právě tenhle podíl</b>.</p></details>`;
   }
+  const kKoupit = html; html = '';
   html += safeCall(() => uliceHtmlProDum(p)) || '';
+  const kUlice = html; html = '';
   // Návratnost: bez ní hráč nemá jak poznat, jestli je dům dobrá koupě. Cena za procento
   // se totiž mezi domy liší víc než nájem, takže levnější dům bývá lepší investice.
   // POZOR: dřív se to ukazovalo jen tam, kde zbývaly volné podíly (`free > 0`) — kdo dům
@@ -14332,6 +14404,7 @@ function renderSelected(id){
         📉 Po údržbě (${Math.round(udrzbaDen)} Kč/den) a dani z nemovitosti tenhle dům na nájmu nevydělává.</p>`;
     }
   }
+  const kVynos = html; html = '';
   html += `<div class="row">`;
   if(myPct > 0) html += `<button class="danger" onclick="sellHouseStake('${p.id}')">Prodat městu (${Math.round(HOUSE_SELL_RATIO*100)} %)</button>`;
   // Zástava musí být vidět dřív, než hráč zkusí prodávat.
@@ -14351,6 +14424,7 @@ function renderSelected(id){
     }
   }
 
+  const kProdej = html; html = '';
   // --- Zásadní změny využití (jen majorita >50 %) ---
   if(iMajority){
     if(p.useType === 'residence'){
@@ -14390,6 +14464,16 @@ function renderSelected(id){
   } else if(iDecide) {
     html += `<p style="font-size:0.92em;color:var(--muted);margin-top:6px;">Jsi správce, ale na přestavbu domu (změnu využití) potřebuješ víc než 50 % podílu.</p>`;
   }
+  const kVyuziti = html; html = '';
+  html = kTitul + detailStatyHtml(p, myPct, free) + detailVlivyHtml(p) + kJeste + kLokUdalost + kProvoz
+    + detailSekce('👥 Vlastnictví', kPrava + kVlastnici)
+    + detailSekce('💰 Co dům vynese', kNajemCizi + kVynos)
+    + detailSekce('🛒 Koupit podíl', kKoupit)
+    + kUlice
+    + detailSekce('⚙️ Co s domem', kVyuziti + kProdej)
+    + ((kUpravy + kLokalita).trim() ? `<details class="detVysv"${SEKCE_OTEVRENE && SEKCE_OTEVRENE.has('proccena') ? ' open' : ''} ontoggle="prepniSekci('proccena', this.open)">
+        <summary>📊 Proč dům stojí tolik</summary>${kUpravy}${kLokalita}</details>` : '')
+    + kKronika;
   html += `</div>`; // konec hlavní karty
 
   // --- Vylepšení domu (platí pro pronájem I vlastní bydlení) ---
@@ -18826,6 +18910,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.31', datum:'2026-10-18', body:[
+    ['zmena','🏠 Přehlednější detail domu. Nahoře čtyři hlavní čísla (hodnota, cena za 1 %, tvůj podíl, nájem), pod nimi štítky s tím, co dnes hýbe cenou. Zbytek je rozdělený do sekcí Vlastnictví, Co dům vynese, Koupit podíl a Co s domem. Vysvětlení ceny, hypotéky a kronika jsou sbalené — rozklikneš, když je potřebuješ.'],
+  ]},
   { verze:'21.30', datum:'2026-10-18', body:[
     ['oprava','🏠 Kdo se nastěhoval do bytu ve svém domě, „vystěhoval" tím z vlastních bytů i ostatní hráče ve městě — přišli o bydlení a platili plné náklady. Teď se to týká jen tvých domů.'],
     ['oprava','🔑 Výpověď z nájmu se při synchronizaci se zařízením majitele vracela zpátky a nájem se strhával dál. Stejně tak vystěhování nájemníků při přepnutí domu na bydlení a odstěhování z vlastního bytu.'],
