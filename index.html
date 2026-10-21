@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.47';
-const APP_BUILD = '22.10.2026 00:15';
+const APP_VERSION = '21.48';
+const APP_BUILD = '22.10.2026 00:45';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7192,11 +7192,26 @@ function initFirebaseSync(){
     // "novější" než cloud → cloud se nepřevzal a vzápětí se PŘEPSAL lokálním stavem.
     // Tím mizely zprávy v chatu, noviny i noví hráči zapsaní jinými zařízeními.
     fbDb.ref(cloudPathForCity()).get().then((snap) => {
-      if(snap.exists()){
-        adoptWorld(snap.val()); // sloučit: jejich novinky + můj postup, nic se neztratí
+      // KRITICKÁ OPRAVA 21.48: když bylo při startu otevřené okno (třeba ranní uvítání),
+      // sloučení s cloudem se odložilo — ale hned pod tím se zapnula synchronizace a do cloudu
+      // se odeslal NESLOUČENÝ místní svět. Telefon, který dlouho nehrál, tak přepsal cloud
+      // starými daty (u ostatních hráčů staré „naposledy hrál") a hra pak nabídla k prodeji
+      // domy hráčů, kteří normálně hrají (Eff, Jerry, EDDIE…). Teď se nic neodešle, dokud
+      // se svět ze serveru opravdu nesloučí.
+      if(snap.exists() && dialogOtevren > 0){
+        poPrvnimSlouceni = () => dokonciPrvniSync();
+        adoptWorld(snap.val());      // odloží se, dokončí se po zavření okna
+        return;
       }
-      // Když se sloučení odložilo (otevřený dialog), označí se načtení až po něm — v adoptWorldVnitrni.
-      if(!snap.exists() || dialogOtevren === 0) cloudNacten = Date.now();
+      if(snap.exists()) adoptWorld(snap.val()); // sloučit: jejich novinky + můj postup, nic se neztratí
+      dokonciPrvniSync();
+    }).catch(e => console.warn('Nepodařilo se stáhnout sdílený svět z Firebase — appka poběží lokálně.', e));
+  });
+}
+function dokonciPrvniSync(){
+  if(firebaseSyncEnabled && cloudNacten) return;   // už proběhlo
+  {
+      cloudNacten = Date.now();
       firebaseSyncEnabled = true;
       world.rev = Math.max((world.rev || 0) + 1, Date.now());
       lastWrittenRev = world.rev;
@@ -7213,8 +7228,7 @@ function initFirebaseSync(){
         if(incomingRev === lastWrittenRev) return;      // naše vlastní ozvěna → ignorovat
         adoptWorld(incoming);
       });
-    }).catch(e => console.warn('Nepodařilo se stáhnout sdílený svět z Firebase — appka poběží lokálně.', e));
-  });
+  }
 }
 
 // Projde zaznamenaná přejmenování a přepíše stará jména na nová i v datech z cloudu.
@@ -7284,12 +7298,17 @@ function applyKnownRenames(){
 // Obal kolem adoptWorld(): kdyby sloučení spadlo uprostřed, zůstal by svět v půlce
 // (část z cloudu, část stará). Radši si původní stav odložíme a při chybě ho vrátíme —
 // příští snapshot pak zkusí sloučení znovu s čistými daty.
+let poPrvnimSlouceni = null;   // dokončení prvního spojení s cloudem, když se sloučení odložilo
 function adoptWorld(incoming){
   zapomenCeny();   // po sloučení může být ve světě všechno jinak
   // Otevřený dialog = hráč je uprostřed akce, která drží odkazy do světa. Sloučení počká.
   if(dialogOtevren > 0){ odlozenySvet = incoming; return; }
   const zaloha = world;
-  try { return adoptWorldVnitrni(incoming); }
+  try {
+    const r = adoptWorldVnitrni(incoming);
+    if(poPrvnimSlouceni){ const f = poPrvnimSlouceni; poPrvnimSlouceni = null; setTimeout(() => safeCall(f), 0); }
+    return r;
+  }
   catch(e){
     console.warn('sloučení světa selhalo:', e);
     zapisChybu((e && (e.stack || e.message)) || String(e), 'adoptWorld');
@@ -7300,6 +7319,10 @@ function adoptWorld(incoming){
 function adoptWorldVnitrni(incoming){
   cloudNacten = cloudNacten || (fbDb ? Date.now() : 0);   // data ze serveru už jsou tady
   const myName = currentUser && currentUser.name;
+  // „Naposledy hrál" ostatních hráčů jen roste. Zařízení se starými daty jinak poslalo
+  // staré časy a hráč, který hraje denně, vypadal jako 60 dní neaktivní.
+  const znamaAktivita = {};
+  Object.values(world.users || {}).forEach(u => { if(u && u.name && u.lastActive) znamaAktivita[u.name] = u.lastActive; });
 
   // 1) záloha mého účtu, mých podílů, ale i NOVIN/CHATU před převzetím cloudu.
   // Noviny a chat jsou "append-only" logy — víc zařízení do nich může přidávat současně,
@@ -7341,7 +7364,8 @@ function adoptWorldVnitrni(incoming){
     zahnani: JSON.parse(JSON.stringify(world.zahnani || {})),
     gifts: JSON.parse(JSON.stringify(world.gifts || {})),
     heat: Object.assign({}, world.heat || {}),
-    lastProcessedDay: world.lastProcessedDay
+    lastProcessedDay: world.lastProcessedDay,
+    dormantDen: world.dormantDen
   };
   if(myName && world.users){
     myUser = world.users[myName];
@@ -7480,6 +7504,7 @@ function adoptWorldVnitrni(incoming){
   if(typeof myAdmin.lastProcessedDay === 'number'){
     world.lastProcessedDay = Math.max(myAdmin.lastProcessedDay, world.lastProcessedDay || 0);
   }
+  if(typeof myAdmin.dormantDen === 'number') world.dormantDen = Math.max(myAdmin.dormantDen, world.dormantDen || 0);
 
   // (kontrola nedokončených nákupů je na konci adoptWorld, až je svět kompletní)
   // 2c) TRŽIŠTĚ: sjednotit nabídky z obou stran. U stejného ID vyhraje ta s novějším
@@ -7541,6 +7566,11 @@ function adoptWorldVnitrni(incoming){
     }
   });
 
+  Object.keys(world.users || {}).forEach(jm => {
+    const u = world.users[jm];
+    if(!u || jm === myName) return;
+    if((znamaAktivita[jm] || 0) > (u.lastActive || 0)) u.lastActive = znamaAktivita[jm];
+  });
   // 3) znovu vložit MOJE věci (aby je cizí zápis nesmazal).
   // U samotného účtu porovnáme AKTIVITU: když jsem naposledy hrál na jiném zařízení (cloud má
   // novější verzi mého hráče), vezme se ta — jinak by staré zařízení vrátilo starší peníze/postup.
@@ -10090,9 +10120,20 @@ const DORMANT_DAYS = 60;              // po kolika dnech bez přihlášení se d
 const DORMANT_WARN_DAYS = 50;         // odkdy hráče varovat v poště
 const DORMANT_PRICE_RATIO = 0.85;     // sleva proti tržní ceně, ať se to prodá
 
+// Kdy hráč naposledy prokazatelně hrál: záznam aktivity, ale i jeho zprávy v chatu, deník
+// a denní souhrny. Jeden starý údaj (třeba poslaný zařízením se starými daty) tak sám
+// nestačí na to, aby hráč vypadal jako neaktivní.
+function posledniAktivita(u){
+  if(!u) return 0;
+  let t = u.lastActive || 0;   // lastTick ne — ten si při načtení doplní každé zařízení na „teď"
+  asArray(u.denik).slice(0, 3).forEach(z => { if(z && z.ts > t) t = z.ts; });
+  asArray(world && world.chat).forEach(m => { if(m && m.name === u.name && m.ts > t) t = m.ts; });
+  return Math.min(t, Date.now());
+}
 function daysSinceActive(u){
-  if(!u || !u.lastActive) return 0;
-  return Math.max(0, Math.floor((Date.now() - u.lastActive) / GAME_DAY_MS));
+  const t = posledniAktivita(u);
+  if(!t) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / GAME_DAY_MS));
 }
 
 // Nabídne na tržiště domy hráčů, kteří dlouho nehráli. Volá se při přechodu dne.
@@ -10147,7 +10188,7 @@ function zrusMylneDormantNabidky(){
     const l = world.listings[id];
     if(!l || !l.dormant || !l.seller) return;
     const u = world.users && world.users[l.seller];
-    if(!u || !u.lastActive || daysSinceActive(u) >= DORMANT_DAYS) return;
+    if(!u || !posledniAktivita(u) || daysSinceActive(u) >= DORMANT_DAYS) return;
     closeListing(id);
     komu.add(l.seller);
   });
@@ -16913,6 +16954,12 @@ async function buyListing(listingId){
   const l = world.listings[listingId];
   if(!l || l.type!=='fixed') return;
   if(l.seller === currentUser.name){ showAlert('Tohle je tvoje vlastní nabídka.'); return; }
+  // Nabídka „dlouho nehraje" u hráče, který ve skutečnosti hraje (vznikla omylem) — nekoupit.
+  if(l.dormant && world.users[l.seller] && daysSinceActive(world.users[l.seller]) < DORMANT_DAYS){
+    closeListing(listingId); saveWorld(); refreshAll();
+    showAlert(`Tahle nabídka vznikla omylem — ${l.seller} normálně hraje. Hra ji stáhla, dům zůstává jemu.`);
+    return;
+  }
   const me = world.users[currentUser.name];
   if(me.balance < l.price){ showAlert(`Nemáš dost peněz (potřeba ${l.price} Kč).`); return; }
   const p = world.parcels[l.houseId];
@@ -18697,7 +18744,21 @@ function adminSyncKartaHtml(){
     <h3>🛠️ Náprava po chybě v synchronizaci</h3>
     <p style="font-size:0.88em;color:var(--muted);">Do verze 21.6 mohly byty zchátrat ze 100 % na nulu za hodinu a zásoby provozoven zmizet hned po nákupu. Tímhle zvedneš stav všech bytů i zásoby všech provozoven ve městě aspoň na zadanou hodnotu. Nic se neplatí a co je lepší, se nemění.</p>
     <div class="row"><button class="secondary" onclick="adminNapravaBytu()">Opravit byty a zásoby…</button></div>
+    <p style="font-size:0.88em;color:var(--muted);margin-top:10px;">Do verze 21.48 mohl telefon se starými daty nabídnout k prodeji domy hráčů, kteří normálně hrají („dlouho nehraje"). Tímhle stáhneš všechny takové nabídky najednou — u hráčů, kteří opravdu 60 dní nehrají, je hra zítra vypíše znovu.</p>
+    <div class="row"><button class="secondary" onclick="adminStahniDormant()">🏚️ Stáhnout nabídky „dlouho nehraje" (${Object.values(world.listings || {}).filter(l => l && l.dormant).length})</button></div>
   </div>`;
+}
+async function adminStahniDormant(){
+  if(!isAdmin) return;
+  const ids = Object.keys(world.listings || {}).filter(id => world.listings[id] && world.listings[id].dormant);
+  if(!ids.length){ showAlert('Žádná taková nabídka teď na tržišti není.'); return; }
+  const komu = [...new Set(ids.map(id => world.listings[id].seller))];
+  if(!(await showConfirm(`Stáhnout ${ids.length} ${sklonuj(ids.length, 'nabídku', 'nabídky', 'nabídek')} „dlouho nehraje" (${komu.join(', ')})? Domy zůstanou majitelům.`))) return;
+  ids.forEach(id => closeListing(id));
+  world.dormantDen = world.day;   // dnes už je znovu nevypisovat
+  addNews('market', `↩️ Správce stáhl nabídky „dlouho nehraje" (${komu.join(', ')}) — vznikly omylem, domy zůstávají majitelům.`);
+  saveWorld(); renderAdmin(); refreshAll();
+  showToast(`🏚️ Staženo ${ids.length} nabídek`);
 }
 async function adminNapravaBytu(){
   if(!isAdmin) return;
@@ -20121,6 +20182,10 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.48', datum:'2026-10-21', body:[
+    ['oprava','🏚️ Kritická oprava: telefon, který dlouho nehrál, mohl při startu (když se ukázalo uvítání) poslat na server svoje stará data dřív, než si stáhl aktuální svět. U ostatních hráčů se pak objevil starý čas „naposledy hrál" a hra nabídla k prodeji domy lidí, kteří hrají každý den (Eff, Jerry, EDDIE…). Teď telefon nic neodešle, dokud se se serverem nesloučí, čas „naposledy hrál" už nikdy necouvne a hra pozná aktivitu i podle chatu a deníku.'],
+    ['oprava','🏚️ Omylem vzniklé nabídky „dlouho nehraje" hra sama stáhne a koupit nejdou — dům zůstává majiteli.'],
+  ]},
   { verze:'21.47', datum:'2026-10-21', body:[
     ['novinka','🛑 Denní limit AI: správce v Adminu nastaví, kolik dotazů na AI smí za den poslat celá hra a kolik jeden hráč (výchozí 300 a 40). Vidí i, kolik se dnes spotřebovalo a kdo nejvíc. Po vyčerpání hra jede dál bez AI, o půlnoci se počítání vynuluje.'],
     ['zmena','🎭 Nájemníci a chodci mluví jen o hře a o Bučovicích. Úkol do školy, kód, překlad nebo sloh odmítnou po svém v roli — a zjevné případy pozná hra sama, takže to nestojí žádný dotaz.'],
