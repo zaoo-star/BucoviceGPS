@@ -1622,8 +1622,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.33';
-const APP_BUILD = '18.10.2026 16:30';
+const APP_VERSION = '21.34';
+const APP_BUILD = '21.10.2026 12:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -5943,7 +5943,7 @@ function doplneniCena(p){
 function provozDnes(p){
   if(!p || !p.provoz) return 0;
   const prumer = Math.max(0, (p.provoz.zasoby ?? 100) - PROVOZ_ZASOBY_DEN / 2);
-  return provozPlnyVynos(p) * prumer / 100 * provozVykon(p).mult;
+  return provozPlnyVynos(p) * prumer / 100 * provozVykon(p).mult * akceMult(p);   // akce ve městě jako v ticku
 }
 
 // Kolik provozovna vydělá ČISTĚ, po odečtení zásob. Tohle je číslo, které má hráč vidět,
@@ -7971,7 +7971,42 @@ function zapisDoDeniku(typ, text, castka){
 }
 
 // Denní počitadla — plní je tick(), aby souhrn nemusel nic dopočítávat zpětně.
-function pricti(u, klic, kolik){
+// Úseky času po dnech: [{den, podil}] — podíl z celé doby, který připadá na daný herní den.
+let useky = null;
+function herniDenCasu(ts){
+  const start = (world && typeof world.startCalDay === 'number') ? world.startCalDay : calendarDay();
+  return Math.max(1, calendarDay(new Date(ts)) - start + 1);
+}
+function rozdelNaDny(od, doCasu){
+  const celkem = doCasu - od;
+  if(!(celkem > 0)) return null;
+  const vysl = [];
+  let t = od;
+  while(t < doCasu){
+    const d = new Date(t);
+    const pulnoc = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    const konec = Math.min(pulnoc, doCasu);
+    vysl.push({ den: herniDenCasu(t), podil: (konec - t) / celkem });
+    t = konec;
+    if(vysl.length > 10) break;
+  }
+  return vysl.length > 1 ? vysl : null;   // jeden den = nic dělit netřeba
+}
+// Časový příjem/výdaj z ticku: rozdělí se mezi dny podle toho, kdy opravdu vznikl.
+// Části se nejdřív sbírají a připíšou se až všechny najednou, seřazené podle dne — jinak
+// by první položka nového dne (třeba náklady) zavřela včerejšek dřív, než do něj dorazil
+// včerejší nájem.
+let usekyFronta = [];
+function prictiCas(u, klic, kolik){
+  if(!useky || !currentUser || !u || u.name !== currentUser.name){ pricti(u, klic, kolik); return; }
+  useky.forEach(us => usekyFronta.push({ u, klic, kolik: kolik * us.podil, den: us.den }));
+}
+function vyprazdniUseky(){
+  const f = usekyFronta; usekyFronta = [];
+  f.sort((a, b) => a.den - b.den).forEach(x => prictiDoDne(x.u, x.klic, x.kolik, x.den));
+}
+function pricti(u, klic, kolik){ prictiDoDne(u, klic, kolik, world.day); }
+function prictiDoDne(u, klic, kolik, den){
   if(!u || !isFinite(kolik) || !kolik) return;
   // KRITICKÁ OPRAVA 18.5: den přepíná jen to zařízení, které ho zpracuje jako první (ostatní
   // dostanou posunutý den synchronizací). Výplatu za včerejšek přitom dělalo jen onNewDay —
@@ -7979,13 +8014,16 @@ function pricti(u, klic, kolik){
   // vynulovala a nic se nevyplatilo. Ověřeno simulací dvou zařízení (Eva hrála přes den,
   // ráno první otevřel hru Zaoo → Evě se včerejšek nepřipsal vůbec).
   // Teď se nevyplacený den vyplatí, ať už ho přepnulo kterékoli zařízení.
-  if(u.denSoucty && typeof u.denSouctyDen === 'number' && u.denSouctyDen < world.day
+  den = den || world.day || 1;
+  // Starší den, než je otevřené počítadlo (ten už je vyplacený) → přidá se k otevřenému.
+  if(u.denSoucty && typeof u.denSouctyDen === 'number' && den < u.denSouctyDen) den = u.denSouctyDen;
+  if(u.denSoucty && typeof u.denSouctyDen === 'number' && u.denSouctyDen < den
      && currentUser && u.name === currentUser.name){
     uzavriDen(u, u.denSouctyDen);
   }
-  if(!u.denSoucty || u.denSouctyDen !== world.day){
+  if(!u.denSoucty || u.denSouctyDen !== den){
     u.denSoucty = { najem:0, firmy:0, solar:0, provoz:0, naklady:0, dane:0, uroky:0, mzdy:0, akce:0, najemne:0, uroky_sporeni:0, metry:0 };
-    u.denSouctyDen = world.day;
+    u.denSouctyDen = den;
   }
   u.denSoucty[klic] = (u.denSoucty[klic] || 0) + kolik;
 }
@@ -8003,6 +8041,70 @@ function pulnocniVyplata(s){
   const danPrijem = danZPrijmu(kVyplate);
   const kStrzeni = (s.naklady||0) + (s.dane||0) + (s.uroky||0) + (s.najemne||0) + danPrijem;
   return { kVyplate, kStrzeni, danPrijem, cisty: kVyplate - kStrzeni, naSporeni: s.uroky_sporeni || 0 };
+}
+
+// ===== ODHAD PŮLNOČNÍ VÝPLATY =====
+// Co se o půlnoci připíše = co už dnes naskočilo + odhad za zbytek dne při dnešním stavu.
+// Dřív hlavička ukazovala jen to, co naskočilo DOSUD — ráno pár korun, večer víc — a hráči
+// to četli jako „o půlnoci přijde". Teď ukazuje odhad celé výplaty.
+function denniSazby(name){
+  const u = world.users[name];
+  const z = { najem:0, solar:0, firmy:0, naklady:0, dane:0, uroky:0, najemne:0 };
+  if(!u) return z;
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p) return;
+    const d = (p.owners?.[name] || 0) / 100;
+    if(d > 0){
+      if(p.useType === 'rental' && p.units) z.najem += asArray(p.units).reduce((a, un) => a + vybranyNajem(p, un), 0) * najemBonusMult(p) * d;
+      z.solar += solarBonusForHouse(p) * d;
+    }
+    asArray(p.units).forEach(un => { if(un && un.tenant === name && un.condition > 0) z.najemne += un.rentPrice || 0; });
+  });
+  Object.values(world.businesses || {}).forEach(b => {
+    const pct = (b && b.owners && b.owners[name]) || 0;
+    if(pct > 0) z.firmy += bizYieldPerDay(b) * inflationMult() * pct / 100;
+  });
+  // Životní náklady stejně jako v ticku (bez denního kolísání ±12 %, to se v průměru vyruší).
+  if(!isNewbieProtected(u)){
+    const status = housingStatus(name);
+    let cost = status === 'owner' ? LIVING_COST * (1 - RESIDENCE_LIVING_DISCOUNT) : (status === 'tenant' ? TENANT_LIVING_COST : LIVING_COST);
+    cost *= inflationMult() * eventMult('livingMult') * (1 - livingCostDiscountFromUpgrades(name));
+    z.naklady = cost + zivotniUrovenPriplatek(name);
+  }
+  z.dane = (danSazba(name).dan || 0) / DAYS_PER_YEAR;
+  asArray(u.loans).forEach(l => {
+    if(!l) return;
+    const podil = l.type === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
+    z.uroky += Math.min((l.principal || 0) * podil, l.balance || 0);
+  });
+  return z;
+}
+// Tržby provozoven za zbytek dne `r` (0–1) — zásoby mezitím dál ubývají.
+function provozZbytekDne(name, r){
+  let x = 0;
+  Object.values(world.parcels || {}).forEach(p => {
+    const d = (p && p.owners?.[name] || 0) / 100;
+    if(d <= 0 || !maProvoz(p)) return;
+    const z = Math.max(0, Math.min(100, p.provoz.zasoby ?? 100));
+    const prumer = Math.max(0, z - PROVOZ_ZASOBY_DEN * r / 2);
+    x += provozPlnyVynos(p) * provozVykon(p).mult * akceMult(p) * prumer / 100 * r * d;
+  });
+  return x;
+}
+function odhadPulnoci(name){
+  const u = world.users[name];
+  const dnes = gameClock().day;
+  const s = (u && u.denSoucty && (u.denSouctyDen === dnes || u.denSouctyDen === world.day)) ? u.denSoucty : {};
+  const r = Math.max(0, 1 - gameClock().dayProgress);
+  const z = denniSazby(name);
+  const pol = {};
+  ['najem', 'solar', 'firmy', 'naklady', 'dane', 'uroky', 'najemne'].forEach(k => { pol[k] = (s[k] || 0) + z[k] * r; });
+  pol.provoz = (s.provoz || 0) + provozZbytekDne(name, r);
+  const kVyplate = pol.najem + pol.solar + pol.firmy + pol.provoz;
+  pol.danPrijem = danZPrijmu(kVyplate);
+  const kStrzeni = pol.naklady + pol.dane + pol.uroky + pol.najemne + pol.danPrijem;
+  return { pol, kVyplate, kStrzeni, cisty: kVyplate - kStrzeni, zatim: pulnocniVyplata(s).cisty, zbyva: r,
+           uzMam: (s.mzdy || 0) + (s.akce || 0) };
 }
 
 // ===== HODNOSTI =====
@@ -8316,6 +8418,8 @@ function escapeHtml(s){
 function tick(){
   try { tickVnitrni(); }
   catch(e){ console.warn('tick selhal:', e); zapisChybu((e && (e.stack || e.message)) || String(e), 'tick'); }
+  // Kdyby tick spadl uprostřed, nasčítané části výdělku se nesmí ztratit.
+  finally { useky = null; if(usekyFronta.length) safeCall(() => vyprazdniUseky()); }
 }
 let posledniTickZarizeni = 0;   // jen v paměti tohohle zařízení, nesynchronizuje se
 function tickVnitrni(){
@@ -8344,18 +8448,21 @@ function tickVnitrni(){
   // Proto má každý hráč vlastní razítko a svoje peníze si počítá sám za sebe.
   const ja = currentUser ? world.users[currentUser.name] : null;
   let mojeDayFraction = 0, mojeHodiny = 0;
+  useky = null; usekyFronta = [];
   if(ja){
     if(typeof ja.lastTick !== 'number') ja.lastTick = now - 1000;
     let mojeElapsed = now - ja.lastTick;
     if(mojeElapsed < 0) mojeElapsed = 0;                       // hodiny se rozešly — nic nepřipisujeme
     mojeElapsed = Math.min(mojeElapsed, GAME_DAY_MS * 3);      // strop po dlouhé odmlce
+    // Kolik z uplynulého času patří kterému dni. Když byla appka zavřená přes půlnoc,
+    // celý výdělek se dřív připsal jen k jednomu dni (třeba 10 hodin ke včerejšku), takže
+    // denní vyúčtování skákalo nahoru a dolů a nesedělo s denním přehledem.
+    if(mojeElapsed > 0){ ensureEpoch(); useky = rozdelNaDny(now - mojeElapsed, now); }
     ja.lastTick = now;
     mojeDayFraction = mojeElapsed / GAME_DAY_MS;
     mojeHodiny = mojeElapsed / 3600000;
   }
   const hoursElapsed = mojeHodiny; // podniky vydělávají podle SKUTEČNÝCH hodin, ne herních dnů
-  safeCall(() => vyzvedniPlatby());   // peníze od ostatních hráčů (tržiště, aukce)
-  safeCall(() => vyhodnotVecer());    // po půlnoci: kudy včera večer chodily postavy
 
   // Náklady, daně a úroky řeší každý hráč taky sám za sebe — jinak by je platil vícekrát
   // (jednou za každé zapnuté zařízení ve městě).
@@ -8379,7 +8486,7 @@ function tickVnitrni(){
     if(isNewbieProtected(u)) cost = 0;   // nováček má prvních pár dní klid
     // Peníze se během dne jen SČÍTAJÍ. Připíšou (a strhnou) se najednou při přechodu dne —
     // hráči po haléřích nepoznali, jestli jim vůbec něco chodí. Viz uzavriDen().
-    pricti(u, 'naklady', cost * mojeDayFraction);
+    prictiCas(u, 'naklady', cost * mojeDayFraction);
 
     // daň z nemovitosti: 4 % hodnoty tvého podílu ročně (ze všech domů, včetně bydlení)
     let taxableValue = 0;
@@ -8388,12 +8495,12 @@ function tickVnitrni(){
       if(pct > 0) taxableValue += effectiveHousePrice(p) * (pct/100);
     });
     if(taxableValue > 0){
-      pricti(u, 'dane', taxableValue * danSazba(u.name).prumer / DAYS_PER_YEAR * mojeDayFraction);
+      prictiCas(u, 'dane', taxableValue * danSazba(u.name).prumer / DAYS_PER_YEAR * mojeDayFraction);
     }
 
     // úrok ze spořicího účtu (peníze uložené v bance rostou — bezpečně, ale pomalu)
     if(u.savings && u.savings > 0){
-      pricti(u, 'uroky_sporeni', u.savings * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR * mojeDayFraction);
+      prictiCas(u, 'uroky_sporeni', u.savings * SAVINGS_ANNUAL_RATE / DAYS_PER_YEAR * mojeDayFraction);
     }
   });
   Object.values(world.parcels).forEach(p => {
@@ -8411,7 +8518,7 @@ function tickVnitrni(){
             // Nájem strhává jen zařízení samotného nájemníka — jinak by mu ho strhl
             // každý, kdo má zrovna zapnutou hru.
             const castka = (ja && u.tenant === ja.name) ? collected * mojeDayFraction : 0;
-            if(castka > 0) pricti(najemnikUcet, 'najemne', castka);
+            if(castka > 0) prictiCas(najemnikUcet, 'najemne', castka);
             if(castka > 0 && najemnikUcet.balance - (najemnikUcet.denSoucty?.najemne || 0) < -LIVING_COST * 3){
               addNews('rental', `📤 ${u.tenant} se odstěhoval z domu ${domKratce(p)} — na nájem ${u.rentPrice} Kč/den už neměl.`, p.id);
               u.tenant = null;
@@ -8440,7 +8547,7 @@ function tickVnitrni(){
         // Výnos si připisuje jen ten, kdo zrovna hraje — za dobu, kterou vidí on sám.
         if(collected > 0 && ja){
           const mujPodil = (p.owners?.[ja.name] || 0) / 100;
-          if(mujPodil > 0) pricti(ja, 'najem', collected * najemBonusMult(p) * mujPodil * mojeDayFraction);
+          if(mujPodil > 0) prictiCas(ja, 'najem', collected * najemBonusMult(p) * mujPodil * mojeDayFraction);
         }
         // obsazený byt (hráč, NPC nebo poptávka) se opotřebovává; prázdný chátrá pomaleji
         const occNow = (u.tenant || u.npc || u.ownerOccupied) ? 1 : 0;   // buď někdo bydlí, nebo ne
@@ -8466,14 +8573,14 @@ function tickVnitrni(){
       }
       if(ja){
         const mujPodil = (p.owners?.[ja.name] || 0) / 100;
-        if(mujPodil > 0) pricti(ja, 'provoz', provozVynos(p) * mujPodil * mojeDayFraction);
+        if(mujPodil > 0) prictiCas(ja, 'provoz', provozVynos(p) * mujPodil * mojeDayFraction);
       }
     }
 
     const solar = solarBonusForHouse(p);
     if(solar > 0 && ja){
       const mujPodil = (p.owners?.[ja.name] || 0) / 100;
-      if(mujPodil > 0) pricti(ja, 'solar', solar * mujPodil * mojeDayFraction);
+      if(mujPodil > 0) prictiCas(ja, 'solar', solar * mujPodil * mojeDayFraction);
     }
   });
 
@@ -8488,7 +8595,7 @@ function tickVnitrni(){
   if(ja){
     Object.values(world.businesses).forEach(biz => {
       const pct = biz.owners?.[ja.name] || 0;
-      if(pct > 0) pricti(ja, 'firmy', bizYieldPerHour(biz) * inflationMult() * (pct/100) * hoursElapsed);
+      if(pct > 0) prictiCas(ja, 'firmy', bizYieldPerHour(biz) * inflationMult() * (pct/100) * hoursElapsed);
     });
   }
 
@@ -8500,7 +8607,7 @@ function tickVnitrni(){
         const podil = loan.type === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
         const minPay = Math.min(loan.principal * podil * mojeDayFraction, loan.balance);
         if(u.balance - (u.denSoucty?.uroky || 0) >= minPay){
-          pricti(u, 'uroky', minPay);
+          prictiCas(u, 'uroky', minPay);
           loan.balance -= minPay;
           loan.missedDays = Math.max(0, (loan.missedDays || 0) - mojeDayFraction * 2); // řádné placení dřívější výpadky "smaže" rychleji
         } else {
@@ -8540,6 +8647,11 @@ function tickVnitrni(){
       zabavZastavu(u, loan, p, podvodni ? 'hodnota domu už nestačí na dluh' : 'dlouhodobé neplacení');
     });
   });
+
+  useky = null;   // časové příjmy jsou rozdělené; co následuje, patří k dnešku
+  vyprazdniUseky();
+  safeCall(() => vyzvedniPlatby());   // peníze od ostatních hráčů (tržiště, aukce)
+  safeCall(() => vyhodnotVecer());    // po půlnoci: kudy včera večer chodily postavy
 
   world.dayProgress += dayFraction;
   // Den a postup dne odvodíme z reálného kalendáře (pevný počátek hry) — je to tak stejné
@@ -9306,8 +9418,12 @@ function souhrnDneDoNovin(denKtery){
 function onNewDay(catchUp){
   // Souhrn uzavíráme JEŠTĚ PŘED tím, než se den posune dál — jinak by se zapsal
   // pod nesprávným číslem dne.
+  // Jen počítadlo STARŠÍHO dne. Rozdělení času po dnech mohlo už založit počítadlo
+  // pro dnešek — to se zavřít nesmí (vyplatil by se den, který teprve začal).
   if(currentUser && world.users[currentUser.name]){
-    safeCall(() => uzavriDen(world.users[currentUser.name], (world.day || 1) - 1));
+    const ja = world.users[currentUser.name];
+    if(ja.denSoucty && typeof ja.denSouctyDen === 'number' && ja.denSouctyDen < (world.day || 1))
+      safeCall(() => uzavriDen(ja, ja.denSouctyDen));
   }
   // Noční událost řešíme jen pro hráče, který hru zrovna má otevřenou, a nedopočítáváme
   // ji zpětně — kdo byl týden pryč, nemá se po návratu dozvědět o pěti vykradených domech.
@@ -13851,7 +13967,8 @@ function updateHeaderStats(){
 
     const elRate = document.getElementById('rateVal');
     if(elRate){
-      const naskocilo = pulnocniVyplata(u.denSoucty).cisty;
+      const odhad = odhadPulnoci(currentUser.name);
+      const naskocilo = odhad.cisty;
       const kladne = naskocilo >= 0;
       elRate.className = 'rate ' + (kladne ? 'up' : 'down');
       // „370 dnes" hráči četli jako dnešní výsledek a nesedělo jim to s denní bilancí.
@@ -13859,7 +13976,7 @@ function updateHeaderStats(){
       // Proto to říkáme rovnou v textu, ne až v popisku.
       elRate.textContent = Math.abs(naskocilo) < 0.5 ? ''
         : `${kladne ? '▲' : '▼'}${Math.round(Math.abs(naskocilo)).toLocaleString('cs-CZ')} o půlnoci`;
-      elRate.title = 'Kolik se dnes nasčítalo z nájmu, firem, provozoven a soláru po odečtení účtů a splátek. Připíše se ti to najednou o půlnoci. Plat, balíky a odměny za úkoly v tom nejsou — ty dostáváš hned. Úrok ze spoření taky ne, ten jde rovnou na spořicí účet.';
+      elRate.title = `Odhad půlnoční výplaty: nájem, firmy, provozovny a solár minus bydlení, daně a splátky. Zatím naskočilo ${Math.round(odhad.zatim).toLocaleString('cs-CZ')} Kč, zbytek přibude do půlnoci. Plat, balíky a odměny v tom nejsou — ty dostáváš hned.`;
     }
     document.getElementById('walkVal').textContent = Math.round(u.distanceToday || 0);
     const status = housingStatus(currentUser.name);
@@ -14383,7 +14500,7 @@ function renderSelected(id){
           💰 Teď ti reálně chodí <b style="color:var(--gold)">${Math.round(realne)} Kč/den</b>
           <span style="color:var(--muted)">(obsazeno ${obsazene.length} z ${byty.length} ${sklonuj(byty.length, 'bytu', 'bytů', 'bytů')}${
             najemBonusMult(p) > 1 ? `, včetně bonusu ${bonusyNajmuText(p)}` : ''})${
-            mojeZdanitelneDenne() > DAN_PRIJEM_PASMA[0].do ? ' — před daní z příjmu' : ' — přesně tohle se připíše o půlnoci'}</span></p>`;
+            mojeZdanitelneDenne() > DAN_PRIJEM_PASMA[0].do ? ' — za celý den, před daní z příjmu' : ' — tolik ti dům přinese za celý den'}</span></p>`;
       }
       // Majiteli plně obsazeného domu nemá smysl ukazovat ještě druhý odhad příjmu —
       // jedno číslo je po dani a bez bonusu, druhé s bonusem, a vypadá to jako dva příjmy
@@ -14881,7 +14998,7 @@ function renderMine(){
     let x = 0;
     Object.values(world.businesses || {}).forEach(b => {
       const pct = (b.owners && b.owners[ja]) || 0;
-      if(pct > 0) x += bizYieldPerDay(b) * pct / 100;
+      if(pct > 0) x += bizYieldPerDay(b) * inflationMult() * pct / 100;   // stejně jako v ticku
     });
     return x;
   }) || 0;
@@ -14907,7 +15024,7 @@ function renderMine(){
     <h3>📊 Dnes ti domy vydělají</h3>
     <div class="mineHero">
       <span class="cislo" style="color:${cisty >= 0 ? 'var(--gold)' : 'var(--danger)'}">${cisty >= 0 ? '+' : '−'}${kc(Math.abs(cisty))} Kč</span>
-      <span class="popis">z domů po daních,<br>připíše se o půlnoci</span>
+      <span class="popis">z domů po daních<br>za celý den</span>
     </div>
     <div style="font-size:0.9em;text-align:left;">
       ${najem > 0.5 ? radek('🏘️ Nájem z obsazených bytů', najem, 'var(--accent)') : ''}
@@ -14940,10 +15057,10 @@ function renderMine(){
         ${najemPravidloPlati() ? 'Začnou se stěhovat pryč.' : `Zatím se rozmýšlejí — za ${najemPrechodZbyva()} ${najemPrechodZbyva()===1?'den':'dny'} začnou odcházet.`} Sniž nájem, ať o ně nepřijdeš.</p>`;
     })()}
     ${infoBox('Co v tom je a co ne', `
-      <p><b>Připíše se o půlnoci</b> přesně částka nahoře.${provozy > 0.5 ? ' Zásoby do provozoven platíš zvlášť, když je doplníš.' : ''}</p>
+      <p><b>Jen domy.</b> O půlnoci se připíše celá denní výplata — tohle plus výnos z firem, minus náklady na bydlení a ostatní splátky. Odhad celé výplaty je v horní liště u peněz (▲ o půlnoci).${provozy > 0.5 ? ' Zásoby do provozoven platíš zvlášť, když je doplníš.' : ''}</p>
       ${udrzbaCelkem > 0.5 ? `<p>🔧 <b>Údržba ~${kc(udrzbaCelkem)} Kč/den</b> — tolik stojí opravy chátrajících bytů. V částce nahoře není, platíš ji, až opravíš.</p>` : ''}
       ${hypoteky > 0.5 ? `<p>🏦 Ze splátek hypoték je jen ${kc(hypoUroky)} Kč úrok — zbytek ${kc(hypoteky - hypoUroky)} Kč snižuje dluh, dům ti tím postupně patří.</p>` : ''}
-      ${usporaBydleni > 0.5 ? `<p>🏠 <b>Na bydlení šetříš ${kc(usporaBydleni)} Kč/den</b> — platíš ${kc(bydleniTed)} místo ${LIVING_COST} Kč. Na účet to nepřijde, ale o tolik míň odejde.</p>` : ''}
+      ${usporaBydleni > 0.5 ? `<p>🏠 <b>Na bydlení šetříš ${kc(usporaBydleni)} Kč/den</b> — platíš ${kc(bydleniTed)} místo ${kc(LIVING_COST * zivotniMult() + zivotniUrovenPriplatek(ja))} Kč. Na účet to nepřijde, ale o tolik míň odejde.</p>` : ''}
       <p>Klepni na dům níž pro podrobnosti.</p>`)}
   </div>`;
 
@@ -18464,8 +18581,8 @@ function renderStatDetail(which){
     }
 
     html += `<div class="card"><h3>🌙 Co se stane o půlnoci</h3>
-      <p style="margin:2px 0;font-size:0.9em;">• strhnou se náklady na bydlení a daně</p>
-      <p style="margin:2px 0;font-size:0.9em;">• připíšou se úroky ze spoření a z půjček</p>
+      <p style="margin:2px 0;font-size:0.9em;">• připíše se výplata za den: nájem, firmy, provozovny a solár minus bydlení, daně a splátky (odhad <b>${(odhadPulnoci(u.name).cisty >= 0 ? '+' : '−') + kc(Math.abs(odhadPulnoci(u.name).cisty))} Kč</b>)</p>
+      <p style="margin:2px 0;font-size:0.9em;">• úrok ze spoření se připíše na spořicí účet</p>
       <p style="margin:2px 0;font-size:0.9em;">• vyřeší se skončené aukce a dokončí renovace</p>
       <p style="margin:2px 0;font-size:0.9em;">• objeví se nové balíky, úkoly a nová městská událost</p>
       <p style="margin:2px 0;font-size:0.9em;">• byty o kousek zchátrají</p>
@@ -18483,11 +18600,9 @@ function renderStatDetail(which){
     const aktivni = f.totalIncome - pasivni;
 
     // Dnešní pohyb rozepsaný tak, aby bylo jasné, co UŽ na účtu je a co teprve přijde.
-    const s3 = u.denSoucty && u.denSouctyDen === world.day ? u.denSoucty : null;
-    const uzMam = s3 ? (s3.mzdy||0) + (s3.akce||0) : 0;
-    // Stejný vzorec jako vyúčtování — dřív tu byla třetí vlastní kopie se stejnou chybou.
-    const prijde = s3 ? pulnocniVyplata(s3).cisty : 0;
-    const dnesCelkem = uzMam + prijde;
+    const odhad = odhadPulnoci(u.name);
+    const uzMam = odhad.uzMam;
+    const prijde = odhad.zatim;
     const barva = v => v >= 0 ? 'var(--accent)' : 'var(--danger)';
     const znam = v => (v >= 0 ? '+' : '−') + kc(Math.abs(v));
 
@@ -18495,12 +18610,22 @@ function renderStatDetail(which){
     // (odhad za celý den) a +164 v Domech (bez nákladů na bydlení). Tady je to rozepsané
     // tak, aby bylo jasné, které je které.
     const r = (l, v, b, cls) => `<div class="fR${cls ? ' ' + cls : ''}"><span class="l">${l}</span><span class="v" style="color:${b || 'var(--text)'}">${v}</span></div>`;
+    const P = odhad.pol;
+    const pol = (l, v, vydaj) => Math.abs(v) >= 0.5 ? r(l, `${vydaj ? '−' : '+'}${kc(Math.abs(v))} Kč`, vydaj ? 'var(--danger)' : 'var(--accent)') : '';
     html += `<div class="card">
-      <h3>📆 Dnešek</h3>
-      <div class="fHero"><span class="cislo" style="color:${barva(f.net)}">${znam(f.net)} Kč</span>
-        <span class="popis">za celý den,<br>odhad</span></div>
+      <h3>🕛 Půlnoční výplata</h3>
+      <div class="fHero"><span class="cislo" style="color:${barva(odhad.cisty)}">${znam(odhad.cisty)} Kč</span>
+        <span class="popis">připíše se o půlnoci<br>(odhad za celý den)</span></div>
+      ${pol('🏘️ Nájem', P.najem)}${pol('🏢 Firmy', P.firmy)}${pol('☀️ Solár', P.solar)}${pol('🏪 Provozovny', P.provoz)}
+      ${pol('🍞 Život a bydlení', P.naklady, true)}${pol('🔑 Nájemné, které platíš', P.najemne, true)}
+      ${pol('🏛️ Daň z nemovitostí', P.dane, true)}${pol('🏛️ Daň z příjmu', P.danPrijem, true)}${pol('🏦 Splátky', P.uroky, true)}
+      <p class="fPozn">Zatím naskočilo <b>${znam(prijde)} Kč</b>, zbytek přibude do půlnoci (zbývá ${Math.round(odhad.zbyva * 24)} h). Když se mezitím někdo odstěhuje nebo dojdou zásoby, vyjde to jinak.</p>
+    </div>`;
+    html += `<div class="card">
+      <h3>📆 Dnešek celkem</h3>
       ${r('✅ Už máš na účtu<small>plat, balíky a odměny — chodí hned</small>', `${znam(uzMam)} Kč`, barva(uzMam))}
-      ${r(`🕛 Zatím naskočilo k půlnoční výplatě<small>nájem, firmy a solár minus účty — roste celý den</small>`, `${znam(prijde)} Kč`, barva(prijde))}
+      ${r('🕛 Přijde o půlnoci<small>odhad, viz nahoře</small>', `${znam(odhad.cisty)} Kč`, barva(odhad.cisty))}
+      ${r('Dnes celkem', `${znam(uzMam + odhad.cisty)} Kč`, barva(uzMam + odhad.cisty), 'soucet')}
       <p class="fPozn">Rozpis dne se po půlnoci uloží do deníku jako „Souhrn dne".</p>
     </div>`;
 
@@ -18921,6 +19046,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.34', datum:'2026-10-21', body:[
+    ['oprava','🕛 Denní výplata teď patří ke správnému dni. Když byla hra zavřená přes noc, celý výdělek od posledního hraní se dřív připsal jen k jednomu dni (třeba 10 hodin ke včerejšku) — výplata pak jeden den vyšla skoro dvojnásobná a druhý poloviční a nesouhlasila s přehledem. Teď se čas rozdělí podle půlnoci.'],
+    ['zmena','„▲ … o půlnoci" v horní liště ukazuje odhad CELÉ půlnoční výplaty. Dřív to bylo jen to, co naskočilo do teď — ráno pár korun. Po klepnutí je rozpis: nájem, firmy, provozovny, solár, bydlení, daně a splátky, a kolik už naskočilo.'],
+    ['oprava','„Dnes ti domy vydělají" v Mých nemovitostech netvrdí, že se připíše přesně tahle částka — jsou to jen domy, výplata o půlnoci obsahuje i firmy, bydlení a splátky.'],
+    ['oprava','Odhady tržeb provozoven počítají i s akcí ve městě (vyšší tržby), stejně jako skutečný výpočet. A daň z příjmu v Mých nemovitostech počítá s inflací u firem.'],
+  ]},
   { verze:'21.33', datum:'2026-10-18', body:[
     ['oprava','📅 Ranní uvítání ukazovalo včerejší den — i se včerejší událostí ve městě a výplatou za předevčírem (hlásila Eva). Uvítání se ukázalo dřív, než hra stihla přepnout den. Teď se den přepne nejdřív.'],
   ]},
@@ -22430,6 +22561,9 @@ function doLogin(name, pinHash){
   }
 
   recordWorthSnapshot(u);   // snímek jmění pro graf vývoje
+  // První přepočet hned po přihlášení (jinak až za 5 s) — ať se čas od posledního hraní
+  // rozdělí mezi dny dřív, než přijde první poloha z GPS nebo uvítání.
+  setTimeout(() => safeCall(() => tick()), 50);
 
   // Vyzvednout čekající platby/dárky (od admina) — připíšou se hráčovou akcí, sync je nepřepíše
   const gift = claimGifts(name);
