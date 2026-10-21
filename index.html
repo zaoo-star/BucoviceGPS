@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.49';
-const APP_BUILD = '22.10.2026 01:00';
+const APP_VERSION = '21.51';
+const APP_BUILD = '22.10.2026 02:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -2709,6 +2709,7 @@ let cekaSerie = null;   // odměna za sérii, kterou má ukázat uvítací okno
 
 let uvitaniBezi = false;
 async function denniUvitani(){
+  if(cekamNaCloud()){ setTimeout(() => safeCall(() => denniUvitani()), 1000); return; }   // uvítání až s aktuálními daty
   if(uvitaniBezi) return;
   uvitaniBezi = true;
   try { return await denniUvitaniVnitrni(); } finally { uvitaniBezi = false; }
@@ -7170,6 +7171,7 @@ function migrateWorld(){
 function initFirebaseSync(){
   if(typeof firebase === 'undefined'){
     console.warn('Firebase SDK se nenačetlo (výpadek sítě?) — appka poběží jen lokálně.');
+    offlineRezim = true;
     return;
   }
   try{
@@ -7178,8 +7180,10 @@ function initFirebaseSync(){
     fbDb = firebase.database();
   } catch(e){
     console.warn('Firebase se nepodařilo inicializovat — appka poběží jen lokálně.', e);
+    offlineRezim = true; fbDb = null;
     return;
   }
+  safeCall(() => ukazNacitaniSveta());
 
   fbAuth.signInAnonymously().catch(e => console.warn('Anonymní přihlášení do Firebase selhalo:', e));
 
@@ -7206,11 +7210,12 @@ function initFirebaseSync(){
       }
       if(snap.exists()) adoptWorld(snap.val()); // sloučit: jejich novinky + můj postup, nic se neztratí
       dokonciPrvniSync();
-    }).catch(e => console.warn('Nepodařilo se stáhnout sdílený svět z Firebase — appka poběží lokálně.', e));
+    }).catch(e => { console.warn('Nepodařilo se stáhnout sdílený svět z Firebase — appka poběží lokálně.', e); offlineRezim = true; safeCall(() => skryjNacitaniSveta()); });
   });
 }
 function dokonciPrvniSync(){
   if(firebaseSyncEnabled && cloudNacten) return;   // už proběhlo
+  safeCall(() => skryjNacitaniSveta());
   {
       cloudNacten = Date.now();
       firebaseSyncEnabled = true;
@@ -7357,6 +7362,7 @@ function adoptWorldVnitrni(incoming){
   const myAdmin = {
     deletedPlayers: asArray(world.deletedPlayers),
     seizedPlayers: Object.assign({}, world.seizedPlayers || {}),
+    admini: Object.assign({}, world.admini || {}),
     distanceOverrides: Object.assign({}, world.distanceOverrides || {}),
     landmarks: asArray(world.landmarks),
     deletedLandmarks: asArray(world.deletedLandmarks),
@@ -7466,6 +7472,8 @@ function adoptWorldVnitrni(incoming){
   // v tomhle kole vůbec neuplatnil.
   world.deletedPlayers = mergeSet(myAdmin.deletedPlayers, world.deletedPlayers, 500);
   world.seizedPlayers = mergeStamped(myAdmin.seizedPlayers, world.seizedPlayers);
+  world.admini = mergeStamped(myAdmin.admini, world.admini);
+  setTimeout(() => safeCall(() => obnovSpravce()), 0);
   world.distanceOverrides = mergeStamped(myAdmin.distanceOverrides, world.distanceOverrides);
   // Akce ve městě: novější záznam vyhrává (i zrušení je záznam s časem).
   world.akceMesta = mergeStamped(myAdmin.akceMesta, world.akceMesta);
@@ -7957,7 +7965,7 @@ function mergeLogs(a, b, limit, isChat){
 function saveWorld(){
   zapomenCeny();   // ukládá se po každé změně peněz nebo majetku → přepočítat
   // Značka poslední aktivity hráče — při sloučení světů z více zařízení vyhraje NOVĚJŠÍ verze hráče.
-  if(currentUser && world.users && world.users[currentUser.name]){
+  if(currentUser && world.users && world.users[currentUser.name] && !cekamNaCloud()){
     world.users[currentUser.name].lastActive = Date.now();
     world.users[currentUser.name].verze = APP_VERSION;   // admin pak vidí, kdo hraje starou verzi
   }
@@ -8323,6 +8331,7 @@ function aiZmen(zmena){
   safeCall(() => renderAdmin());
 }
 async function adminAiKlic(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!isAdmin) return;
   const v = await showPrompt('🔑 Vlož API klíč od Anthropicu (začíná „sk-ant-").\n\nKlíč se uloží do hry, aby ho mohly použít telefony hráčů s AI vylepšením. Doporučení: udělej si pro hru zvláštní klíč a nastav mu na console.anthropic.com limit útraty.', '', false);
   if(v === null || v === undefined) return;
@@ -8344,6 +8353,7 @@ async function adminAiTest(){
   safeCall(() => renderAdmin());
 }
 async function adminAiSmaz(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!(await showConfirm('Smazat API klíč ze hry? AI vylepšení přestanou fungovat všem hráčům, zpravodaj se přestane psát.'))) return;
   aiZmen({ klic: null });
 }
@@ -8364,6 +8374,7 @@ function adminAiPremium(jmeno){
 }
 // --- Admin: Gemini ---
 async function adminGeminiKlic(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!isAdmin) return;
   const v = await showPrompt('🔑 Vlož API klíč ke Gemini (z aistudio.google.com → Get API key).\n\nKlíč se uloží do hry stejně jako klíč ke Claude. Doporučení: udělej si pro hru zvláštní klíč a nastav mu v Google AI Studiu limit útraty.', '', false);
   if(v === null || v === undefined) return;
@@ -8386,6 +8397,7 @@ async function adminGeminiTest(){
   safeCall(() => renderAdmin());
 }
 async function adminGeminiSmaz(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!(await showConfirm('Smazat klíč ke Gemini ze hry? Chodci budou mluvit přes Claude (jestli je zadaný) a zpravodaj přijde o obrázek.'))) return;
   aiZmen({ gemini: null });
 }
@@ -8430,27 +8442,27 @@ function adminAiKartaHtml(){
   // Claude
   h += `<p style="font-size:0.92em;margin:10px 0 4px;"><b>Claude</b> — píše zpravodaj, večerník a mluví za nájemníky</p>`;
   if(!klic){
-    h += `<div class="row"><button class="${gk ? 'secondary' : ''}" onclick="adminAiKlic()">🔑 Zadat klíč ke Claude</button></div>`;
+    h += jsemHlavniAdmin() ? `<div class="row"><button class="${gk ? 'secondary' : ''}" onclick="adminAiKlic()">🔑 Zadat klíč ke Claude</button></div>` : `<p style="font-size:0.84em;color:var(--muted);">Klíč zadává hlavní správce.</p>`;
   } else {
     h += `<p style="font-size:0.88em;margin:2px 0;">Klíč <b>${skryj(klic)}</b> · tenhle telefon dnes ${claudePouziti().pocet}/${CLAUDE_LIMIT_DEN} dotazů</p>
       <div class="row" style="gap:6px;">
         <button class="secondary" onclick="adminAiTest()">🧪 Vyzkoušet</button>
-        <button class="secondary" onclick="adminAiKlic()">🔑 Změnit</button>
-        <button class="danger" onclick="adminAiSmaz()">Smazat</button></div>
+        ${jsemHlavniAdmin() ? `<button class="secondary" onclick="adminAiKlic()">🔑 Změnit</button>
+        <button class="danger" onclick="adminAiSmaz()">Smazat</button>` : ''}</div>
       <div class="row" style="gap:6px;margin-top:6px;">${CLAUDE_MODELY.map(m => modelBtn(m, claudeModel() === m.id, 'adminAiModel')).join('')}</div>`;
   }
 
   // Gemini
   h += `<p style="font-size:0.92em;margin:14px 0 4px;"><b>Gemini</b> — mluví za chodce a kreslí obrázek ke zpravodaji</p>`;
   if(!gk){
-    h += `<div class="row"><button class="${klic ? 'secondary' : ''}" onclick="adminGeminiKlic()">🔑 Zadat klíč ke Gemini</button></div>`;
+    h += jsemHlavniAdmin() ? `<div class="row"><button class="${klic ? 'secondary' : ''}" onclick="adminGeminiKlic()">🔑 Zadat klíč ke Gemini</button></div>` : `<p style="font-size:0.84em;color:var(--muted);">Klíč zadává hlavní správce.</p>`;
   } else {
     const gm = geminiModel(), go = geminiObrModel();
     h += `<p style="font-size:0.88em;margin:2px 0;">Klíč <b>${skryj(gk)}</b> · tenhle telefon dnes ${aiPouziti('gemini').pocet}/${GEMINI_LIMIT_DEN} dotazů</p>
       <div class="row" style="gap:6px;">
         <button class="secondary" onclick="adminGeminiTest()">🧪 Vyzkoušet</button>
-        <button class="secondary" onclick="adminGeminiKlic()">🔑 Změnit</button>
-        <button class="danger" onclick="adminGeminiSmaz()">Smazat</button></div>
+        ${jsemHlavniAdmin() ? `<button class="secondary" onclick="adminGeminiKlic()">🔑 Změnit</button>
+        <button class="danger" onclick="adminGeminiSmaz()">Smazat</button>` : ''}</div>
       <p style="font-size:0.84em;margin:8px 0 4px;">Model na texty${GEMINI_MODELY.some(m => m.id === gm) ? '' : ': <b>' + escapeHtml(gm) + '</b>'}</p>
       <div class="row" style="gap:6px;">${GEMINI_MODELY.map(m => modelBtn(m, gm === m.id, 'adminGeminiModel')).join('')}</div>
       <p style="font-size:0.84em;margin:8px 0 4px;">Model na obrázky${GEMINI_OBR_MODELY.some(m => m.id === go) ? '' : ': <b>' + escapeHtml(go) + '</b>'}</p>
@@ -9406,6 +9418,7 @@ function tick(){
 }
 let posledniTickZarizeni = 0;   // jen v paměti tohohle zařízení, nesynchronizuje se
 function tickVnitrni(){
+  if(cekamNaCloud()) return;   // nejdřív svět ze serveru — staré místní data nic nepočítají
   const now = Date.now();
   let elapsed = now - world.lastTick;
   if(elapsed <= 0){ world.lastTick = now; return; }
@@ -10149,8 +10162,30 @@ function daysSinceActive(u){
 // hrají každý den (Zaoo: „Byl jsi pryč 0 dní, tak město nabídlo 2 tvoje podíly"). Teď se domy
 // nabízejí jen na zařízení, které už svět ze serveru načetlo, a nikdy ne domy hráče, který
 // zrovna hraje na tomhle telefonu.
-let cloudNacten = 0;
+var cloudNacten = 0;      // var: používá se i při načítání skriptu, než sem dojde
+var offlineRezim = false;          // Firebase není (bez sítě) nebo první stažení selhalo — hraje se lokálně
+var SPUSTENO_TS = Date.now();
 function svetSesynchronizovany(){ return !!(firebaseSyncEnabled && fbDb && cloudNacten > 0); }
+// OPRAVA 21.50: dokud telefon nemá svět ze serveru, nesmí nic počítat ani se tvářit jako
+// „nejnovější". Telefon, který dlouho nehrál, jinak po startu napočítal peníze do svého
+// měsíce starého záznamu, posunul si „naposledy hrál" na teď — a při sloučení jeho stará
+// verze hráče vyhrála nad aktuální ze serveru (starý zůstatek + domy koupené mezitím =
+// o desítky tisíc vyšší jmění). Čeká se nejvýš 25 s, pak se hraje lokálně.
+function cekamNaCloud(){
+  if(offlineRezim || cloudNacten || !fbDb) return false;
+  if(Date.now() - SPUSTENO_TS > 25000){ offlineRezim = true; safeCall(() => skryjNacitaniSveta()); return false; }
+  return true;
+}
+function ukazNacitaniSveta(){
+  if(document.getElementById('nacitaniSveta')) return;
+  const el = document.createElement('div');
+  el.id = 'nacitaniSveta';
+  el.style.cssText = 'position:fixed;inset:0;z-index:2900;background:rgba(10,12,16,0.55);display:flex;align-items:center;justify-content:center;';
+  el.innerHTML = '<div style="background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px 18px;font-size:0.95em;color:var(--text);">⏳ Načítám aktuální svět…</div>';
+  document.body.appendChild(el);
+  setTimeout(() => safeCall(() => cekamNaCloud()), 25500);   // pojistka, kdyby server neodpověděl
+}
+function skryjNacitaniSveta(){ const el = document.getElementById('nacitaniSveta'); if(el) el.remove(); }
 function listDormantPlayersHouses(){
   if(!svetSesynchronizovany()) return;
   if(!world.listings || typeof world.listings !== 'object') world.listings = {};
@@ -17795,6 +17830,77 @@ async function adminHash(text){
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 let isAdmin = false;
+let hlavniAdmin = false;   // odemčeno heslem (na rozdíl od správce přidaného do seznamu)
+
+// ===== DALŠÍ SPRÁVCI (21.51) =====
+// Hlavní správce (s heslem) může udělat správcem kteréhokoli hráče. Ten pak má Admin bez
+// hesla, kdykoli se přihlásí pod svým jménem — ale jen když má nastavený PIN, jinak by se
+// za něj mohl přihlásit kdokoli. Seznam je ve světě (world.admini) a slučuje se podle razítek.
+// Pomocný správce nesmí: přidávat a odebírat správce, měnit AI klíče, mazat hráče, zabavit
+// celý majetek ani resetovat svět.
+function jeSpravce(jm){
+  const a = world && world.admini && world.admini[jm];
+  const u = world && world.users && world.users[jm];
+  return !!(a && a.aktivni && u && u.pinHash);
+}
+function jsemPomocnySpravce(){ return !!(isAdmin && !hlavniAdmin && currentUser && jeSpravce(currentUser.name)); }
+function jsemHlavniAdmin(){ return !!(isAdmin && !jsemPomocnySpravce()); }
+function upozorniHlavni(){ showAlert('Tohle může jen hlavní správce hry (ten s heslem).'); }
+let bylSpravce = null;
+// Po přihlášení a po každém sloučení světa: přidali/odebrali mě jako správce?
+function obnovSpravce(){
+  const ted = !!(currentUser && jeSpravce(currentUser.name));
+  if(ted === bylSpravce) return;
+  bylSpravce = ted;
+  if(hlavniAdmin) return;
+  if(ted) isAdmin = true;
+  else if(isAdmin) isAdmin = false;
+  const vic = document.getElementById('tab-vic');
+  if(vic && vic.classList.contains('active')) safeCall(() => renderVic());
+  const adm = document.getElementById('tab-admin');
+  if(!isAdmin && adm && adm.classList.contains('active')) safeCall(() => closeSheet());
+}
+async function adminPridatSpravce(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  const v = await showPrompt('Koho udělat správcem? Napiš přezdívku hráče.', '', false);
+  if(v === null || v === undefined || !String(v).trim()) return;
+  const hledam = String(v).trim().toLowerCase();
+  const u = Object.values(world.users || {}).find(x => x && x.name && x.name.toLowerCase() === hledam);
+  if(!u){ showAlert(`Hráč „${String(v).trim()}" ve hře není. Zkontroluj přezdívku.`); return; }
+  if(currentUser && u.name === currentUser.name){ showAlert('Ty už správcem jsi.'); return; }
+  if(jeSpravce(u.name)){ showAlert(`${u.name} už správcem je.`); return; }
+  if(!u.pinHash){ showAlert(`${u.name} nemá nastavený PIN.\n\nBez PINu by se za něj mohl přihlásit kdokoli a dostal by Admin. Ať si ho nastaví v Profilu, pak ho přidej.`); return; }
+  if(!(await showConfirm(`Udělat hráče ${u.name} správcem?\n\nUvidí Admin a bude moct hru spravovat (hráči, peníze, akce, noviny, AI…). Nesmí jen přidávat správce, měnit AI klíče, mazat hráče a resetovat svět.\n\nKdykoli ho zase odebereš.`))) return;
+  if(!world.admini || typeof world.admini !== 'object') world.admini = {};
+  world.admini[u.name] = { aktivni: true, ts: Date.now(), od: currentUser ? currentUser.name : '' };
+  addNews('join', `🛡️ ${u.name} je nově správcem hry.`);
+  saveWorld(); renderAdmin();
+  showToast(`🛡️ ${u.name} je správce`);
+}
+async function adminOdebratSpravce(jm){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  if(!world.admini || !world.admini[jm]) return;
+  if(!(await showConfirm(`Odebrat hráči ${jm} práva správce?`))) return;
+  world.admini[jm] = { aktivni: false, ts: Date.now(), od: currentUser ? currentUser.name : '' };
+  saveWorld(); renderAdmin();
+}
+function adminSpravciHtml(){
+  const seznam = Object.entries(world.admini || {}).filter(([jm, a]) => a && a.aktivni && world.users[jm]);
+  const hlavni = jsemHlavniAdmin();
+  let h = `<div class="card"><h3>🛡️ Správci</h3>`;
+  h += `<p style="font-size:0.88em;margin:2px 0 8px;">${hlavni ? 'Ty jsi hlavní správce (s heslem).' : `Jsi pomocný správce. Přidávat správce, měnit AI klíče, mazat hráče a resetovat svět může jen hlavní správce.`}</p>`;
+  if(!seznam.length) h += `<p style="font-size:0.86em;color:var(--muted);margin:4px 0;">Zatím žádní další správci.</p>`;
+  seznam.forEach(([jm, a]) => {
+    const u = world.users[jm];
+    h += `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:4px 0;">
+      <span style="font-size:0.9em;">${escapeHtml(u.avatar || '🧑')} ${escapeHtml(jm)}${u.pinHash ? '' : ' <span style="color:var(--danger);font-size:0.85em;">— bez PINu, práva neplatí</span>'}
+        <span style="color:var(--muted);font-size:0.8em;"> · od ${new Date(a.ts).toLocaleDateString('cs-CZ')}</span></span>
+      ${hlavni ? `<button class="danger" style="min-height:32px;font-size:0.82em;padding:4px 10px;flex:0 0 auto;" data-jm="${escapeHtml(jm)}" onclick="adminOdebratSpravce(this.dataset.jm)">Odebrat</button>` : ''}</div>`;
+  });
+  if(hlavni) h += `<div class="row" style="margin-top:8px;"><button onclick="adminPridatSpravce()">➕ Přidat správce</button></div>
+    <p class="fPozn">Správce musí mít nastavený PIN — jinak by se za něj mohl přihlásit kdokoli. Když si PIN zruší, práva mu přestanou platit.</p>`;
+  return h + '</div>';
+}
 
 // Odemčení se pamatuje natrvalo. Ukládá se OTISK hesla, ne jednička — takže si to
 // nezapne ten, kdo si jen tipne název položky v úložišti; musel by znát heslo.
@@ -17804,9 +17910,9 @@ let isAdmin = false;
 const ADMIN_KLIC = 'bucpoly_admin_v2';
 
 function loadAdminFlag(){
-  if(!isAdmin){
-    try { isAdmin = localStorage.getItem(ADMIN_KLIC) === ADMIN_PASS_HASH; } catch(e){}
-  }
+  try { hlavniAdmin = localStorage.getItem(ADMIN_KLIC) === ADMIN_PASS_HASH; } catch(e){ hlavniAdmin = false; }
+  if(hlavniAdmin) isAdmin = true;
+  bylSpravce = null; safeCall(() => obnovSpravce());
   // Admin je teď položka v menu „Víc" — když je menu zrovna otevřené, překreslit ho.
   const vic = document.getElementById('tab-vic');
   if(vic && vic.classList.contains('active')) safeCall(() => renderVic());
@@ -17819,7 +17925,7 @@ async function unlockAdmin(){
   let otisk = null;
   try { otisk = await adminHash(pass); } catch(e){ showAlert('Prohlížeč neumí ověřit heslo (chybí crypto.subtle).'); return; }
   if(otisk === ADMIN_PASS_HASH){
-    isAdmin = true;
+    isAdmin = true; hlavniAdmin = true;
     try { localStorage.setItem(ADMIN_KLIC, ADMIN_PASS_HASH); } catch(e){}
     loadAdminFlag();
     openSheet('admin');
@@ -17829,7 +17935,7 @@ async function unlockAdmin(){
   }
 }
 function lockAdmin(){
-  isAdmin = false;
+  isAdmin = false; hlavniAdmin = false;
   try {
     localStorage.removeItem(ADMIN_KLIC);
     localStorage.removeItem('bucovice_admin');   // úklid po starých verzích
@@ -18815,6 +18921,7 @@ function renderAdmin(){
     <p style="font-size:0.82em;color:var(--muted);margin:2px 0;">Vidíš tu staré datum po nahrání nové verze? Appka běží ze staré kopie — zavři ji úplně (i z přehledu aplikací) a otevři znovu.</p>
   </div>`;
   html += adminSyncKartaHtml();
+  html += safeCall(() => adminSpravciHtml()) || '';
   html += safeCall(() => adminAiKartaHtml()) || '';
 
   // Záznam chyb — ať víš o průšvizích i od hráčů, kteří ti je nenapíšou do chatu.
@@ -19026,7 +19133,7 @@ function renderAdmin(){
 
   html += `<div class="card">
     <h3 style="color:var(--danger)">☢️ Nebezpečná zóna</h3>
-    <div class="row"><button class="danger" onclick="adminResetWorld()">Smazat a resetovat CELÝ svět</button></div>
+    ${jsemHlavniAdmin() ? `<div class="row"><button class="danger" onclick="adminResetWorld()">Smazat a resetovat CELÝ svět</button></div>` : '<p style="font-size:0.85em;color:var(--muted)">Reset světa může jen hlavní správce.</p>'}
     <p style="font-size:0.85em;color:var(--muted)">Smaže všechny hráče, domy, podniky — start od nuly. Nevratné!</p>
     <div class="row" style="margin-top:8px;"><button class="secondary" onclick="lockAdmin()">Zamknout admin režim</button></div>
   </div>`;
@@ -19059,7 +19166,7 @@ function adminSbalitelne(el){
   });
   // Seřadit do skupin — nejčastější věci nahoru, technika dolů. Neznámá sekce jde do Techniky.
   const SKUPINY = [
-    ['🎮 Hra a hráči', ['Hráči', 'AI ve hře', 'Poslat oznámení', 'Akce v', 'Ekonomika', 'Město', 'Místa zájmu', 'Sbírka míst', 'Kudy hráči chodí']],
+    ['🎮 Hra a hráči', ['Hráči', 'Správci', 'AI ve hře', 'Poslat oznámení', 'Akce v', 'Ekonomika', 'Město', 'Místa zájmu', 'Sbírka míst', 'Kudy hráči chodí']],
     ['🔧 Technika', ['Verze appky', 'Synchronizace', 'Náprava po chybě', 'Záznam chyb', 'Záloha světa', 'Adresy domů', 'Mobilní konzole', 'Testovací náhledy', 'Náhled efektů']],
     ['☢️ Opatrně', ['Nebezpečná zóna']]
   ];
@@ -19519,6 +19626,7 @@ function seizeAssets(name){
   world.seizedPlayers[name] = Date.now();
 }
 async function adminClearProps(name){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!(await showConfirm(`Zabavit VŠECHEN majetek hráče „${name}"? (domy, podíly, nájmy) Peníze zůstanou.`))) return;
   seizeAssets(name);
   addNews('event', `🏚️ Vedení města zabavilo majetek hráče ${name}.`);
@@ -19526,6 +19634,7 @@ async function adminClearProps(name){
   showAlert(`Majetek hráče ${name} zabaven.`);
 }
 async function adminDeletePlayer(name){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!(await showConfirm(`SMAZAT hráče „${name}" úplně? Zmizí i všechen jeho majetek. Nevratné!`))) return;
   seizeAssets(name);
   Object.values(world.jobs || {}).forEach(j => { if(j.holders) j.holders = j.holders.filter(h => h !== name); });
@@ -19550,6 +19659,7 @@ function adminResetInflation(){
   showAlert('Inflace resetována na 1,0.');
 }
 async function adminResetWorld(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
   if(!(await showConfirm('Opravdu SMAZAT CELÝ SVĚT? Všichni hráči, domy, podniky — vše se resetuje. NEVRATNÉ!'))) return;
   if(!(await showConfirm('Fakt úplně jistě? Tohle nejde vzít zpět.'))) return;
   try { localStorage.removeItem(storageKey()); } catch(e){}
@@ -20202,6 +20312,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.51', datum:'2026-10-21', body:[
+    ['novinka','🛡️ Další správci: hlavní správce může v Adminu udělat správcem kteréhokoli hráče s PINem. Ten pak má Admin bez hesla. Nesmí jen přidávat správce, měnit AI klíče, mazat hráče a resetovat svět.'],
+  ]},
+  { verze:'21.50', datum:'2026-10-21', body:[
+    ['oprava','🛡️ Kritická oprava: telefon, na kterém se dlouho nehrálo, mohl po spuštění vrátit hráči jeho měsíc starý záznam — starý zůstatek na účtu, a k tomu domy koupené mezitím. Jmění pak vyskočilo o desítky tisíc. Hra teď po startu chvilku počká („Načítám aktuální svět…"), než má data ze serveru, a do té doby nic nepočítá ani neukládá jako nejnovější.'],
+  ]},
   { verze:'21.49', datum:'2026-10-21', body:[
     ['novinka','🧹 Správce může v Adminu smazat celé Noviny. Zůstane jen to, co napsala AI (Bučovický zpravodaj). Smazání platí na všech telefonech a staré zprávy se nevrátí ani ze starších dat.'],
   ]},
@@ -24607,6 +24723,7 @@ function claimGifts(name){
 }
 
 function doLogin(name, pinHash){
+  setTimeout(() => safeCall(() => { bylSpravce = null; obnovSpravce(); }), 0);
   if(!world.users[name]){
     world.users[name] = {name, balance: START_BALANCE, lastWorkedCalDay: -1, walkEarnedToday: 0, distanceToday: 0, totalDistance: 0, loans: [], totalShifts: 0, jobBanUntil: 0,
       joinedRealDate: Date.now(), joinedGameDay: world.day, peakWorth: START_BALANCE, avatar: '🧑', savings: 0, starterHomeAvailable: true, pinHash: pinHash || null};
