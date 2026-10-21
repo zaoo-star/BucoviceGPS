@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.53';
-const APP_BUILD = '22.10.2026 02:30';
+const APP_VERSION = '21.55';
+const APP_BUILD = '22.10.2026 03:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7343,6 +7343,7 @@ function adoptWorldVnitrni(incoming){
   const mojeProdeje = {};     // parcelId -> historie prodejů (drží cenu domu)
   const mojeKroniky = {};     // parcelId -> kronika domu a hodnoty po dnech
   const mojeProjekty = {};    // parcelId -> rozdělaný stavební projekt
+  const mojeProvozy = {};     // parcelId -> provozovna (21.54): zaplacená věc, nesmí zmizet se starým zápisem
   const mojeBizVlastnictvi = {}; // bizId -> {omod, owners}
   const myTenancies = [];     // {id, uid, idx} — pronajaté byty (uid je stálý, index se přestavbou mění)
   const myNews = world.news || [];
@@ -7398,6 +7399,8 @@ function adoptWorldVnitrni(incoming){
       // Razítko si pamatujeme u KAŽDÉHO domu, i cizího. Když někdo pošle starší verzi domu
       // (typicky hráč, který ještě nedostal cizí změnu), nepřijdeme o novější stav.
       if(p && p.mod) mojeRazitka[id] = { mod: p.mod, dum: JSON.parse(JSON.stringify(p)) };
+      if(p && (p.provoz || p.provozTs)) mojeProvozy[id] = { provoz: p.provoz ? JSON.parse(JSON.stringify(p.provoz)) : null, provozTs: p.provozTs || 0,
+        useType: p.useType, units: JSON.parse(JSON.stringify(asArray(p.units))), vladce: houseDecider(p) };
       // Vylepšení a rozdělaný projekt zálohujeme ZVLÁŠŤ. Jsou to zaplacené věci, které
       // se nedají odinstalovat — a přesto mizely, protože byty i vylepšení se slučují
       // jako celý dům podle razítka `mod`. Kdo dostal starší snapshot, přišel o klimatizaci
@@ -7772,6 +7775,24 @@ function adoptWorldVnitrni(incoming){
       if(!p) return;
       if(!p.upgrades) p.upgrades = {};
       Object.keys(up).forEach(k => { if(up[k] && !p.upgrades[k]) p.upgrades[k] = true; });
+    });
+
+    // PROVOZOVNY (21.54): zápis ze zařízení se starými daty (dům ještě jako pronájem, ale
+    // s čerstvým razítkem — třeba od chátrání) uměl provozovnu smazat (hlásil Zaoo: „měl
+    // jsem provozovnu a teď je tam nájem"). Provozovna se teď ruší jen tím, kdo ji zavře —
+    // to nese razítko `provozTs`. Bez novějšího razítka ji vrátíme, pokud dům má pořád
+    // stejného hlavního majitele.
+    Object.entries(mojeProvozy).forEach(([id, L]) => {
+      const C = world.parcels[id];
+      if(!C || !L || !L.provoz || C.provoz) return;
+      if((C.provozTs || 0) > (L.provozTs || 0)) return;            // schválně zavřená
+      if(!houseHasOwner(C) || houseDecider(C) !== L.vladce) return;  // dům mezitím změnil majitele
+      C.provoz = L.provoz;
+      C.useType = L.useType;
+      C.units = L.units;
+      C.provozTs = Math.max(L.provozTs || 0, C.provozTs || 0) || noveRazitko();
+      C.mod = noveRazitko();   // opravená verze ať vyhraje i na ostatních zařízeních
+      zapisChybu(`Vrácena provozovna v domě ${id} — přišla starší verze domu bez ní`, 'sync');
     });
 
     // Rozdělaný projekt vrátíme, jen když v cloudu žádný není a ještě neměl skončit —
@@ -15650,6 +15671,7 @@ function renderSelected(id){
         .map(([k, t]) => ({ k, t, denne: effectiveHousePrice(p) * PROVOZ_ZAKLAD * t.vynos * poptavkaProMisto(p, k).index * (1 - PROVOZ_ZASOBY_PODIL) }))
         .sort((a, b) => b.denne - a.denne)[0];
       html += `<button class="secondary" ${near?'':'disabled'} onclick="otevritProvozovnu('${p.id}')">🏪 Otevřít provozovnu (od ${provozInvestice(p, pater >= 2).toLocaleString('cs-CZ')} Kč)</button>`;
+      if(isAdmin) html += `<button class="secondary" style="margin-top:6px;" onclick="adminObnovProvoz('${p.id}')">🛠️ Vrátit ztracenou provozovnu (správce, zdarma)</button>`;
       if(nejlepsi) html += `<p style="font-size:0.85em;color:var(--muted);margin:4px 0 0;">
         Nejlépe by tu šla ${nejlepsi.t.emoji} <b>${nejlepsi.t.name.toLowerCase()}</b> — poptávka ${poptavkaProMisto(p, nejlepsi.k).popis}, odhad <b>${Math.round(nejlepsi.denne)} Kč/den čistě</b> (po zásobách) přes celý dům.
         ${pater >= 2 ? `Dům má ${pater} ${pater < 5 ? 'patra' : 'pater'}, takže můžeš otevřít jen přízemí a nahoře dál bydlet nebo pronajímat.`
@@ -15659,6 +15681,9 @@ function renderSelected(id){
   } else if(iDecide) {
     html += `<p style="font-size:0.92em;color:var(--muted);margin-top:6px;">Jsi správce, ale na přestavbu domu (změnu využití) potřebuješ víc než 50 % podílu.</p>`;
   }
+  // správce hry může vrátit ztracenou provozovnu i v cizím domě
+  if(isAdmin && !iMajority && houseHasOwner(p) && !maProvoz(p))
+    html += `<div class="row" style="margin-top:6px;"><button class="secondary" onclick="adminObnovProvoz('${p.id}')">🛠️ Vrátit ztracenou provozovnu (správce, zdarma)</button></div>`;
   const kVyuziti = html; html = '';
   html = kTitul + detailStatyHtml(p, myPct, free) + detailVlivyHtml(p) + kJeste + kLokUdalost + kProvoz
     + detailSekce('👥 Vlastnictví', kPrava + kVlastnici)
@@ -20329,6 +20354,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.55', datum:'2026-10-21', body:[
+    ['novinka','🏪 Kdo přišel o provozovnu chybou synchronizace, tomu ji hra sama nabídne vrátit — pozná to podle deníku (otevřel jsi ji a nezavřel ani neprodal). Vrátí se zdarma a se zásobami na 100 %. Kdo ji zavřel schválně, klepne „Ne" a hra se už nezeptá.'],
+  ]},
+  { verze:'21.54', datum:'2026-10-21', body:[
+    ['oprava','🏪 Provozovna mohla zmizet a místo ní se v domě objevil zase pronájem — když hru otevřel telefon se starými daty. Teď provozovnu zruší jen ten, kdo ji sám zavře; po chybném zápisu se vrátí.'],
+    ['admin','Správce může v detailu domu vrátit ztracenou provozovnu zdarma (tlačítko „Vrátit ztracenou provozovnu"). Typ podle kroniky domu.'],
+  ]},
   { verze:'21.53', datum:'2026-10-21', body:[
     ['admin','„Co je nového" ukazuje změny Adminu jen správcům — hráči je nevidí a kvůli nim nedostanou tečku. Přidání správce se už nepíše do Novin.'],
   ]},
@@ -23578,6 +23610,7 @@ async function otevritProvozovnu(id){
     p.useType = 'rental';
     p.units = byty;
     p.provoz = { typ: volba.k, zasoby: 100, otevrenoDen: world.day, prizemi: true };
+    p.provozTs = noveRazitko();
     // nájmy bytů nad obchodem nastavíme podle férové ceny s ohledem na obchod dole
     const fer = fairRentForHouse(p);
     p.units.forEach(u => { if(u && !u.rentPrice) u.rentPrice = fer; });
@@ -23590,6 +23623,7 @@ async function otevritProvozovnu(id){
     asArray(p.units).forEach(u => { if(u){ u.tenant = null; u.npc = null; u.ownerOccupied = false; stampUnit(u); } });
     p.useType = 'provozovna';
     p.provoz = { typ: volba.k, zasoby: 100, otevrenoDen: world.day };
+    p.provozTs = noveRazitko();
   }
   stampHouse(p);
   zapisDoDeniku('provoz', `Otevřel jsem ${volba.t.name.toLowerCase()}${jenPrizemi ? ' v přízemí' : ''} v domě ${domKratce(p)}`, -cena);
@@ -23599,6 +23633,118 @@ async function otevritProvozovnu(id){
     (jenPrizemi ? `\n\nByty nahoře: ${p.units.length}${p.units.some(u => u.ownerOccupied) ? ', v jednom bydlíš ty' : ''}. Nájem jsem nastavil na férových ${fairRentForHouse(p)} Kč.` : ''));
 }
 
+// Správce vrátí provozovnu, která zmizela kvůli chybě synchronizace (21.54) — zdarma,
+// se zásobami na 100 %. Typ se odhadne z kroniky domu, dá se vybrat.
+async function adminObnovProvoz(id){
+  if(!isAdmin) return;
+  const p = world.parcels[id];
+  if(!p || maProvoz(p)) return;
+  if(!houseHasOwner(p)){ showAlert('Dům nemá majitele.'); return; }
+  const kron = asArray(p.kronika).map(z => z && z.t).filter(Boolean).join(' ').toLowerCase();
+  const typy = Object.entries(PROVOZ_TYPY).filter(([k, t]) => !t.minPater || pocetPater(p) >= t.minPater);
+  typy.sort((a, b) => (kron.includes(b[1].name.toLowerCase()) ? 1 : 0) - (kron.includes(a[1].name.toLowerCase()) ? 1 : 0));
+  const typ = await showChoice(`Vrátit provozovnu v domě ${domKratce(p)} (majitel ${houseDecider(p)})? Jaká tam byla?`,
+    typy.map(([k, t]) => ({ popis:`${t.emoji} ${t.name}`, detail: kron.includes(t.name.toLowerCase()) ? 'podle kroniky domu tu byla' : '', hodnota:k })));
+  if(typ === null || typ === undefined) return;
+  let prizemi = false;
+  if(pocetPater(p) >= 2){
+    const r = await showChoice('Byla jen v přízemí, nebo v celém domě?', [
+      { popis:'🏬 Jen v přízemí', detail:'nahoře zůstanou byty', hodnota:'1' },
+      { popis:'🏢 Celý dům', detail:'nájemníci se vystěhují', hodnota:'2' }]);
+    if(r === null || r === undefined) return;
+    prizemi = r === '1';
+  }
+  obnovProvozovnu(p, typ, prizemi, 'Správce');
+  saveWorld(); refreshAll();
+  safeCall(() => renderSelected(id));
+  showAlert(`${PROVOZ_TYPY[typ].emoji} Provozovna je zpátky — zdarma a se zásobami na 100 %.`);
+}
+function obnovProvozovnu(p, typ, prizemi, kdo){
+  if(prizemi){
+    let byty = asArray(p.units).slice();
+    if(!byty.length) for(let i = 0; i < pocetPater(p); i++) byty.push({ uid: newUnitId(), rentPrice: fairRentForHouse(p), condition: 100 });
+    if(byty.length >= pocetPater(p)) byty.shift();     // přízemí přestává být bytem
+    p.useType = 'rental';
+    p.units = byty;
+    p.provoz = { typ, zasoby: 100, otevrenoDen: world.day, prizemi: true };
+    p.units.forEach(u => u && stampUnit(u));
+  } else {
+    asArray(p.units).forEach(u => { if(u){ u.tenant = null; u.npc = null; u.ownerOccupied = false; stampUnit(u); } });
+    p.useType = 'provozovna';
+    p.provoz = { typ, zasoby: 100, otevrenoDen: world.day };
+  }
+  p.provozTs = noveRazitko();
+  stampHouse(p);
+  zapisKroniku(p, `🛠️ ${kdo} vrátil provozovnu (${PROVOZ_TYPY[typ].name.toLowerCase()}), která zmizela chybou synchronizace`);
+}
+// ===== AUTOMATICKÉ VRÁCENÍ ZTRACENÉ PROVOZOVNY (21.55) =====
+// Do 21.54 mohl telefon se starými daty provozovnu smazat. Hra ji pozná podle deníku majitele:
+// „Otevřel jsem … v domě X" a potom už nic o zavření ani prodeji — a dům je pořád jeho.
+// Zeptá se majitele (mohl ji přece zavřít sám) a vrátí ji zdarma.
+function najdiZtraceneProvozovny(){
+  if(!currentUser || cekamNaCloud()) return [];
+  const u = world.users[currentUser.name];
+  if(!u) return [];
+  const odmitnuto = (u.provozOdmitnuto && typeof u.provozOdmitnuto === 'object') ? u.provozOdmitnuto : {};
+  // moje domy podle jmen, pod kterými je deník zná (adresa i číslo)
+  const podleJmena = {};
+  Object.values(world.parcels || {}).forEach(p => {
+    if(!p || (p.owners?.[currentUser.name] || 0) <= 50) return;
+    podleJmena[domKratce(p)] = p;
+    podleJmena[String(p.id).replace('h_', '#')] = p;
+  });
+  const zaznamy = asArray(u.denik).filter(z => z && z.text && z.ts).sort((a, b) => a.ts - b.ts);
+  const stav = {};   // id domu → poslední událost
+  zaznamy.forEach(z => {
+    let m = z.text.match(/^Otevřel jsem (.+?)( v přízemí)? v domě (.+)$/);
+    if(m && podleJmena[m[3]]){
+      const typ = Object.keys(PROVOZ_TYPY).find(k => PROVOZ_TYPY[k].name.toLowerCase() === m[1]);
+      if(typ) stav[podleJmena[m[3]].id] = { typ, prizemi: !!m[2], ts: z.ts };
+      return;
+    }
+    m = z.text.match(/^Zavřel jsem provozovnu(?: v přízemí)? (?:v domě|domu) (.+)$/) ||
+        z.text.match(/^Prodal jsem (?:kupci|městu) [\d,.]+ % domu (.+?)(?: \(.*\))?$/);
+    if(m && podleJmena[m[1]]) stav[podleJmena[m[1]].id] = null;
+  });
+  return Object.entries(stav).filter(([id, s2]) => {
+    if(!s2) return false;
+    const p = world.parcels[id];
+    if(!p || maProvoz(p)) return false;
+    if((p.provozTs || 0) > s2.ts) return false;            // zavřená schválně (novější verze to zapisuje)
+    if((odmitnuto[id] || 0) >= s2.ts) return false;        // majitel už řekl, že ji zavřel sám
+    if(s2.prizemi && pocetPater(p) < 2) return false;
+    return true;
+  }).map(([id, s2]) => ({ id, typ: s2.typ, prizemi: s2.prizemi }));
+}
+let ztraceneZkontrolovano = 0;
+async function zkusVratitProvozovny(){
+  if(!currentUser || cekamNaCloud() || dialogOtevren > 0) return;
+  if(Date.now() - (cloudNacten || SPUSTENO_TS) < 15000) return;   // až se svět usadí
+  if(Date.now() - ztraceneZkontrolovano < 10 * 60000) return;
+  ztraceneZkontrolovano = Date.now();
+  const nalez = najdiZtraceneProvozovny();
+  for(const n of nalez){
+    const p = world.parcels[n.id];
+    const t = PROVOZ_TYPY[n.typ];
+    if(!p || !t) continue;
+    const v = await showChoice(`${t.emoji} Chyba synchronizace ti nejspíš vzala provozovnu: ${t.name.toLowerCase()}${n.prizemi ? ' v přízemí' : ''} v domě ${domKratce(p)}.\n\nVrátit ji? Zdarma a se zásobami na 100 %.`, [
+      { popis:'✅ Vrátit provozovnu', hodnota:'ano' },
+      { popis:'Ne, zavřel jsem ji sám', detail:'hra se už nebude ptát', hodnota:'ne' }]);
+    const p2 = world.parcels[n.id];   // svět se mohl mezitím sloučit
+    const ja = world.users[currentUser.name];
+    if(!p2 || !ja) continue;
+    if(v === 'ano' && !maProvoz(p2) && (p2.owners?.[currentUser.name] || 0) > 50){
+      obnovProvozovnu(p2, n.typ, n.prizemi, currentUser.name);
+      zapisDoDeniku('provoz', `Vrácena provozovna (${t.name.toLowerCase()}) v domě ${domKratce(p2)} po chybě synchronizace`, null);
+      saveWorld(); refreshAll();
+      showToast(`${t.emoji} ${t.name} je zpátky`);
+    } else if(v === 'ne'){
+      if(!ja.provozOdmitnuto || typeof ja.provozOdmitnuto !== 'object') ja.provozOdmitnuto = {};
+      ja.provozOdmitnuto[n.id] = Date.now();
+      saveWorld();
+    }
+  }
+}
 // Zavřít obchod v přízemí — přízemí se zase stane bytem (prázdným, za férovou cenu).
 async function zavritProvozovnuPrizemi(id){
   const p = world.parcels[id];
@@ -23607,6 +23753,7 @@ async function zavritProvozovnuPrizemi(id){
   const typ = PROVOZ_TYPY[p.provoz.typ];
   if(!(await showConfirm(`Zavřít ${typ ? typ.name.toLowerCase() : 'provozovnu'} v přízemí?\n\nPřízemí se zase stane bytem k pronájmu. Za zařízení peníze zpátky nedostaneš.`))) return;
   delete p.provoz;
+  p.provozTs = noveRazitko();   // zavřeno schválně — sloučení ji nesmí vzkřísit
   const byt = { uid: newUnitId(), rentPrice: 0, condition: 100 };
   p.units = [byt].concat(asArray(p.units));
   nastavNajem(byt, fairRentForHouse(p));
@@ -23779,6 +23926,8 @@ async function setUseType(id, type){
       `Chceš místo toho ${type === 'rental' ? 'pronájem' : 'bydlení'}?`);
     if(!potvrzeno) return;
     delete p.provoz;
+    p.provozTs = noveRazitko();   // zavřeno schválně — sloučení ji nesmí vzkřísit
+    zapisDoDeniku('provoz', `Zavřel jsem provozovnu v domě ${domKratce(p)}`, null);
   }
   p.useType = type;
   stampHouse(p);
@@ -25216,7 +25365,7 @@ window.onload = async () => {
   setInterval(tick, 5000);
   setInterval(updateHeaderStats, 1000);
   setInterval(() => safeCall(() => prekresliLokalniUdalost()), 15000);
-  setInterval(() => { safeCall(() => prekresliEvu()); safeCall(() => hlidejUkolyChodcu()); }, 4000);   // ať je pohyb plynulý
+  setInterval(() => { safeCall(() => prekresliEvu()); safeCall(() => hlidejUkolyChodcu()); zkusVratitProvozovny().catch(() => {}); }, 4000);   // ať je pohyb plynulý
   // Kontrola nákupů běží i bez příchozí synchronizace — kdyby hráč zůstal chvíli sám
   // (slabý signál, appka na pozadí), peníze se mu vrátí i tak.
   setInterval(() => {
