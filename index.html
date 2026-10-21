@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.44';
-const APP_BUILD = '21.10.2026 23:00';
+const APP_VERSION = '21.45';
+const APP_BUILD = '21.10.2026 23:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -8050,6 +8050,7 @@ safeCall(() => { const n = claudeMistni(); if(n.klic){ delete n.klic; claudeMist
 function aiMaVylepseni(jmeno){
   if(!aiDostupne() || !jmeno) return false;
   if(isAdmin && currentUser && jmeno === currentUser.name) return true;
+  if(aiData().vsem === true) return true;          // správce zapnul vylepšení všem hráčům
   const pr = aiData().premium;
   return !!(pr && typeof pr === 'object' && pr[jmeno]);
 }
@@ -8273,6 +8274,12 @@ async function adminAiSmaz(){
 function adminAiModel(id){ if(CLAUDE_MODELY.some(m => m.id === id)) aiZmen({ model: id }); }
 function adminAiZpravodaj(){ aiZmen({ zpravodaj: aiData().zpravodaj === false }); }
 function adminAiVecernik(){ aiZmen({ vecernik: aiData().vecernik === false }); }
+async function adminAiVsem(){
+  if(!isAdmin) return;
+  const zapnout = aiData().vsem !== true;
+  if(zapnout && !(await showConfirm('Zapnout AI vylepšení všem hráčům — i těm, kteří se přidají později?\n\nKaždý hráč pak bude posílat dotazy na tvoje klíče (nejvýš ' + CLAUDE_LIMIT_DEN + ' na Claude a ' + GEMINI_LIMIT_DEN + ' na Gemini denně z jednoho telefonu). Při víc hráčích hlídej útratu a nastav si u klíčů limit.\n\nKdykoli to zase vypneš — pak ho budou mít jen hráči vybraní v seznamu.'))) return;
+  aiZmen({ vsem: zapnout });
+}
 function adminAiPremium(jmeno){
   if(!isAdmin || !world.users[jmeno]) return;
   const pr = Object.assign({}, aiData().premium || {});
@@ -8373,7 +8380,10 @@ function adminAiKartaHtml(){
     ${gk ? `<div class="row" style="margin-top:6px;"><button class="${ai.obrazek === false ? 'secondary' : ''}" onclick="adminAiObrazek()">🖼️ Obrázek ke zpravodaji: ${ai.obrazek === false ? 'vypnutý' : 'zapnutý'}</button></div>` : ''}
     <div class="row" style="margin-top:6px;"><button class="${ai.vecernik === false ? 'secondary' : ''}" onclick="adminAiVecernik()">🗞️ Večerník v chatu v ${VECERNIK_HODINA}:00: ${ai.vecernik === false ? 'vypnutý' : 'zapnutý'}</button></div>
     <div class="row" style="margin-top:6px;"><button class="${chodciRezim() === 'vypnuto' ? 'secondary' : ''}" onclick="adminAiChodci()">🚶 Chodci ve městě: ${CHODCI_REZIMY[chodciRezim()]}</button></div>
-    <p style="font-size:0.86em;margin:10px 0 4px;"><b>AI vylepšení</b> — komu ho zapneš, tomu nájemníci píšou prosby po svém, dá se s nimi mluvit${chodciRezim() === 'vylepseni' ? ' a povídá si s chodci' : ''}:</p>
+    <p style="font-size:0.86em;margin:10px 0 4px;"><b>AI vylepšení</b> — komu ho zapneš, tomu nájemníci píšou prosby po svém, dá se s nimi mluvit${chodciRezim() === 'vylepseni' ? ' a povídá si s chodci' : ''}.</p>
+    <div class="row" style="margin-top:4px;"><button class="${ai.vsem === true ? '' : 'secondary'}" onclick="adminAiVsem()">🌍 Pro všechny hráče: ${ai.vsem === true ? 'zapnuto' : 'vypnuto'}</button></div>
+    ${ai.vsem === true ? `<p style="font-size:0.84em;color:var(--accent);margin:6px 0;">✨ Vylepšení mají teď všichni (${hraci.length} ${sklonuj(hraci.length, 'hráč', 'hráči', 'hráčů')}) i ti, kdo se přidají později. Seznam níž platí, až „pro všechny" zase vypneš.</p>` : ''}
+    <p style="font-size:0.84em;color:var(--muted);margin:8px 0 4px;">${ai.vsem === true ? 'Vybraní hráči (až to vypneš):' : 'Nebo jen vybraným hráčům:'}</p>
     ${hraci.map(u => `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin:3px 0;">
         <span style="font-size:0.9em;">${escapeHtml(u.avatar || '🧑')} ${escapeHtml(u.name)}${pr[u.name] ? ' <span style="color:var(--accent)">✨</span>' : ''}</span>
         ${currentUser && u.name === currentUser.name ? '<span style="font-size:0.8em;color:var(--muted);">ty jako správce máš vždy</span>'
@@ -19984,6 +19994,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.45', datum:'2026-10-21', body:[
+    ['novinka','🌍 Správce může zapnout AI vylepšení všem hráčům najednou — i těm, kdo se přidají později. Jedním tlačítkem v Adminu, kdykoli zase vypne.'],
+  ]},
   { verze:'21.44', datum:'2026-10-21', body:[
     ['oprava','📱 Hraní na dvou telefonech: splněný úkol chodce (turista, pochůzka, tip od Franty) se už nevrátí na nesplněný, takže odměnu nejde vybrat dvakrát. Paměť babičky a pošťáka se z obou telefonů sloučí.'],
     ['oprava','💬 Když zavřeš rozhovor dřív, než postava odpoví, její odpověď se i tak uloží a příště ji uvidíš.'],
