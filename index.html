@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.48';
-const APP_BUILD = '22.10.2026 00:45';
+const APP_VERSION = '21.49';
+const APP_BUILD = '22.10.2026 01:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7140,6 +7140,7 @@ function migrateWorld(){
         });
       }
       if(typeof world.chatClearedTs !== 'number') world.chatClearedTs = 0;
+      if(typeof world.newsClearedTs !== 'number') world.newsClearedTs = 0;
       world.deletedPlayers = asArray(world.deletedPlayers); // jména hráčů smazaných adminem
       if(!world.seizedPlayers || typeof world.seizedPlayers !== 'object' || Array.isArray(world.seizedPlayers)) world.seizedPlayers = {};
       if(!world.distanceOverrides || typeof world.distanceOverrides !== 'object' || Array.isArray(world.distanceOverrides)) world.distanceOverrides = {};
@@ -7351,6 +7352,7 @@ function adoptWorldVnitrni(incoming){
   // slučuje (ne přepisuje), zpráva se z cloudu vrátila. Proto ho zálohujeme a sjednocujeme.
   const myDeletedMsgs = asArray(world.deletedMsgs);
   const myChatClearedTs = world.chatClearedTs || 0;
+  const myNewsClearedTs = world.newsClearedTs || 0;
   // Admin zásahy a sdílené seznamy — všechny stejný případ jako smazané zprávy.
   const myAdmin = {
     deletedPlayers: asArray(world.deletedPlayers),
@@ -7444,6 +7446,10 @@ function adoptWorldVnitrni(incoming){
 
   // 2b) sloučit noviny a chat (podle ts+text, ať se stejná zpráva neduplikuje), seřadit, oříznout
   world.news = mergeLogs(myNews, world.news || [], NEWS_MAX);
+  // Vymazání novin adminem (21.49): časová hranice přežije sloučení i se starším světem.
+  // Zprávy od AI (zpravodaj) zůstávají.
+  world.newsClearedTs = Math.max(myNewsClearedTs, world.newsClearedTs || 0);
+  if(world.newsClearedTs) world.news = world.news.filter(n => n && ((n.ts || 0) > world.newsClearedTs || jeZpravaOdAI(n)));
   world.chat = jedenVecernik(mergeLogs(myChat, world.chat || [], CHAT_MAX, true));
   // vyházet zprávy, které admin na kterémkoli zařízení smazal (přežije napříč sloučeními)
   // Smazané zprávy: sjednotit obě strany, ať smazání přežije i sloučení se starším světem.
@@ -18951,6 +18957,7 @@ function renderAdmin(){
       <button onclick="adminBroadcast()">Odeslat</button>
     </div>
     <div class="row" style="margin-top:6px;"><button class="secondary" onclick="adminClearChat()">🧹 Smazat celý chat</button></div>
+    <div class="row" style="margin-top:6px;"><button class="secondary" onclick="adminClearNews()">🧹 Smazat noviny (kromě zpravodaje od AI)</button></div>
   </div>`;
 
   const lmCustom = asArray(world.landmarks);
@@ -19158,6 +19165,19 @@ async function adminDeleteLandmark(id){
 }
 
 // Admin: smaže celou historii chatu najednou.
+// Co v novinách napsala AI — při mazání novin zůstává.
+function jeZpravaOdAI(n){ return !!(n && typeof n.text === 'string' && /^📰/.test(n.text)); }
+async function adminClearNews(){
+  if(!isAdmin) return;
+  const vse = asArray(world.news);
+  const ai = vse.filter(jeZpravaOdAI).length;
+  if(!(await showConfirm(`Smazat všechny zprávy v Novinách (${vse.length - ai})?\n\nZůstane jen to, co napsala AI — Bučovický zpravodaj${ai ? ` a ${ai} ${sklonuj(ai, 'zpráva', 'zprávy', 'zpráv')} o jeho vydání` : ''}. Kroniky domů a deníky hráčů se nemění. Nedá se to vzít zpět.`))) return;
+  world.newsClearedTs = Date.now();
+  world.news = vse.filter(jeZpravaOdAI);
+  saveWorld(); refreshAll();
+  safeCall(() => renderAdmin());
+  showAlert('Noviny byly vymazané. Zůstal jen zpravodaj od AI.');
+}
 async function adminClearChat(){
   if(!isAdmin) return;
   if(!(await showConfirm('Smazat úplně celý chat? Nedá se to vzít zpět.'))) return;
@@ -20182,6 +20202,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.49', datum:'2026-10-21', body:[
+    ['novinka','🧹 Správce může v Adminu smazat celé Noviny. Zůstane jen to, co napsala AI (Bučovický zpravodaj). Smazání platí na všech telefonech a staré zprávy se nevrátí ani ze starších dat.'],
+  ]},
   { verze:'21.48', datum:'2026-10-21', body:[
     ['oprava','🏚️ Kritická oprava: telefon, který dlouho nehrál, mohl při startu (když se ukázalo uvítání) poslat na server svoje stará data dřív, než si stáhl aktuální svět. U ostatních hráčů se pak objevil starý čas „naposledy hrál" a hra nabídla k prodeji domy lidí, kteří hrají každý den (Eff, Jerry, EDDIE…). Teď telefon nic neodešle, dokud se se serverem nesloučí, čas „naposledy hrál" už nikdy necouvne a hra pozná aktivitu i podle chatu a deníku.'],
     ['oprava','🏚️ Omylem vzniklé nabídky „dlouho nehraje" hra sama stáhne a koupit nejdou — dům zůstává majiteli.'],
