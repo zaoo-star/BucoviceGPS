@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.51';
-const APP_BUILD = '22.10.2026 02:00';
+const APP_VERSION = '21.53';
+const APP_BUILD = '22.10.2026 02:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -17862,18 +17862,35 @@ function obnovSpravce(){
 }
 async function adminPridatSpravce(){
   if(!jsemHlavniAdmin()) return upozorniHlavni();
-  const v = await showPrompt('Koho udělat správcem? Napiš přezdívku hráče.', '', false);
-  if(v === null || v === undefined || !String(v).trim()) return;
-  const hledam = String(v).trim().toLowerCase();
+  // Na výběr aktivní hráči (hráli posledních 14 dní), nejčerstvější nahoře. Kdo by tam
+  // chyběl, jde dopsat ručně.
+  const ja = currentUser ? currentUser.name : '';
+  const kdy = t => { const h = (Date.now() - t) / 3600000; return h < 1 ? 'teď' : h < 24 ? `před ${Math.round(h)} h` : `před ${Math.round(h / 24)} ${sklonuj(Math.round(h / 24), 'dnem', 'dny', 'dny')}`; };
+  const aktivni = Object.values(world.users || {})
+    .filter(x => x && x.name && x.name !== ja && !jeSpravce(x.name) && posledniAktivita(x) && daysSinceActive(x) < 14)
+    .sort((a2, b2) => posledniAktivita(b2) - posledniAktivita(a2)).slice(0, 20);
+  const volby = aktivni.map(x => ({
+    popis: `${escapeHtml(x.avatar || '🧑')} ${escapeHtml(x.name)}`,
+    detail: `hrál ${kdy(posledniAktivita(x))}${x.pinHash ? ' · má PIN' : ' · ⚠️ nemá PIN — zatím nejde'}`,
+    hodnota: x.name
+  }));
+  volby.push({ popis:'✏️ Jiný hráč…', detail:'napsat přezdívku ručně', hodnota:'__jiny__' });
+  let vybrany = await showChoice(aktivni.length ? 'Koho udělat správcem? Aktivní hráči za posledních 14 dní:' : 'Za posledních 14 dní nikdo jiný nehrál. Napiš přezdívku ručně:', volby);
+  if(vybrany === null || vybrany === undefined) return;
+  if(vybrany === '__jiny__'){
+    const v = await showPrompt('Napiš přezdívku hráče:', '', false);
+    if(v === null || v === undefined || !String(v).trim()) return;
+    vybrany = String(v).trim();
+  }
+  const hledam = String(vybrany).toLowerCase();
   const u = Object.values(world.users || {}).find(x => x && x.name && x.name.toLowerCase() === hledam);
-  if(!u){ showAlert(`Hráč „${String(v).trim()}" ve hře není. Zkontroluj přezdívku.`); return; }
+  if(!u){ showAlert(`Hráč „${vybrany}" ve hře není. Zkontroluj přezdívku.`); return; }
   if(currentUser && u.name === currentUser.name){ showAlert('Ty už správcem jsi.'); return; }
   if(jeSpravce(u.name)){ showAlert(`${u.name} už správcem je.`); return; }
   if(!u.pinHash){ showAlert(`${u.name} nemá nastavený PIN.\n\nBez PINu by se za něj mohl přihlásit kdokoli a dostal by Admin. Ať si ho nastaví v Profilu, pak ho přidej.`); return; }
   if(!(await showConfirm(`Udělat hráče ${u.name} správcem?\n\nUvidí Admin a bude moct hru spravovat (hráči, peníze, akce, noviny, AI…). Nesmí jen přidávat správce, měnit AI klíče, mazat hráče a resetovat svět.\n\nKdykoli ho zase odebereš.`))) return;
   if(!world.admini || typeof world.admini !== 'object') world.admini = {};
   world.admini[u.name] = { aktivni: true, ts: Date.now(), od: currentUser ? currentUser.name : '' };
-  addNews('join', `🛡️ ${u.name} je nově správcem hry.`);
   saveWorld(); renderAdmin();
   showToast(`🛡️ ${u.name} je správce`);
 }
@@ -20312,34 +20329,40 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.53', datum:'2026-10-21', body:[
+    ['admin','„Co je nového" ukazuje změny Adminu jen správcům — hráči je nevidí a kvůli nim nedostanou tečku. Přidání správce se už nepíše do Novin.'],
+  ]},
+  { verze:'21.52', datum:'2026-10-21', body:[
+    ['admin','🛡️ Přidání správce: místo psaní jména se vybírá z aktivních hráčů (hráli posledních 14 dní), u každého je vidět, kdy naposledy hrál a jestli má PIN.'],
+  ]},
   { verze:'21.51', datum:'2026-10-21', body:[
-    ['novinka','🛡️ Další správci: hlavní správce může v Adminu udělat správcem kteréhokoli hráče s PINem. Ten pak má Admin bez hesla. Nesmí jen přidávat správce, měnit AI klíče, mazat hráče a resetovat svět.'],
+    ['admin','🛡️ Další správci: hlavní správce může v Adminu udělat správcem kteréhokoli hráče s PINem. Ten pak má Admin bez hesla. Nesmí jen přidávat správce, měnit AI klíče, mazat hráče a resetovat svět.'],
   ]},
   { verze:'21.50', datum:'2026-10-21', body:[
     ['oprava','🛡️ Kritická oprava: telefon, na kterém se dlouho nehrálo, mohl po spuštění vrátit hráči jeho měsíc starý záznam — starý zůstatek na účtu, a k tomu domy koupené mezitím. Jmění pak vyskočilo o desítky tisíc. Hra teď po startu chvilku počká („Načítám aktuální svět…"), než má data ze serveru, a do té doby nic nepočítá ani neukládá jako nejnovější.'],
   ]},
   { verze:'21.49', datum:'2026-10-21', body:[
-    ['novinka','🧹 Správce může v Adminu smazat celé Noviny. Zůstane jen to, co napsala AI (Bučovický zpravodaj). Smazání platí na všech telefonech a staré zprávy se nevrátí ani ze starších dat.'],
+    ['admin','🧹 Správce může v Adminu smazat celé Noviny. Zůstane jen to, co napsala AI (Bučovický zpravodaj). Smazání platí na všech telefonech a staré zprávy se nevrátí ani ze starších dat.'],
   ]},
   { verze:'21.48', datum:'2026-10-21', body:[
     ['oprava','🏚️ Kritická oprava: telefon, který dlouho nehrál, mohl při startu (když se ukázalo uvítání) poslat na server svoje stará data dřív, než si stáhl aktuální svět. U ostatních hráčů se pak objevil starý čas „naposledy hrál" a hra nabídla k prodeji domy lidí, kteří hrají každý den (Eff, Jerry, EDDIE…). Teď telefon nic neodešle, dokud se se serverem nesloučí, čas „naposledy hrál" už nikdy necouvne a hra pozná aktivitu i podle chatu a deníku.'],
     ['oprava','🏚️ Omylem vzniklé nabídky „dlouho nehraje" hra sama stáhne a koupit nejdou — dům zůstává majiteli.'],
   ]},
   { verze:'21.47', datum:'2026-10-21', body:[
-    ['novinka','🛑 Denní limit AI: správce v Adminu nastaví, kolik dotazů na AI smí za den poslat celá hra a kolik jeden hráč (výchozí 300 a 40). Vidí i, kolik se dnes spotřebovalo a kdo nejvíc. Po vyčerpání hra jede dál bez AI, o půlnoci se počítání vynuluje.'],
+    ['admin','🛑 Denní limit AI: správce v Adminu nastaví, kolik dotazů na AI smí za den poslat celá hra a kolik jeden hráč (výchozí 300 a 40). Vidí i, kolik se dnes spotřebovalo a kdo nejvíc. Po vyčerpání hra jede dál bez AI, o půlnoci se počítání vynuluje.'],
     ['zmena','🎭 Nájemníci a chodci mluví jen o hře a o Bučovicích. Úkol do školy, kód, překlad nebo sloh odmítnou po svém v roli — a zjevné případy pozná hra sama, takže to nestojí žádný dotaz.'],
   ]},
   { verze:'21.46', datum:'2026-10-21', body:[
     ['oprava','🏚️ Hra omylem nabízela k prodeji domy hráčů, kteří normálně hrají, jako by „dlouho nehráli". Stalo se to, když appku otevřel telefon se starými daty — přepnul den dřív, než mu dorazil aktuální svět. Teď se o neaktivních hráčích rozhoduje jen podle čerstvých dat ze serveru a takové omylem vzniklé nabídky hra sama hned stáhne (hlásil Zaoo).'],
   ]},
   { verze:'21.45', datum:'2026-10-21', body:[
-    ['novinka','🌍 Správce může zapnout AI vylepšení všem hráčům najednou — i těm, kdo se přidají později. Jedním tlačítkem v Adminu, kdykoli zase vypne.'],
+    ['admin','🌍 Správce může zapnout AI vylepšení všem hráčům najednou — i těm, kdo se přidají později. Jedním tlačítkem v Adminu, kdykoli zase vypne.'],
   ]},
   { verze:'21.44', datum:'2026-10-21', body:[
     ['oprava','📱 Hraní na dvou telefonech: splněný úkol chodce (turista, pochůzka, tip od Franty) se už nevrátí na nesplněný, takže odměnu nejde vybrat dvakrát. Paměť babičky a pošťáka se z obou telefonů sloučí.'],
     ['oprava','💬 Když zavřeš rozhovor dřív, než postava odpoví, její odpověď se i tak uloží a příště ji uvidíš.'],
-    ['oprava','🛠️ Chodce jde v Adminu vypnout i bez zadaných klíčů. Když jeden klíč nefunguje a hra jede přes druhý, správce to uvidí v Záznamu chyb.'],
-    ['oprava','🛠️ Admin se zbytečně nepřekresluje, takže nesmaže, co máš rozepsané. Seznam portrétů zůstane rozbalený.'],
+    ['admin','🛠️ Chodce jde v Adminu vypnout i bez zadaných klíčů. Když jeden klíč nefunguje a hra jede přes druhý, správce to uvidí v Záznamu chyb.'],
+    ['admin','🛠️ Admin se zbytečně nepřekresluje, takže nesmaže, co máš rozepsané. Seznam portrétů zůstane rozbalený.'],
     ['novinka','📖 V Průvodci je nová kapitola o chodcích a jejich úkolech. Okno rozhovoru jde na počítači zavřít klávesou Esc.'],
   ]},
   { verze:'21.43', datum:'2026-10-21', body:[
@@ -20354,26 +20377,26 @@ const ZMENY = [
     ['zmena','⚡ Gemini odpovídá rychleji — nezdržuje se zbytečným přemýšlením.'],
   ]},
   { verze:'21.41', datum:'2026-10-21', body:[
-    ['zmena','🛠️ Admin je přehlednější: každá sekce se sbalí na nadpis a rozklikne se klepnutím. Nahoře jsou tlačítka Rozbalit vše / Sbalit vše a telefon si pamatuje, co máš otevřené.'],
+    ['admin','🛠️ Admin je přehlednější: každá sekce se sbalí na nadpis a rozklikne se klepnutím. Nahoře jsou tlačítka Rozbalit vše / Sbalit vše a telefon si pamatuje, co máš otevřené.'],
   ]},
   { verze:'21.40', datum:'2026-10-21', body:[
-    ['novinka','🎨 Postavy mají obličeje: Gemini nakreslí portréty Evy, babičky Boženy, pošťáka Franty, všech turistů a nájemníků (zvlášť pán a paní). Uvidíš je na mapě, v kartách, u bytů i v rozhovorech. Správce je nakreslí v Adminu jedním tlačítkem.'],
+    ['novinka','🎨 Postavy mají obličeje: Gemini nakreslí portréty Evy, babičky Boženy, pošťáka Franty, všech turistů a nájemníků (zvlášť pán a paní). Uvidíš je na mapě, v kartách, u bytů i v rozhovorech.'],
     ['oprava','💬 Nájemníci z IT a umělci měli při rozhovoru s AI povahu „obyčejného člověka". Teď mají vlastní — ajťák chce klimatizaci a klid na práci, umělec hezký zrenovovaný byt.'],
   ]},
   { verze:'21.39', datum:'2026-10-21', body:[
     ['novinka','🚶 Chodci ve městě: s AI vylepšením potkáš babičku Boženu na lavičce (ví všechny drby — kdo co koupil a prodal), pošťáka Frantu (ví, co je na prodej, kde je volný byt a kdo dlouho nehraje) a turistu, který hledá cestu. Dá se s nimi povídat — co vědí, bere hra ze skutečných dat.'],
     ['novinka','🧳 Turista: každý den přijede jiný a ptá se na cestu k památce. Když ho tam dovedeš, odmění se — odměnu určuje a vyplácí hra.'],
     ['novinka','🖼️ Bučovický zpravodaj má každý den vlastní malovanou ilustraci (kreslí ji Gemini).'],
-    ['zmena','🤖 Správce může v Adminu zadat kromě klíče ke Claude i klíč ke Gemini. Když jeden chybí nebo nefunguje, texty napíše ten druhý.'],
+    ['admin','🤖 Správce může v Adminu zadat kromě klíče ke Claude i klíč ke Gemini. Když jeden chybí nebo nefunguje, texty napíše ten druhý.'],
   ]},
   { verze:'21.38', datum:'2026-10-21', body:[
-    ['novinka','🗞️ Večerník: každý den v 18:00 shrne Claude do chatu, co se za den ve městě stalo a co kdo udělal. Píše jen z toho, co je v novinách. Správce ho může v Adminu vypnout.'],
+    ['novinka','🗞️ Večerník: každý den v 18:00 shrne Claude do chatu, co se za den ve městě stalo a co kdo udělal. Píše jen z toho, co je v novinách.'],
   ]},
   { verze:'21.37', datum:'2026-10-21', body:[
     ['zmena','💬 Nájemníci s AI vědí víc a chovají se podle sebe: každý typ má vlastní povahu (paní z domu vyká a povídá o vnoučatech, student tyká a šetří, rodina řeší teplo kvůli dětem…). Znají svůj nájem, běžnou cenu i svou hranici, stav bytu, co jim v domě chybí, sousedy, co se v domě nedávno stalo, svou prosbu i s lhůtou, dnešní událost ve městě a počasí. Na zdražení nad hranici odpoví, že tolik nedají.'],
   ]},
   { verze:'21.36', datum:'2026-10-21', body:[
-    ['zmena','🤖 AI teď nastavuje správce hry: v Adminu zadá API klíč a vybraným hráčům zapne „AI vylepšení" (nájemníci s vlastní hlavou). Hráči už žádný klíč zadávat nemusí. Bučovický zpravodaj vychází pro všechny.'],
+    ['admin','🤖 AI teď nastavuje správce hry: v Adminu zadá API klíč a vybraným hráčům zapne „AI vylepšení" (nájemníci s vlastní hlavou). Hráči už žádný klíč zadávat nemusí. Bučovický zpravodaj vychází pro všechny.'],
   ]},
   { verze:'21.35', datum:'2026-10-21', body:[
     ['novinka','🤖 Claude AI s vlastním klíčem. V Nastavení si můžeš zadat svůj API klíč od Anthropicu. Klíč zůstane jen v tvém telefonu — do hry ani k ostatním se nedostane. Bez klíče hra běží úplně stejně.'],
@@ -20428,7 +20451,7 @@ const ZMENY = [
   ]},
   { verze:'21.25', datum:'2026-10-12', body:[
     ['oprava','🏠 Nastavený nájem už nesrazí telefon hráče se starší verzí hry. Starší verze pořád stahovaly nájmy nad 1,25× férové ceny zpátky a jejich změna při synchronizaci vyhrála i u majitele. Teď o nájmu rozhoduje jen skutečná změna majitelem.'],
-    ['info','Pro správce: v Adminu (karta Synchronizace) je vidět, kdo z hráčů hraje jakou verzi hry.'],
+    ['admin','Pro správce: v Adminu (karta Synchronizace) je vidět, kdo z hráčů hraje jakou verzi hry.'],
   ]},
   { verze:'21.24', datum:'2026-10-12', body:[
     ['oprava','⌨️ Při nákupu podílu je v okénku přepínač Kč / % — procenta se zadávají klepnutím na „%", ne psaním znaku (ten na číselné klávesnici v telefonu není).'],
@@ -21109,13 +21132,19 @@ function novejsiVerze(a, b){
   for(let i = 0; i < Math.max(x.length, y.length); i++){ if((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
   return false;
 }
+// Interní změny pro správce (typ 'admin') běžní hráči v „Co je nového" nevidí — a verze,
+// ve které bylo jen tohle, se jim vůbec neukáže.
+function zmenyViditelne(){
+  return ZMENY.map(z => ({ verze: z.verze, datum: z.datum, body: z.body.filter(b => b && (b[0] !== 'admin' || isAdmin)) }))
+              .filter(z => z.body.length);
+}
 function zmenaKartaHtml(z, zvyraznit){
-  const ikony = { oprava:'🔧', novinka:'✨', zmena:'⚖️', info:'ℹ️' };
-  const barvy = { oprava:'var(--accent2)', novinka:'var(--accent)', zmena:'var(--gold)', info:'var(--muted)' };
+  const ikony = { oprava:'🔧', novinka:'✨', zmena:'⚖️', info:'ℹ️', admin:'🛡️' };
+  const barvy = { oprava:'var(--accent2)', novinka:'var(--accent)', zmena:'var(--gold)', info:'var(--muted)', admin:'var(--purple)' };
   return `<div class="card zmenaVerze"${zvyraznit ? ' style="border-left:3px solid var(--accent);"' : ''}>
     <h3>Verze ${z.verze} <span style="font-weight:400;font-size:0.75em;color:var(--muted);">${datumCesky(z.datum)}</span>
       ${z.verze === APP_VERSION ? '<span class="badge badge-res">hraješ tuhle</span>' : ''}</h3>
-    ${z.body.map(([typ, text]) => `<p style="margin:6px 0;font-size:0.92em;line-height:1.45;"><span style="color:${barvy[typ] || 'var(--muted)'};">${ikony[typ] || '•'}</span> ${escapeHtml(text)}</p>`).join('')}
+    ${z.body.map(([typ, text]) => `<p style="margin:6px 0;font-size:0.92em;line-height:1.45;"><span style="color:${barvy[typ] || 'var(--muted)'};">${ikony[typ] || '•'}</span> ${typ === 'admin' ? '<span style="color:var(--purple);font-size:0.85em;">[jen pro správce]</span> ' : ''}${escapeHtml(text)}</p>`).join('')}
   </div>`;
 }
 // Dřív se tu vypisovalo všech 130+ verzí pod sebou (přes 70 kB textu) — kdo se vrátil po
@@ -21126,9 +21155,10 @@ function renderZmeny(){
   if(!el) return;
   let naposled = null;
   try { naposled = localStorage.getItem('bucpoly_zmeny_naposled'); } catch(e){}
-  const nove = naposled ? ZMENY.filter(z => novejsiVerze(z.verze, naposled)) : ZMENY.slice(0, 1);
-  const ukazat = (nove.length ? nove : ZMENY.slice(0, 1)).slice(0, 12);
-  const starsi = ZMENY.filter(z => !ukazat.includes(z));
+  const vid = zmenyViditelne();
+  const nove = naposled ? vid.filter(z => novejsiVerze(z.verze, naposled)) : vid.slice(0, 1);
+  const ukazat = (nove.length ? nove : vid.slice(0, 1)).slice(0, 12);
+  const starsi = vid.filter(z => !ukazat.includes(z));
   window.__zmenyUkazane = ukazat.map(z => z.verze);
   let html = `<p style="font-size:0.88em;color:var(--muted);margin:0 0 10px;">${nove.length && naposled
     ? `Od tvé poslední návštěvy (verze ${escapeHtml(naposled)}) ${nove.length === 1 ? 'přibyla 1 verze' : (nove.length < 5 ? `přibyly ${nove.length} verze` : `přibylo ${nove.length} verzí`)}.`
@@ -21148,7 +21178,7 @@ function renderZmeny(){
   if(det) det.addEventListener('toggle', () => {
     if(!det.open || det.dataset.nacteno) return;
     det.dataset.nacteno = '1';
-    det.querySelector('.zmenyStarsi').innerHTML = ZMENY.filter(z => !window.__zmenyUkazane.includes(z.verze)).map(z => zmenaKartaHtml(z, false)).join('');
+    det.querySelector('.zmenyStarsi').innerHTML = zmenyViditelne().filter(z => !window.__zmenyUkazane.includes(z.verze)).map(z => zmenaKartaHtml(z, false)).join('');
   });
 }
 
@@ -24920,7 +24950,10 @@ function nastavTecku(el, zapnout){
 function maNoveZmeny(){
   let videno = null;
   try { videno = localStorage.getItem('bucpoly_zmeny_videno'); } catch(e){}
-  return videno !== APP_VERSION;
+  if(videno === APP_VERSION) return false;
+  if(!videno) return true;
+  // tečka jen když je opravdu co číst (interní změny pro správce se hráčům nepočítají)
+  return zmenyViditelne().some(z => novejsiVerze(z.verze, videno));
 }
 // Tečka u Chatu: přišla zpráva od někoho jiného, kterou jsem ještě neviděl.
 function oznacChat(){
