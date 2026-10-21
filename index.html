@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.45';
-const APP_BUILD = '21.10.2026 23:30';
+const APP_VERSION = '21.46';
+const APP_BUILD = '21.10.2026 23:45';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7195,6 +7195,8 @@ function initFirebaseSync(){
       if(snap.exists()){
         adoptWorld(snap.val()); // sloučit: jejich novinky + můj postup, nic se neztratí
       }
+      // Když se sloučení odložilo (otevřený dialog), označí se načtení až po něm — v adoptWorldVnitrni.
+      if(!snap.exists() || dialogOtevren === 0) cloudNacten = Date.now();
       firebaseSyncEnabled = true;
       world.rev = Math.max((world.rev || 0) + 1, Date.now());
       lastWrittenRev = world.rev;
@@ -7296,6 +7298,7 @@ function adoptWorld(incoming){
   }
 }
 function adoptWorldVnitrni(incoming){
+  cloudNacten = cloudNacten || (fbDb ? Date.now() : 0);   // data ze serveru už jsou tady
   const myName = currentUser && currentUser.name;
 
   // 1) záloha mého účtu, mých podílů, ale i NOVIN/CHATU před převzetím cloudu.
@@ -9509,6 +9512,8 @@ function tickVnitrni(){
   vyprazdniUseky();
   if(ja && aiDostupne()){ zkusZpravodaj().catch(() => {}); zkusVecernik().catch(() => {}); zkusObrazekZpravodaje().catch(() => {}); }   // běží na pozadí, tick nečeká
   safeCall(() => vyzvedniPlatby());   // peníze od ostatních hráčů (tržiště, aukce)
+  safeCall(() => zrusMylneDormantNabidky());   // omylem nabídnuté domy aktivních hráčů
+  safeCall(() => zkusDormantDnes());           // jednou denně nabídnout domy těch, kdo opravdu nehrají
   safeCall(() => vyhodnotVecer());    // po půlnoci: kudy včera večer chodily postavy
 
   world.dayProgress += dayFraction;
@@ -10004,10 +10009,20 @@ function daysSinceActive(u){
 }
 
 // Nabídne na tržiště domy hráčů, kteří dlouho nehráli. Volá se při přechodu dne.
+// OPRAVA 21.46: o tom, kdo „dlouho nehraje", se smí rozhodovat jen podle čerstvých dat z cloudu.
+// Telefon, který appku dlouho neotevřel, měl v sobě starý svět — po startu přepnul den dřív,
+// než mu dorazila data, a podle svých starých záznamů vyhodnotil jako neaktivní i hráče, kteří
+// hrají každý den (Zaoo: „Byl jsi pryč 0 dní, tak město nabídlo 2 tvoje podíly"). Teď se domy
+// nabízejí jen na zařízení, které už svět ze serveru načetlo, a nikdy ne domy hráče, který
+// zrovna hraje na tomhle telefonu.
+let cloudNacten = 0;
+function svetSesynchronizovany(){ return !!(firebaseSyncEnabled && fbDb && cloudNacten > 0); }
 function listDormantPlayersHouses(){
+  if(!svetSesynchronizovany()) return;
   if(!world.listings || typeof world.listings !== 'object') world.listings = {};
   Object.values(world.users || {}).forEach(u => {
     if(!u || !u.name) return;
+    if(currentUser && u.name === currentUser.name) return;   // kdo právě hraje, ten zjevně nespí
     const dni = daysSinceActive(u);
     if(dni < DORMANT_DAYS) return;
 
@@ -10035,6 +10050,31 @@ function listDormantPlayersHouses(){
   });
 }
 
+// Nabídky „dlouho nehraje" u hráčů, kteří ve skutečnosti hrají (vznikly na zařízení se starými
+// daty, i ve starší verzi hry) — stáhnout hned, ne až se dotyčný přihlásí. Jinak by mu mezitím
+// někdo mohl dům koupit se slevou. Běží v ticku, jen nad čerstvými daty z cloudu.
+function zrusMylneDormantNabidky(){
+  if(!svetSesynchronizovany() || !world.listings) return 0;
+  const komu = new Set();
+  Object.keys(world.listings).forEach(id => {
+    const l = world.listings[id];
+    if(!l || !l.dormant || !l.seller) return;
+    const u = world.users && world.users[l.seller];
+    if(!u || !u.lastActive || daysSinceActive(u) >= DORMANT_DAYS) return;
+    closeListing(id);
+    komu.add(l.seller);
+  });
+  komu.forEach(jm => addNews('market', `↩️ Domy hráče ${jm} jsou zase jen jeho — hraje dál, nabídka „dlouho nehraje" byla omyl a je stažená.`));
+  return komu.size;
+}
+// Jednou za herní den, ale až když má telefon data ze serveru. Dřív to běželo přímo při
+// přepnutí dne — i na telefonu, kterému data ještě nedorazila.
+function zkusDormantDnes(){
+  if(!svetSesynchronizovany() || Date.now() - cloudNacten < 20000) return;   // chvilku počkat, ať se svět sesype
+  if(world.dormantDen === world.day) return;
+  world.dormantDen = world.day;
+  listDormantPlayersHouses();
+}
 // Když se hráč vrátí, jeho automatické nabídky zmizí — domy si nechá.
 function cancelDormantListingsFor(name){
   if(!world.listings || !name) return 0;
@@ -10312,7 +10352,7 @@ function onNewDay(catchUp){
     addNews('event', `${cev.emoji} ${cev.name} — ${cev.desc}`, stred || undefined);
   }
   finishDueProjects();                                    // dokončit renovace, kterým vypršel čas
-  listDormantPlayersHouses();                             // uvolnit domy hráčů, kteří dlouho nehrají
+  // uvolnit domy hráčů, kteří dlouho nehrají — až nad čerstvými daty (viz zkusDormantDnes v ticku)
   // snímek jmění všem — díky tomu vidí admin vývoj u každého, ne jen u sebe
   Object.values(world.users || {}).forEach(x => { if(x) safeCall(() => recordWorthSnapshot(x)); });
   tickMarketCycle(1);
@@ -19994,6 +20034,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.46', datum:'2026-10-21', body:[
+    ['oprava','🏚️ Hra omylem nabízela k prodeji domy hráčů, kteří normálně hrají, jako by „dlouho nehráli". Stalo se to, když appku otevřel telefon se starými daty — přepnul den dřív, než mu dorazil aktuální svět. Teď se o neaktivních hráčích rozhoduje jen podle čerstvých dat ze serveru a takové omylem vzniklé nabídky hra sama hned stáhne (hlásil Zaoo).'],
+  ]},
   { verze:'21.45', datum:'2026-10-21', body:[
     ['novinka','🌍 Správce může zapnout AI vylepšení všem hráčům najednou — i těm, kdo se přidají později. Jedním tlačítkem v Adminu, kdykoli zase vypne.'],
   ]},
@@ -24409,7 +24452,11 @@ function doLogin(name, pinHash){
   // Vrátil se po dlouhé odmlce? Zrušit automatické nabídky jeho domů — o nic nepřijde.
   const dniPryc = daysSinceActive(u);
   const vraceno = cancelDormantListingsFor(name);
-  if(vraceno > 0){
+  if(vraceno > 0 && dniPryc < DORMANT_DAYS){
+    setTimeout(() => showAlert(
+      `Některé zařízení se starými daty omylem nabídlo ${vraceno} ${vraceno===1?'tvůj podíl':(vraceno<5?'tvoje podíly':'tvých podílů')} k prodeji, jako bys dlouho nehrál.\n\n` +
+      `Nabídky jsem stáhl — domy jsou zase jenom tvoje. Tahle chyba je v nové verzi opravená.`), 900);
+  } else if(vraceno > 0){
     setTimeout(() => showAlert(
       `Vítej zpátky! Byl jsi pryč ${dniPryc} dní, tak město mezitím nabídlo ${vraceno} ` +
       `${vraceno===1?'tvůj podíl':(vraceno<5?'tvoje podíly':'tvých podílů')} k prodeji.\n\n` +
