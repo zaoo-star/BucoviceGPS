@@ -162,6 +162,10 @@
   /* Chat vyplní celý panel až k poli na psaní. Dřív měl seznam pevnou výšku (100vh − 260 px)
      a pod polem zůstával prázdný pruh. */
   #tab-chat.active{display:flex;flex-direction:column;height:100%;}
+  .onlineRadek{display:flex;align-items:center;gap:8px;font-size:0.86em;color:var(--muted);background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:6px 10px;margin:0 0 8px;cursor:pointer;}
+  .onlineRadek:empty{display:none;}
+  .onlineRadek b{color:var(--text);}
+  .onlineTecka{display:inline-block;width:9px;height:9px;border-radius:50%;background:#3ddc84;box-shadow:0 0 0 3px rgba(61,220,132,0.18);vertical-align:middle;flex-shrink:0;}
   #tab-chat > *{flex-shrink:0;}
   #tab-chat > .chatWrap{flex:1 1 auto;min-height:120px;display:flex;flex-direction:column;}
   #chatMessages{flex:1 1 auto;min-height:0;}
@@ -712,6 +716,10 @@
   .hudCas{ text-align:right;font-size:11.5px;font-weight:600;line-height:1.5;white-space:nowrap; }
   .hudCas > div{ cursor:pointer; }
   #pocasiPill{ color:var(--text); }
+  #onlinePill{ color:rgba(255,255,255,0.82);font-weight:500;font-size:10.5px; }
+  #onlinePill:empty{ display:none; }
+  #onlinePill b{ color:#3ddc84;font-weight:700; }
+  #onlinePill .onlineTecka{ width:7px;height:7px;box-shadow:0 0 0 2px rgba(61,220,132,0.2);margin-right:4px;vertical-align:1px; }
   #hudKarta .statsRow{ gap:5px;pointer-events:auto; }
   #hudKarta .statPill{
     background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.08);box-shadow:none;
@@ -1347,6 +1355,7 @@
         <div class="hudCas">
           <div id="dayPill" onclick="showStatDetail('day')">Den <span id="dayVal">1</span> · <span id="dayTimeLeft">–</span></div>
           <div id="pocasiPill" onclick="openSheet('daily')" style="display:none;"><span id="pocasiVal"></span></div>
+          <div id="onlinePill" onclick="ukazOnline()"></div>
         </div>
       </div>
       <div class="statsRow">
@@ -1425,6 +1434,7 @@
         <div id="newsContent" class="empty-state">Načítám noviny...</div>
       </div>
       <div class="panelContent" id="tab-chat">
+        <div id="onlineRadek" class="onlineRadek" onclick="ukazOnline()"></div>
         <details class="infoBox" style="margin:0 0 8px 0;">
           <summary>❓ Pravidla chatu</summary>
           <div class="infoBoxBody">
@@ -1677,8 +1687,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.59';
-const APP_BUILD = '22.10.2026 06:45';
+const APP_VERSION = '21.62';
+const APP_BUILD = '22.10.2026 17:25';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7376,7 +7386,8 @@ function adoptWorldVnitrni(incoming){
     heat: Object.assign({}, world.heat || {}),
     lastProcessedDay: world.lastProcessedDay,
     dormantDen: world.dormantDen,
-    minVerze: world.minVerze, minVerzeTs: world.minVerzeTs || 0
+    minVerze: world.minVerze, minVerzeTs: world.minVerzeTs || 0,
+    sklad: world.sklad && typeof world.sklad === 'object' ? Object.assign({}, world.sklad) : null
   };
   if(myName && world.users){
     myUser = world.users[myName];
@@ -7527,6 +7538,7 @@ function adoptWorldVnitrni(incoming){
   }
   if(typeof myAdmin.dormantDen === 'number') world.dormantDen = Math.max(myAdmin.dormantDen, world.dormantDen || 0);
   if((myAdmin.minVerzeTs || 0) > (world.minVerzeTs || 0)){ world.minVerze = myAdmin.minVerze || null; world.minVerzeTs = myAdmin.minVerzeTs; }
+  if(myAdmin.sklad && (myAdmin.sklad.ts || 0) > ((world.sklad && world.sklad.ts) || 0)) world.sklad = myAdmin.sklad;   // místo velkoskladu (21.60)
   setTimeout(() => safeCall(() => hlidejVerzi()), 0);
 
   // (kontrola nedokončených nákupů je na konci adoptWorld, až je svět kompletní)
@@ -11411,7 +11423,7 @@ function renderSkladMarker(){
     return;
   }
   const nesu = mojeZbozi(u);
-  const klic = nesu > 0 ? 'plny' : 'prazdny';
+  const klic = (nesu > 0 ? 'plny' : 'prazdny') + '|' + SKLAD.lat.toFixed(6) + '|' + SKLAD.lng.toFixed(6);
   if(skladMarker && skladMarker._klic === klic) return;
   if(skladMarker && map.hasLayer(skladMarker)) map.removeLayer(skladMarker);
   skladMarker = L.marker([SKLAD.lat, SKLAD.lng], {
@@ -19216,6 +19228,16 @@ function renderAdmin(){
   </div>`;
 
   const lmCustom = asArray(world.landmarks);
+  const skladVlastni = !!(world.sklad && isFinite(world.sklad.lat));
+  const skladOdMe = playerPos ? Math.round(haversine(playerPos, SKLAD)) : null;
+  html += `<div class="card">
+    <h3>🏭 Velkosklad</h3>
+    <p style="font-size:0.85em;color:var(--muted)">Kam si hráči s provozovnou chodí pro zboží. ${skladVlastni ? `Postavil ho tu ${escapeHtml(world.sklad.kdo || 'správce')}.` : 'Teď stojí tam, kde si ho hra vybrala sama (na okraji zástavby).'}${skladOdMe !== null ? ` Od tebe ${skladOdMe.toLocaleString('cs-CZ')} m.` : ''}</p>
+    <div class="row" style="gap:6px;flex-wrap:wrap;">
+      <button class="secondary" onclick="ukazSklad()">🗺️ Ukázat na mapě</button>
+      ${jsemHlavniAdmin() ? `<button onclick="adminSkladSem()">📍 Postavit sem, kde stojím</button>${skladVlastni ? '<button class="secondary" onclick="adminSkladVychozi()">↩️ Vybrat místo automaticky</button>' : ''}` : ''}
+    </div>
+  </div>`;
   html += `<div class="card">
     <h3>📍 Místa zájmu</h3>
     <p style="font-size:0.85em;color:var(--muted)">Přidej místo tam, kde právě stojíš (dojdi k němu a klepni). Hráči za návštěvu dostanou odměnu.</p>
@@ -20214,6 +20236,7 @@ let chatReplyTo = null; // na kterou zprávu právě odpovídáme (snapshot {id,
 // Jinak se pozice zachová, aby čtení starších zpráv nepřerušila synchronizace,
 // která chat překresluje na pozadí každých pár vteřin.
 function renderChat(forceScroll){
+  safeCall(() => renderOnline());
   const el = document.getElementById('chatMessages');
   const msgs = world.chat || [];
   // kde byl hráč PŘED překreslením (do 60 px od spodku bereme jako "dole")
@@ -20460,6 +20483,16 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.62', datum:'2026-10-22', body:[
+    ['novinka','🟢 Kolik hráčů je online a kolik jich dnes hrálo, je teď vidět rovnou na hlavní obrazovce — vpravo nahoře pod počasím. Klepnutím uvidíš jména.'],
+  ]},
+  { verze:'21.61', datum:'2026-10-22', body:[
+    ['novinka','🟢 Kdo je online: nahoře v chatu a v žebříčku je vidět, kolik hráčů právě hraje a kolik jich dnes hrálo. Klepnutím uvidíš jména. V žebříčku má zelenou tečku každý, kdo je zrovna ve hře.'],
+  ]},
+  { verze:'21.60', datum:'2026-10-22', body:[
+    ['oprava','🏭 Velkosklad už nestojí v poli za městem — přesunul se na okraj zástavby, kam se dá normálně dojít.'],
+    ['admin','Velkosklad jde v Adminu (karta 🏭 Velkosklad) postavit přesně tam, kde správce stojí, nebo vrátit na automatické místo.'],
+  ]},
   { verze:'21.59', datum:'2026-10-22', body:[
     ['novinka','🏚️ Noviny už nezahlcují nabídky „dlouho nehraje": za hráče jedna zpráva místo jedné za každý dům a všechny z jednoho dne se ukážou jako jediná zpráva (klepnutím otevře tržiště). Jednotlivé domy to mají zapsané v kronice.'],
   ]},
@@ -21438,6 +21471,67 @@ function nastavFiltrNovin(k){
   if(sb) sb.scrollTop = 0;
 }
 function countPlayers(){ return Object.keys(world.users||{}).length; }
+// ===== KDO JE ONLINE (21.61) =====
+// Otevřená hra si ukládá „naposledy aktivní" zhruba každých 5 s a ostatní to dostanou se
+// synchronizací. Online = aktivní v posledních 3 minutách (telefon v kapse s vypnutou
+// obrazovkou hru uspí, tak po chvíli zmizí). Dnes = kdo hrál od dnešní půlnoci.
+const ONLINE_MS = 3 * 60000;
+function hraciOnline(){
+  const ted = Date.now();
+  const pulnoc = new Date(); pulnoc.setHours(0, 0, 0, 0);
+  const online = [], dnes = [];
+  Object.values((world && world.users) || {}).forEach(u => {
+    if(!u || !u.name) return;
+    const t = (currentUser && u.name === currentUser.name) ? ted : Math.min(u.lastActive || 0, ted);
+    const t2 = Math.max(t, safeCall(() => posledniAktivita(u)) || 0);
+    if(t >= ted - ONLINE_MS) online.push({ name: u.name, ts: t });
+    if(t2 >= pulnoc.getTime()) dnes.push({ name: u.name, ts: t2 });
+  });
+  online.sort((a, b) => b.ts - a.ts); dnes.sort((a, b) => b.ts - a.ts);
+  return { online, dnes };
+}
+function jeOnline(jmeno){
+  const u = world && world.users && world.users[jmeno];
+  if(!u) return false;
+  if(currentUser && jmeno === currentUser.name) return true;
+  return (u.lastActive || 0) >= Date.now() - ONLINE_MS;
+}
+function onlineTeckaHtml(jmeno){
+  return jeOnline(jmeno) ? '<span class="onlineTecka" title="právě hraje" style="margin-left:5px;"></span>' : '';
+}
+function onlineRadekHtml(){
+  const { online, dnes } = hraciOnline();
+  return `<span class="onlineTecka"></span><span>Právě online: <b>${online.length}</b> · dnes hrálo: <b>${dnes.length}</b></span><span style="margin-left:auto;opacity:0.7;">kdo ›</span>`;
+}
+function renderOnline(){
+  if(!world || !world.users) return;
+  const el = document.getElementById('onlineRadek');
+  const html = onlineRadekHtml();
+  if(el && el.innerHTML !== html) el.innerHTML = html;
+  const hp = document.getElementById('onlinePill');
+  if(hp){
+    const { online: on, dnes: dn } = hraciOnline();
+    const t = `<span class="onlineTecka"></span><b>${on.length}</b> online · dnes ${dn.length}`;
+    if(hp.innerHTML !== t) hp.innerHTML = t;
+  }
+  const z = document.getElementById('onlineZebricek');
+  if(z){ const h2 = onlineRadekHtml(); if(z.innerHTML !== h2) z.innerHTML = h2; }
+}
+function ukazOnline(){
+  const { online, dnes } = hraciOnline();
+  const kdy = ts => {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if(s < 60) return 'teď';
+    if(s < 3600) return `před ${Math.floor(s / 60)} min`;
+    return new Date(ts).toLocaleTimeString('cs-CZ', { hour:'2-digit', minute:'2-digit' });
+  };
+  const ja = currentUser ? currentUser.name : '';
+  const jm = x => x.name + (x.name === ja ? ' (ty)' : '');
+  const mimo = dnes.filter(x => !online.some(o => o.name === x.name));
+  showAlert(`🟢 Právě hraje (${online.length}):\n` + (online.length ? online.map(x => '• ' + jm(x)).join('\n') : '• nikdo') +
+    `\n\n🕒 Dnes už hráli (${dnes.length} celkem):\n` + (mimo.length ? mimo.map(x => `• ${jm(x)} — ${kdy(x.ts)}`).join('\n') : '• nikdo další') +
+    `\n\nOnline = hra otevřená v posledních 3 minutách.`);
+}
 // "před X min/hod" z timestampu
 function timeAgo(ts){
   if(!ts) return '';
@@ -22271,6 +22365,7 @@ function renderLeaderboard(){
     </div>`;
   })();
 
+  html += `<div id="onlineZebricek" class="onlineRadek" onclick="ukazOnline()">${onlineRadekHtml()}</div>`;
   const medals = ['🥇','🥈','🥉'];
   // Se čtyřiapadesáti hráči byl žebříček nekonečný a většina karet patřila lidem, kteří hru
   // jednou otevřeli. Ukazujeme první patnáctku a tvoje místo, i když jsi níž.
@@ -22299,7 +22394,7 @@ function renderLeaderboard(){
     ].filter(Boolean).join(' · ');
 
     return `<div class="card" style="${isMe?'border-color:var(--accent);':'cursor:pointer;'}" ${isMe?'':profileAttr(pl.name)}>
-      <h3>${rank} <span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${barvaHrace(pl.name).hex};vertical-align:middle;margin-right:4px;" title="barva domů na mapě"></span>${escapeHtml(pl.name)}${trofejeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}
+      <h3>${rank} <span style="display:inline-block;width:11px;height:11px;border-radius:50%;background:${barvaHrace(pl.name).hex};vertical-align:middle;margin-right:4px;" title="barva domů na mapě"></span>${escapeHtml(pl.name)}${onlineTeckaHtml(pl.name)}${trofejeHtml(pl.name)}${isMe?' <span style="color:var(--accent)">(ty)</span>':''}
         <span style="font-weight:400;font-size:0.8em;color:var(--muted);">· ${rankPro(pl.worth).rank.emoji} ${rankPro(pl.worth).rank.nazev}</span></h3>
       <p style="margin:2px 0;"><b style="color:var(--gold);font-size:1.15em;">${m.fmt(pl[m.key])}</b></p>
       <div style="background:var(--panel2);border-radius:4px;height:6px;margin:5px 0;overflow:hidden;">
@@ -23903,7 +23998,60 @@ async function zavritProvozovnuPrizemi(id){
 // Zboží se dá naložit ve velkoskladu na kraji města a donést do provozovny. Kdo si pro něj
 // dojde, platí základní cenu; kdo si ho nechá dovézt na místo, připlácí za rozvoz.
 // Chůze tím dostává další konkrétní smysl.
-const SKLAD = { nazev:'Velkosklad Bučovice', emoji:'🏭', lat: CITY_CENTER[0] + 0.0115, lng: CITY_CENTER[1] + 0.0065 };
+// Dřív stál natvrdo 1,3 km severně od náměstí — v Bučovicích v poli, 460 m od nejbližšího domu.
+// Teď (21.60): kde ho správce postaví (Admin → Velkosklad, „sem, kde stojím"), jinak se sám
+// usadí na okraji zástavby — u domu asi 650 m od středu, který má kolem sebe další domy.
+const SKLAD = { emoji:'🏭',
+  get nazev(){ return 'Velkosklad ' + ((CITY && CITY.name) || ''); },
+  get lat(){ return skladPoloha().lat; },
+  get lng(){ return skladPoloha().lng; } };
+let skladVychoziCache = null;
+function skladVychozi(){
+  const klic = ((CITY && CITY.id) || '?') + '|' + CITY_CENTER[0] + '|' + CITY_CENTER[1];
+  if(skladVychoziCache && skladVychoziCache.klic === klic) return skladVychoziCache;
+  const c = { lat: CITY_CENTER[0], lng: CITY_CENTER[1] };
+  const kx = 111320 * Math.cos(c.lat * Math.PI / 180), ky = 111320;
+  const zdroj = (CITY && CITY.builtIn) ? REAL_HOUSES : ((CITY_HOUSES && CITY_HOUSES.length) ? CITY_HOUSES : Object.values((world && world.parcels) || {}));
+  const hs = asArray(zdroj).filter(x => x && isFinite(x.lat) && isFinite(x.lng));
+  const vzd = (a, b) => Math.hypot((a.lat - b.lat) * ky, (a.lng - b.lng) * kx);
+  let nej = null;
+  [[400, 900, 15], [200, 1500, 5], [0, 3000, 0]].some(([od, doo, sousedu]) => {
+    hs.forEach(x => {
+      const dc = vzd(x, c);
+      if(dc < od || dc > doo) return;
+      const skore = Math.abs(dc - 650);
+      if(nej && skore >= nej.skore) return;
+      if(sousedu && hs.filter(y => Math.abs(y.lat - x.lat) < 0.0011 && vzd(x, y) < 120).length < sousedu) return;
+      nej = { skore, lat: x.lat, lng: x.lng };
+    });
+    return !!nej;
+  });
+  if(!nej) return { lat: c.lat + 0.003, lng: c.lng + 0.002 };   // domy ještě nejsou načtené — necachovat
+  // o 30 m dál od středu, ať značka skladu nepřekrývá dům (a jde se k ní ulicí z města)
+  const dy = (nej.lat - c.lat) * ky, dx = (nej.lng - c.lng) * kx, dl = Math.hypot(dx, dy) || 1;
+  skladVychoziCache = { klic, lat: nej.lat + dy / dl * 30 / ky, lng: nej.lng + dx / dl * 30 / kx };
+  return skladVychoziCache;
+}
+function skladPoloha(){
+  const s = world && world.sklad;
+  if(s && isFinite(s.lat) && isFinite(s.lng) &&
+     haversine({ lat: s.lat, lng: s.lng }, { lat: CITY_CENTER[0], lng: CITY_CENTER[1] }) < 8000) return { lat: s.lat, lng: s.lng };
+  return skladVychozi();
+}
+async function adminSkladSem(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  if(!playerPos){ showAlert('Nemám tvoji polohu — počkej, až tě GPS najde.'); return; }
+  if(!(await showConfirm(`Postavit ${SKLAD.nazev.toLowerCase()} tady, kde právě stojíš?\n\nHráči si pro zboží budou chodit sem.`))) return;
+  world.sklad = { lat: playerPos.lat, lng: playerPos.lng, ts: Date.now(), kdo: currentUser ? currentUser.name : '' };
+  saveWorld(); renderSkladMarker(); renderAdmin();
+  showToast('🏭 Velkosklad je tady');
+}
+async function adminSkladVychozi(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  if(!(await showConfirm('Vrátit velkosklad na místo, které si hra vybere sama?'))) return;
+  world.sklad = { ts: Date.now() };
+  saveWorld(); renderSkladMarker(); renderAdmin();
+}
 const ZBOZI_KAPACITA = 120;       // kolik procentních bodů zásob hráč unese
 // 20 %: měření ukázalo, že při 35 % vydělá provozovna s dovozem míň než obyčejný pronájem
 // stejného domu (1,07× medián) — z pohodlné cesty by byla past. Při 20 % je poměr 1,15×,
@@ -25524,6 +25672,8 @@ window.onload = async () => {
   safeCall(() => nactiMistaZPameti());
   setTimeout(() => safeCall(() => { if(mistaStav !== 'hotovo' || mistaStaraData) stahniMista(); }), 6000);
   setInterval(() => safeCall(() => hlidejRank()), 15000);   // povýšení stačí zkontrolovat občas
+  setInterval(() => safeCall(() => renderOnline()), 15000);   // kdo je online (21.61)
+  setTimeout(() => safeCall(() => renderOnline()), 3000);
   setInterval(() => { safeCall(() => hlidejSezonu()); safeCall(() => hlidejUlice()); safeCall(() => renderAkceMarkery()); safeCall(() => zpracujNabidky()); }, 60000);
   setInterval(() => safeCall(() => zpracujNabidky()), 15000);
   setTimeout(() => { safeCall(() => hlidejSezonu()); safeCall(() => hlidejUlice()); safeCall(() => renderAkceMarkery()); }, 8000);
