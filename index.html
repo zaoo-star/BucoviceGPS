@@ -1677,8 +1677,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.58';
-const APP_BUILD = '21.10.2026 19:30';
+const APP_VERSION = '21.59';
+const APP_BUILD = '22.10.2026 06:45';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -10251,7 +10251,7 @@ function listDormantPlayersHouses(){
     if(currentUser && u.name === currentUser.name) return;   // kdo právě hraje, ten zjevně nespí
     const dni = daysSinceActive(u);
     if(dni < DORMANT_DAYS) return;
-
+    const nove = [];
     Object.values(world.parcels || {}).forEach(p => {
       let pct = p.owners?.[u.name] || 0;
       if(pct <= 0.001) return;
@@ -10271,8 +10271,47 @@ function listDormantPlayersHouses(){
       if(world.closedListings && world.closedListings[lid]) return;
       world.listings[lid] = { id: lid, houseId: p.id, seller: u.name, pct, mod: Date.now(),
         type: 'fixed', price: cena, dormant: true };
-      addNews('market', `🏚️ ${domLabel(p)} je znovu na prodej — ${u.name} dlouho nehraje (${pctText(pct)} % za ${cena.toLocaleString('cs-CZ')} Kč).`, p.id);
+      // Do novin jedna zpráva za hráče, ne za každý dům (21.59 — noviny se zahlcovaly);
+      // dům si to zapíše do své kroniky.
+      safeCall(() => zapisKroniku(p, `🏚️ Na prodej levně — ${u.name} dlouho nehraje (${pctText(pct)} % za ${cena.toLocaleString('cs-CZ')} Kč).`));
+      nove.push(cena);
     });
+    if(nove.length){
+      const soucet = nove.reduce((a, b) => a + b, 0);
+      addNews('market', `🏚️ ${u.name} dlouho nehraje — ${nove.length === 1 ? 'podíl v domě je' : `podíly v domech (${nove.length}) jsou`} levně na tržišti (celkem ${soucet.toLocaleString('cs-CZ')} Kč).`);
+    }
+  });
+}
+// Zprávy „dlouho nehraje" ze stejného dne se v novinách ukážou jako jedna (21.59). Platí i pro
+// staré zprávy po jednotlivých domech a pro ty ze starších verzí hry.
+const DORMANT_ZPRAVA_STARA = /^🏚️ .+ je znovu na prodej — (.+) dlouho nehraje \(/u;
+const DORMANT_ZPRAVA_NOVA = /^🏚️ (.+) dlouho nehraje — (?:podíl v domě je|podíly v domech \((\d+)\))/u;
+function dormantZeZpravy(n){
+  const t = n && typeof n.text === 'string' ? n.text : '';
+  let m = t.match(DORMANT_ZPRAVA_NOVA);
+  if(m) return { kdo: m[1], pocet: m[2] ? parseInt(m[2], 10) : 1 };
+  m = t.match(DORMANT_ZPRAVA_STARA);
+  if(m) return { kdo: m[1], pocet: 1 };
+  return null;
+}
+function sloucDormantZpravy(zpravy, nazevDne){
+  const out = [], skupiny = {};
+  zpravy.forEach(n => {
+    const d = dormantZeZpravy(n);
+    if(!d){ out.push(n); return; }
+    const klic = nazevDne(n);
+    let g = skupiny[klic];
+    if(!g){ g = skupiny[klic] = { type: n.type, ts: n.ts, day: n.day, _dormant: {}, _puvodni: n }; out.push(g); }
+    g._dormant[d.kdo] = (g._dormant[d.kdo] || 0) + d.pocet;
+    g._n = (g._n || 0) + 1;
+  });
+  return out.map(n => {
+    if(!n._dormant) return n;
+    if(n._n === 1) return n._puvodni;
+    const jm = Object.entries(n._dormant).map(([k, c]) => `${k} (${c})`);
+    const domu = Object.values(n._dormant).reduce((a, b) => a + b, 0);
+    return { type: n.type, ts: n.ts, day: n.day, _trziste: true,
+      text: `🏚️ Dlouho nehrají — město nabídlo levně ${domu} ${sklonuj(domu, 'podíl', 'podíly', 'podílů')} v domech: ${jm.join(', ')}. Najdeš je na tržišti.` };
   });
 }
 
@@ -20421,6 +20460,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.59', datum:'2026-10-22', body:[
+    ['novinka','🏚️ Noviny už nezahlcují nabídky „dlouho nehraje": za hráče jedna zpráva místo jedné za každý dům a všechny z jednoho dne se ukážou jako jediná zpráva (klepnutím otevře tržiště). Jednotlivé domy to mají zapsané v kronice.'],
+  ]},
   { verze:'21.58', datum:'2026-10-21', body:[
     ['oprava','🏪 Vracení ztracené provozovny je přísnější: jen provozovna, kterou hráč sám otevřel a zaplatil do dnešní noci, dům od té doby nepřešel jinému (prodej, aukce, banka) a ještě vrácená nebyla. Každá se vrátí nejvýš jednou.'],
   ]},
@@ -21336,7 +21378,7 @@ function renderNews(){
     if(rozdil === 1) return 'Včera';
     return new Date(n.ts).toLocaleDateString('cs-CZ', { weekday:'long', day:'numeric', month:'numeric' });
   };
-  const vybrane = news.filter(n => n && (novinyFiltr === 'vse' || kategorie(n.type) === novinyFiltr));
+  const vybrane = sloucDormantZpravy(news.filter(n => n && (novinyFiltr === 'vse' || kategorie(n.type) === novinyFiltr)), nazevDne);
   if(!vybrane.length) html += `<div class="empty-state">V téhle kategorii zatím nic není.</div>`;
   let posledniDen = null;
   vybrane.forEach(n => {
@@ -21345,7 +21387,8 @@ function renderNews(){
     // uložený nemají, dům se dohledá z adresy v textu.
     const dum = (typeof n.kde === 'string' && world.parcels[n.kde]) ? n.kde : (safeCall(() => domZeZpravy(n.text)) || '');
     const bod = (n.kde && typeof n.kde === 'object' && isFinite(n.kde.lat)) ? n.kde : null;
-    const klik = !!(dum || bod);
+    const trh = !!n._trziste;   // sloučené „dlouho nehrají" → klepnutí otevře tržiště
+    const klik = !!(dum || bod) || trh;
     const den = nazevDne(n);
     if(den !== posledniDen){ html += `<div class="novDen">${den}</div>`; posledniDen = den; }
     // Úvodní emoji zprávy přesuneme do kroužku vlevo — text pak začíná zarovnaně.
@@ -21353,10 +21396,10 @@ function renderNews(){
     const m = text.match(/^(\p{Extended_Pictographic}(?:\uFE0F|\u200D\p{Extended_Pictographic}|\p{Emoji_Modifier})*)\s*/u);
     const ikona = m ? m[1] : '•';
     const zbytek = m ? text.slice(m[0].length) : text;
-    html += `<div class="zprava${klik ? ' klik' : ''}"${klik ? ` onclick="ukazMistoZpravy(this)" data-dum="${escapeHtml(dum)}" data-lat="${bod ? bod.lat : ''}" data-lng="${bod ? bod.lng : ''}"` : ''}>
+    html += `<div class="zprava${klik ? ' klik' : ''}"${trh ? ` onclick="otevriZVic('market')"` : klik ? ` onclick="ukazMistoZpravy(this)" data-dum="${escapeHtml(dum)}" data-lat="${bod ? bod.lat : ''}" data-lng="${bod ? bod.lng : ''}"` : ''}>
       <div class="zpIkona" style="--zc:${st.color};">${escapeHtml(ikona)}</div>
       <div class="zpText">${escapeHtml(zbytek)}<div class="zpMeta">${timeAgo(n.ts).replace(/^ · /, '') || (n.day ? 'den ' + n.day : '')}</div></div>
-      ${klik ? '<span class="zpPin" aria-label="Ukázat na mapě">📍</span>' : ''}
+      ${trh ? '<span class="zpPin" aria-label="Otevřít tržiště">🏷️</span>' : klik ? '<span class="zpPin" aria-label="Ukázat na mapě">📍</span>' : ''}
     </div>`;
   });
   html += infoBox('Jaké zprávy se tu objevují?', `
