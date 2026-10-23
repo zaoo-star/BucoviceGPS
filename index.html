@@ -1687,8 +1687,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.62';
-const APP_BUILD = '22.10.2026 17:25';
+const APP_VERSION = '21.65';
+const APP_BUILD = '23.10.2026 14:50';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -13047,7 +13047,8 @@ function vecerKartaHtml(){
 // Měnit jde jednou denně (ať se to nedá zneužít na spam do novin), správce ho může smazat.
 const PROVOZ_NAZEV_MAX = 28;
 function ocistiNazevProvozu(t){
-  return String(t == null ? '' : t).replace(/[<>`"'&\\{}\[\]]/g, '').replace(/[\u0000-\u001f\u007f]/g, '')
+  // & a ' jsou povolené (21.63, „Fit&Eff") — název se všude vypisuje přes escapeHtml nebo jako text.
+  return String(t == null ? '' : t).replace(/[<>`"\\{}\[\]]/g, '').replace(/[\u0000-\u001f\u007f]/g, '')
     .replace(/\s+/g, ' ').trim().slice(0, PROVOZ_NAZEV_MAX);
 }
 function nazevProvozu(p){
@@ -16231,6 +16232,18 @@ function renderMine(){
       ${danPrijem > 0.5 ? radek(`🏛️ Daň z příjmu (${Math.round(danPrijemCelkem / Math.max(1, hrubyMajetek) * 100)} % z výnosů)`, -danPrijem, 'var(--orange)') : ''}
       ${hypoteky > 0.5 ? radek('🏦 Splátky hypoték', -hypoteky, 'var(--orange)') : ''}
     </div>
+    ${(() => {
+      // Co tu chybí proti Finančnímu přehledu — ať se čísla nezdají rozházená (21.64).
+      const pujcky = asArray((world.users[ja] || {}).loans).filter(l => l && l.type !== 'mortgage')
+        .reduce((a, l) => a + Math.min(l.principal * LOAN_MIN_PAYMENT_RATIO, l.balance), 0);
+      const danFirmy = danPrijemCelkem - danPrijem;
+      const casti = [];
+      if(pujcky > 0.5) casti.push(`splátky půjček −${kc(pujcky)} Kč`);
+      if(firmyDen > 0.5) casti.push(`výnos z firem +${kc(firmyDen)} Kč${danFirmy > 0.5 ? ` (daň z něj −${kc(danFirmy)} Kč)` : ''}`);
+      if(!casti.length) return '';
+      return `<p style="font-size:0.84em;color:var(--muted);margin:6px 0 0;cursor:pointer;" onclick="otevriZVic('finance')">
+        Tady jsou jen domy. Mimo ně máš denně: ${casti.join(', ')}. Celý rozpočet je ve <b style="color:var(--accent);">Finančním přehledu ›</b></p>`;
+    })()}
     <p style="font-size:0.84em;color:var(--muted);margin:8px 0 0;">
       ${data.length} ${data.length===1?'dům':(data.length<5?'domy':'domů')} · obsazeno ${obsazenoCelkem} z ${bytuCelkem} bytů ·
       podíly za ${kc(hodnotaPodilu)} Kč${udrzbaCelkem > 0.5 ? ` · údržba ~${kc(udrzbaCelkem)} Kč/den` : ''}${usporaBydleni > 0.5 ? ` · na bydlení šetříš ${kc(usporaBydleni)} Kč/den` : ''}</p>
@@ -17384,15 +17397,23 @@ function spoctiFinance(name){
   // splátku včetně jistiny — u půjčky 10 000 Kč to je skoro 200 Kč denně. Rozpočet tak
   // hlásil výdaje 54 Kč/den, zatímco reálně odcházelo 250 Kč, a „rezerva na 48 dní"
   // byla čtyřikrát optimističtější, než jaká byla doopravdy.
-  let splatky = 0, uroky = 0;
+  // Hypotéky a ostatní půjčky zvlášť (21.64) — v Mých nemovitostech jsou jen hypotéky
+  // a jeden společný řádek tady vypadal jako „jednou 570, jindy dvojnásobek" (hlásila Eva).
+  const spl = { mortgage: { s: 0, u: 0 }, loan: { s: 0, u: 0 } };
   (u.loans||[]).forEach(l => {
-    uroky += l.balance * l.dailyRate;
-    const podil = l.type === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
-    splatky += Math.min(l.principal * podil, l.balance);
+    const k = l.type === 'mortgage' ? 'mortgage' : 'loan';
+    spl[k].u += l.balance * l.dailyRate;
+    const podil = k === 'mortgage' ? MORTGAGE_MIN_PAYMENT_RATIO : LOAN_MIN_PAYMENT_RATIO;
+    spl[k].s += Math.min(l.principal * podil, l.balance);
   });
-  if(splatky > 0.5) expense.push({
-    label: `🏦 Splátky půjček (z toho úrok ${Math.round(uroky)} Kč)`,
-    amount: splatky,
+  if(spl.mortgage.s > 0.5) expense.push({
+    label: `🏦 Splátky hypoték (z toho úrok ${Math.round(spl.mortgage.u)} Kč)`,
+    amount: spl.mortgage.s,
+    poznamka: 'Jistina ti zároveň snižuje dluh — o majetek nepřicházíš, jen se přesouvá.'
+  });
+  if(spl.loan.s > 0.5) expense.push({
+    label: `💳 Splátky půjček (z toho úrok ${Math.round(spl.loan.u)} Kč)`,
+    amount: spl.loan.s,
     poznamka: 'Jistina ti zároveň snižuje dluh — o majetek nepřicházíš, jen se přesouvá.'
   });
 
@@ -20483,6 +20504,15 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.65', datum:'2026-10-23', body:[
+    ['novinka','🔄 Nová verze hry se nahraje sama — už se neptá. Nahoře se jen ukáže „Stahuji novou verzi…". Když máš zrovna otevřené okno (nákup, psaní), počká, až ho dokončíš.'],
+  ]},
+  { verze:'21.64', datum:'2026-10-23', body:[
+    ['novinka','🏦 Splátky jsou přehlednější: ve Finančním přehledu jsou zvlášť hypotéky a zvlášť ostatní půjčky. V Mých nemovitostech (jen domy, takže jen hypotéky) je pod přehledem napsané, co tam chybí — půjčky a firmy — s odkazem na celý rozpočet (nápad Evy).'],
+  ]},
+  { verze:'21.63', datum:'2026-10-23', body:[
+    ['oprava','✏️ Název provozovny může obsahovat & a apostrof — třeba „Fit&Eff" (hlásila Eva).'],
+  ]},
   { verze:'21.62', datum:'2026-10-22', body:[
     ['novinka','🟢 Kolik hráčů je online a kolik jich dnes hrálo, je teď vidět rovnou na hlavní obrazovce — vpravo nahoře pod počasím. Klepnutím uvidíš jména.'],
   ]},
@@ -21597,7 +21627,8 @@ function renderFinance(){
       // Dopočet k denní bilanci — rozpad musí být poctivý, ne jen sedět v součtu.
       const majetekTok = [...f.assets, ...f.liabilities].reduce((s2, x) => s2 + (x.dayFlow || 0), 0);
       const zivot = (f.expense.find(e => e.label && e.label.indexOf('Život') >= 0) || {amount:0}).amount;
-      const splRadek = f.expense.find(e => /Splátky/.test(e.label));
+      const splSoucet = f.expense.filter(e => /Splátky/.test(e.label)).reduce((a2, e) => a2 + e.amount, 0);   // hypotéky + půjčky (21.64)
+      const splRadek = splSoucet > 0 ? { amount: splSoucet } : null;
       // Úrok je už započítaný u dluhů výš — tady jen jistina, ať se nepočítá dvakrát.
       const urokVMajetku = asArray(u.loans).reduce((a, l) => a + (l.balance * l.dailyRate), 0);
       const jistina = splRadek ? Math.max(0, splRadek.amount - urokVMajetku) : 0;
@@ -22659,7 +22690,8 @@ function evaRada(u){
   if(bezVyuziti) return { text:`Dům ${domKratce(bezVyuziti)} máš, ale nic s ním neděláš. Urči mu využití — bydlení, pronájem nebo provozovna.`, id:bezVyuziti.id };
 
   // 5) Splátky žerou většinu příjmu.
-  const splatky = (f.expense || []).find(e => /Splátky/.test(e.label));
+  const splSoucet = (f.expense || []).filter(e => /Splátky/.test(e.label)).reduce((a, e) => a + e.amount, 0);   // hypotéky + půjčky (21.64)
+  const splatky = splSoucet > 0 ? { amount: splSoucet } : null;
   if(splatky && f.totalIncome > 0 && splatky.amount > f.totalIncome * 0.55)
     return { text:`Splátky ti berou ${Math.round(splatky.amount / f.totalIncome * 100)} % příjmu. Zvaž doplacení půjčky, nebo si zvyš příjem — takhle se z toho nedostaneš.` };
 
@@ -25691,6 +25723,7 @@ window.onload = async () => {
   if(tryAutoLogin()) obnovPosledniPanel();
   // Uvítání až chvíli po startu, ať nepřekryje načítání mapy a stihne se natáhnout počasí.
   setTimeout(() => safeCall(() => denniUvitani()), 2500);
+  safeCall(() => oznamAktualizaci());
 };
 
 // ===== PWA: instalace na plochu =====
@@ -25701,24 +25734,74 @@ function registerServiceWorker(){
   // klienty pak rozbíjely data ostatním (přepisovaly celé mapy podílů).
   navigator.serviceWorker.register('./service-worker.js?v=' + APP_VERSION, { updateViaCache: 'none' })
     .then(reg => {
+      // Nová verze mohla čekat už od minula (stažená, ale nepřepnutá) → nahrát hned.
+      if(reg.waiting && navigator.serviceWorker.controller) nahrajNovouVerzi(reg.waiting);
       reg.update();                       // hned zkontrolovat, jestli není novější verze
       setInterval(() => reg.update(), 30 * 60 * 1000);
       reg.addEventListener('updatefound', () => {
         const novy = reg.installing;
         if(!novy) return;
         novy.addEventListener('statechange', () => {
-          // Nová verze je připravená a stará ještě běží → nabídnout přechod.
-          if(novy.state === 'installed' && navigator.serviceWorker.controller){
-            showConfirm('🔄 Je k dispozici novější verze hry. Načíst ji teď?').then(ok => {
-              if(ok){ novy.postMessage({ type: 'SKIP_WAITING' }); location.reload(); }
-            });
-          }
+          // Nová verze je připravená a stará ještě běží → nahrát sama (21.65). Dřív se hra
+          // ptala a hráči „Ne" klikali — a stará verze pak dál posílala stará data.
+          if(novy.state === 'installed' && navigator.serviceWorker.controller) nahrajNovouVerzi(novy);
         });
       });
     })
     .catch(()=>{
       // appka funguje i bez service workeru, jen bez offline cache — nic neblokujeme
     });
+}
+
+// Automatická aktualizace (21.65): ukáže „Stahuji novou verzi…", počká, až hráč dokončí
+// rozdělaný dialog (ať nepřijde o rozepsaný text nebo potvrzení nákupu), odešle neuložené
+// změny do cloudu a načte hru znovu.
+let aktualizaceBezi = false;
+function nahrajNovouVerzi(novy){
+  if(aktualizaceBezi) return;
+  // Pojistka proti nekonečnému načítání dokola, kdyby se nová verze nedokázala přepnout.
+  try {
+    const posledni = parseInt(localStorage.getItem('bp_aktualizace_pokus') || '0', 10);
+    if(Date.now() - posledni < 10 * 60000) return;
+    localStorage.setItem('bp_aktualizace_pokus', String(Date.now()));
+  } catch(e){}
+  aktualizaceBezi = true;
+  const ukaz = text => {
+    let el = document.getElementById('aktualizaceInfo');
+    if(!el){
+      el = document.createElement('div');
+      el.id = 'aktualizaceInfo';
+      el.style.cssText = 'position:fixed;left:50%;top:calc(env(safe-area-inset-top, 0px) + 10px);transform:translateX(-50%);z-index:3500;' +
+        'background:var(--panel);border:1px solid var(--accent);color:var(--text);border-radius:12px;padding:9px 14px;font-size:0.9em;' +
+        'box-shadow:0 6px 20px rgba(0,0,0,0.45);max-width:calc(100% - 32px);text-align:center;pointer-events:none;';
+      document.body.appendChild(el);
+    }
+    el.textContent = text;
+  };
+  ukaz('⬇️ Stahuji novou verzi hry…');
+  let hotovo = false;
+  const nacti = () => { if(hotovo) return; hotovo = true; try { location.reload(); } catch(e){} };
+  navigator.serviceWorker.addEventListener('controllerchange', nacti);
+  const zkus = () => {
+    if(dialogOtevren > 0){ ukaz('⬇️ Nová verze je stažená — načte se, až dokončíš, co děláš.'); setTimeout(zkus, 1000); return; }
+    ukaz('⬇️ Načítám novou verzi hry…');
+    try { localStorage.setItem('bp_aktualizovano', APP_VERSION); } catch(e){}
+    safeCall(() => flushCloudWrite());
+    // chvilka na odeslání do cloudu, pak přepnout na nový service worker
+    setTimeout(() => {
+      try { novy.postMessage({ type: 'SKIP_WAITING' }); } catch(e){}
+      setTimeout(nacti, 3000);   // pojistka, kdyby se přepnutí neohlásilo
+    }, 1200);
+  };
+  setTimeout(zkus, 1500);
+}
+// Po načtení nové verze krátce oznámit, že proběhla.
+function oznamAktualizaci(){
+  let byla = null;
+  try { byla = localStorage.getItem('bp_aktualizovano'); localStorage.removeItem('bp_aktualizovano'); } catch(e){}
+  if(!byla) return;
+  if(byla === APP_VERSION){ setTimeout(() => safeCall(() => showToast('🔄 Hra se načetla znovu')), 2500); return; }
+  setTimeout(() => safeCall(() => showToast(`✅ Hra je aktualizovaná na verzi ${APP_VERSION} — co je nového, najdeš ve Víc`)), 2500);
 }
 
 let deferredInstallPrompt = null;
