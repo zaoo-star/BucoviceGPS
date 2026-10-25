@@ -571,6 +571,9 @@
   .sadaMisto{ display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border); }
   .sadaMisto:last-child{ border-bottom:none; }
   .sadaMisto.mam{ opacity:0.6; }
+  .shlukZnacek{ width:46px;height:46px;border-radius:50%;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(20,24,34,0.92);border:2px solid var(--accent);color:var(--text);font-size:15px;line-height:1;box-shadow:0 3px 12px rgba(0,0,0,0.45);cursor:pointer; }
+  .shlukZnacek b{ font-size:12px;margin-top:2px; }
   .skladMarker{
     width:32px;height:32px;border-radius:9px;display:flex;align-items:center;justify-content:center;
     font-size:18px;background:rgba(251,146,60,0.95);border:2px solid rgba(255,255,255,0.9);
@@ -1690,8 +1693,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.68';
-const APP_BUILD = '25.10.2026 19:40';
+const APP_VERSION = '21.70';
+const APP_BUILD = '25.10.2026 19:55';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -12109,12 +12112,19 @@ function aktualizujNapovedu(kandidatu, zobrazeno, zoom){
       'z-index:500;background:rgba(20,22,28,0.82);color:#cfd6e4;font-size:12px;padding:5px 11px;' +
       'border-radius:14px;pointer-events:none;white-space:nowrap;backdrop-filter:blur(3px);display:none;';
     mapEl.appendChild(napovedaEl);
+    // Klepnutí na „Přibliž…" rovnou přiblíží (21.70).
+    napovedaEl.addEventListener('click', e => {
+      e.stopPropagation();
+      if(map && map.getZoom() < ZOOM_JEN_MOJE) map.setView(playerPos ? [playerPos.lat, playerPos.lng] : map.getCenter(), ZOOM_JEN_MOJE);
+    });
   }
   if(zoom < ZOOM_JEN_MOJE){
     clearTimeout(napovedaTimer);
-    napovedaEl.textContent = '🔍 Přibliž pro zobrazení domů';
+    napovedaEl.textContent = '🔍 Přibliž pro zobrazení domů — klepni';
+    napovedaEl.style.pointerEvents = 'auto'; napovedaEl.style.cursor = 'pointer';
     napovedaEl.style.display = 'block';
   } else if(zobrazeno && kandidatu === zobrazeno){
+    napovedaEl.style.pointerEvents = 'none';
     // Ať to nevypadá jako chyba: volné domy dál než pár kroků schováváme schválně.
     napovedaEl.textContent = `🏚️ Volné domy vidíš do ${PRAZDNE_DOMY_DOSAH} m od sebe`;
     napovedaEl.style.display = 'block';
@@ -12893,6 +12903,7 @@ function prepniVynosy(){
 // Firma a místo ze sbírky na stejné adrese (třeba u Lidlu) ležely přesně na sobě a ta spodní
 // se nedala trefit. Značky blíž než ~24 px se rozestoupí do kroužku kolem společného středu.
 // Domy se neposouvají — ty stojí na svých budovách a nepřekrývají se.
+let shlukyZnacky = [];
 function rozprostriZnacky(){
   if(!map) return;
   const seznam = [];
@@ -12911,17 +12922,42 @@ function rozprostriZnacky(){
   const body = seznam.map(m => ({ m, pt: map.latLngToContainerPoint(m._puvodni) }));
   const hotovo = new Set();
   const R = 24;
+  // Velké shluky (oddálená mapa) se už nerozkládají do kruhu přes půl obrazovky (21.69 —
+  // „proč takhle v kruhu?"). Místo nich jedna bublina s počtem; klepnutím se mapa přiblíží.
+  const SHLUK_MAX = 7;
+  shlukyZnacky.forEach(s => { try { map.removeLayer(s); } catch(e){} });
+  shlukyZnacky = [];
+  const ukaz = (m, ano) => {
+    if(ano && !m._vShluku) return;   // viditelná zůstává viditelná
+    m._vShluku = !ano;
+    try { m.setOpacity(ano ? 1 : 0); } catch(e){}
+    const el = m.getElement && m.getElement();
+    if(el) el.style.pointerEvents = ano ? '' : 'none';
+  };
   body.forEach((a, i) => {
     if(hotovo.has(i)) return;
     const skup = [i];
     body.forEach((b, j) => { if(j !== i && !hotovo.has(j) && a.pt.distanceTo(b.pt) < R) skup.push(j); });
     skup.forEach(k => hotovo.add(k));
     if(skup.length === 1){
+      ukaz(a.m, true);
       if(!a.m.getLatLng().equals(a.m._puvodni)) a.m.setLatLng(a.m._puvodni);
       return;
     }
     const sx = skup.reduce((t, k) => t + body[k].pt.x, 0) / skup.length;
     const sy = skup.reduce((t, k) => t + body[k].pt.y, 0) / skup.length;
+    if(skup.length > SHLUK_MAX){
+      skup.forEach(k => { ukaz(body[k].m, false); if(!body[k].m.getLatLng().equals(body[k].m._puvodni)) body[k].m.setLatLng(body[k].m._puvodni); });
+      const stred = map.containerPointToLatLng(L.point(sx, sy));
+      const balik = skup.filter(k => pickupMarkers && Object.values(pickupMarkers).includes(body[k].m)).length;
+      const s = L.marker(stred, { icon: L.divIcon({ className:'', iconSize:[46, 46],
+          html:`<div class="shlukZnacek">${balik ? '💰' : '📍'}<b>${skup.length}</b></div>` }), zIndexOffset: 500 })
+        .addTo(map).bindTooltip(`${skup.length} míst${balik ? ` (z toho ${balik} ${sklonuj(balik, 'balík', 'balíky', 'balíků')})` : ''} — přibliž mapu`);
+      s.on('click', () => map.setView(stred, Math.min(map.getZoom() + 2, 18)));
+      shlukyZnacky.push(s);
+      return;
+    }
+    skup.forEach(k => ukaz(body[k].m, true));
     const r = 14 + skup.length * 3;
     skup.forEach((k, n) => {
       const uhel = -Math.PI / 2 + n * 2 * Math.PI / skup.length;
@@ -14268,7 +14304,8 @@ function nastavPodklad(index){
 }
 
 function initMap(){
-  map = L.map('map', {zoomControl:false}).setView(CITY_CENTER, 16);
+  // minZoom 13 (21.70): dál už je celé město jeden bod a okolní vesnice hráči k ničemu nejsou.
+  map = L.map('map', {zoomControl:false, minZoom:13}).setView(CITY_CENTER, 16);
   L.control.zoom({position:'bottomright'}).addTo(map);
   // Tlačítko „na mě" — vrátí mapu na hráče, když si ji odsuneš.
   const naMe = L.control({position:'bottomright'});
@@ -15434,7 +15471,7 @@ function updateHeaderStats(){
         elPocasi.style.display = '';
         document.getElementById('pocasiVal').innerHTML =
           `${pm.emoji} ${POCASI.teplota} °C` +
-          (pm.mult > 1 ? ` <b style="color:var(--accent)">+${Math.round((pm.mult-1)*100)} %</b>` : '');
+          (pm.mult > 1 ? ` <b style="color:var(--accent)">🚶+${Math.round((pm.mult-1)*100)} %</b>` : '');   // 🚶 = bonus za chůzi (21.70)
         const stari = Math.round((Date.now() - (POCASI.kdy || 0)) / 60000);
         elPocasi.title = `${pm.popis} — ${pm.mult > 1 ? 'chůze vynáší o ' + Math.round((pm.mult-1)*100) + ' % víc' : 'chůze vynáší jako obvykle'}` +
           ` (načteno ${stari < 1 ? 'právě teď' : 'před ' + stari + ' min'})`;
@@ -20806,6 +20843,12 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.70', datum:'2026-10-25', body:[
+    ['novinka','🗺️ Mapa: nejde oddálit tak daleko, aby z celého města zbyl jeden bod, a klepnutím na „Přibliž pro zobrazení domů" se rovnou přiblíží. U počasí nahoře je u bonusu ikonka 🚶 — ta procenta jsou bonus za chůzi.'],
+  ]},
+  { verze:'21.69', datum:'2026-10-25', body:[
+    ['oprava','🗺️ Na oddálené mapě se značky (podniky, místa, balíky) už neskládají do obřího kruhu přes půl obrazovky. Hustý shluk je teď jedna bublina s počtem — klepnutím se mapa přiblíží.'],
+  ]},
   { verze:'21.68', datum:'2026-10-25', body:[
     ['oprava','🔑 Opravené přihlašování: když se svět nevešel do paměti telefonu, hra chtěla přihlášení a přihlásit se nešlo. Teď si při plné paměti uvolní místo (smaže jen mezipaměť fotek a map, ty se stáhnou znovu), počká na hráče ze serveru a přihlásí tě sama.'],
   ]},
