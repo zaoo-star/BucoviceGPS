@@ -1693,8 +1693,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.71';
-const APP_BUILD = '27.10.2026 11:30';
+const APP_VERSION = '21.74';
+const APP_BUILD = '27.10.2026 13:10';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -2441,6 +2441,7 @@ function vzdalenostKUseku(bod, a, b){
 }
 function checkPickups(){
   if(!currentUser || !playerPos) return;
+  if(gpsPresnost > GPS_SBER_PRESNOST) return;   // poloha z wifi/sítě (±stovky m) nic nesbírá (21.72)
   ensurePickups();
   const u = world.users[currentUser.name];
   if(!u) return;
@@ -2647,6 +2648,7 @@ function myLandmarksToday(){
 }
 function checkLandmarks(){
   if(!currentUser || !playerPos) return;
+  if(gpsPresnost > GPS_SBER_PRESNOST) return;   // poloha z wifi/sítě (±stovky m) nic nesbírá (21.72)
   const u = world.users[currentUser.name];
   if(!u) return;
   const got = myLandmarksToday();
@@ -6509,6 +6511,7 @@ function sadaPostup(u, sadaId){
 
 function checkMista(){
   if(!currentUser || !playerPos || mistaStav !== 'hotovo') return;
+  if(gpsPresnost > GPS_SBER_PRESNOST) return;   // poloha z wifi/sítě (±stovky m) nic nesbírá (21.72)
   const u = world.users[currentUser.name];
   if(!u) return;
   const navstivena = mojeMista(u);
@@ -8099,7 +8102,7 @@ function mergeLogs(a, b, limit, isChat){
   return merged.slice(0, limit);
 }
 
-function saveWorld(){
+function saveWorld(tichy){
   zapomenCeny();   // ukládá se po každé změně peněz nebo majetku → přepočítat
   // Značka poslední aktivity hráče — při sloučení světů z více zařízení vyhraje NOVĚJŠÍ verze hráče.
   if(currentUser && world.users && world.users[currentUser.name] && !cekamNaCloud()){
@@ -8110,7 +8113,7 @@ function saveWorld(){
   world.rev = Math.max((world.rev || 0) + 1, Date.now());
   lastWrittenRev = world.rev;
   ulozSvetMistne(); // lokálně vždy hned (rychlé)
-  scheduleCloudWrite();
+  scheduleCloudWrite(tichy === true);
 }
 // OPRAVA 21.68: místní úložiště prohlížeče má jen pár MB. Svět s fotkami, půdorysy a adresami
 // se do něj přestal vejít — zápis pak vyhodil chybu, ukládání spadlo dřív, než se poslalo do
@@ -8148,14 +8151,21 @@ function ulozSvetMistne(){
 // Zápis do Firebase se posílá nejvýš jednou za CLOUD_WRITE_MIN_MS — aby chůze (časté ukládání)
 // nezahltila síť. Poslední stav se vždy nakonec uloží.
 const CLOUD_WRITE_MIN_MS = 2500;
-function scheduleCloudWrite(){
+const CLOUD_WRITE_TICHY_MS = 60000;   // jen tick (přibývající peníze): nejvýš jednou za minutu (21.72)
+let fbWriteTimerTichy = false;
+function scheduleCloudWrite(tichy){
   if(!(firebaseSyncEnabled && fbDb)) return;
   const now = Date.now();
   const elapsed = now - lastFbWrite;
-  if(elapsed >= CLOUD_WRITE_MIN_MS){
+  const odstup = tichy ? CLOUD_WRITE_TICHY_MS : CLOUD_WRITE_MIN_MS;
+  // Čeká pomalý (tichý) zápis a teď přišla skutečná akce → pustit ji rychle.
+  if(!tichy && fbWriteTimer && fbWriteTimerTichy){ clearTimeout(fbWriteTimer); fbWriteTimer = null; }
+  if(elapsed >= odstup){
+    if(fbWriteTimer){ clearTimeout(fbWriteTimer); fbWriteTimer = null; }
     doCloudWrite();
   } else if(!fbWriteTimer){
-    fbWriteTimer = setTimeout(() => { fbWriteTimer = null; doCloudWrite(); }, CLOUD_WRITE_MIN_MS - elapsed);
+    fbWriteTimerTichy = !!tichy;
+    fbWriteTimer = setTimeout(() => { fbWriteTimer = null; fbWriteTimerTichy = false; doCloudWrite(); }, odstup - elapsed);
   }
 }
 function doCloudWrite(){
@@ -9864,7 +9874,10 @@ function tickVnitrni(){
   }
   world.day = targetDay;
 
-  saveWorld();
+  // Běžný tick (jen přibývající peníze) se do cloudu posílá nejvýš jednou za minutu — dřív každých
+  // 5 s celý svět, a každý další telefon ho pokaždé stahoval celý (Eva: „najednou mi nestačí data").
+  // Nový den a všechny akce hráče se posílají hned jako dřív.
+  saveWorld(advanced === 0);
   refreshAll();
 }
 
@@ -11092,6 +11105,8 @@ function retryGeo(){
 // • méně přesné měření posune značku jen o část cesty (vyhlazení); přesné hned celé.
 // Peníze za chůzi se dál počítají ze surových dat s vlastními pojistkami.
 let gpsZobr = null, gpsDobra = 0;
+var gpsPresnost = 0;                 // přesnost posledního měření (m)
+const GPS_SBER_PRESNOST = 60;        // horší poloha nic nesbírá (první zaměření z wifi bývá ±300 m)
 function filtrujPolohu(raw, acc){
   const t = Date.now();
   if(!gpsZobr || t - gpsZobr.t > 120000){ gpsZobr = { lat: raw.lat, lng: raw.lng, t }; if(acc <= 25) gpsDobra = t; return raw; }
@@ -11118,7 +11133,9 @@ function ukazSignalGps(acc){
     document.body.appendChild(el);
   }
   el.style.display = slaby ? 'block' : 'none';
-  if(slaby) el.textContent = `📡 Slabý signál GPS (±${Math.round(acc)} m) — poloha může skákat`;
+  if(slaby) el.textContent = acc > 100
+    ? `📡 Hledám přesnou polohu (zatím ±${Math.round(acc)} m)…`
+    : `📡 Slabý signál GPS (±${Math.round(acc)} m) — poloha může skákat`;
 }
 
 function onPosition(pos){
@@ -11138,6 +11155,7 @@ function onPosition(pos){
     }
   });
   safeCall(() => navPoloha(pos));
+  gpsPresnost = accuracy;
   const zobr = filtrujPolohu(newPos, accuracy);   // poloha pro značku, balíky a interakce (21.71)
   safeCall(() => ukazSignalGps(accuracy));
   playerPos = zobr;     // POZOR: musí být dřív než počítání chůze — kontrola herní oblasti
@@ -12523,6 +12541,7 @@ function renderAkceMarkery(){
 }
 function checkAkce(){
   if(!currentUser || !playerPos) return;
+  if(gpsPresnost > GPS_SBER_PRESNOST) return;   // poloha z wifi/sítě (±stovky m) nic nesbírá (21.72)
   const u = world.users[currentUser.name];
   if(!u) return;
   aktivniAkce().forEach(a => {
@@ -20927,6 +20946,10 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.72', datum:'2026-10-27', body:[
+    ['oprava','📶 Hra spotřebuje mnohem míň mobilních dat: průběžně přibývající peníze se na server posílají jednou za minutu místo každých 5 s. Všechno, co uděláš (nákup, sběr, oprava…), se posílá hned jako dřív.'],
+    ['oprava','📍 Když telefon po zapnutí zná jen přibližnou polohu (z wifi, třeba ±300 m), hra napíše „Hledám přesnou polohu…" a do té doby nic nesebere ani nezapočítá — dřív tě mohla na půl minuty „posadit" o kus vedle (hlásila Eva).'],
+  ]},
   { verze:'21.71', datum:'2026-10-27', body:[
     ['oprava','📍 Značka hráče už tolik neskáče: horší měření GPS (±40 m a víc) ji nepřehodí jinam, osamocené nemožné skoky se přeskočí a méně přesná poloha se vyhladí. Když je signál slabý, hra to nahoře napíše.'],
     ['oprava','💰 Balík se sebere, i když GPS „přeskočí" — počítá se celá cesta od minulé polohy, ne jen místo, kde poloha zrovna naskočila. Poloha se navíc obnovuje častěji, takže značka tolik nezaostává.'],
@@ -26289,7 +26312,8 @@ function setupInstallPrompt(){
   document.addEventListener('visibilitychange', () => {
     if(document.visibilityState === 'hidden'){ skrytoOd = Date.now(); flushCloudWrite(); return; }
     // po návratu z pozadí (déle než 20 s) nejdřív načíst aktuální svět (21.66)
-    if(skrytoOd && Date.now() - skrytoOd > 20000) safeCall(() => obnovPoNavratu());
+    // (od 21.72 až po 2 min — každé stažení je celý svět a hráči vytahují telefon často)
+    if(skrytoOd && Date.now() - skrytoOd > 120000) safeCall(() => obnovPoNavratu());
     skrytoOd = 0;
   });
   window.addEventListener('pagehide', () => flushCloudWrite());
