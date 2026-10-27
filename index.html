@@ -994,6 +994,8 @@
     display:block;line-height:0;
   }
   .parcelMarker.domSvg svg{ display:block;overflow:visible;filter:drop-shadow(0 1px 1.5px rgba(0,0,0,0.45)); }
+  /* 3D budovy mají stín v obrázku — filtr přes stovky značek telefon zpomaloval (21.82) */
+  .parcelMarker.domSvg svg.d3, .bizBudova svg.d3, body.jeNoc .domSvg.obydleny svg.d3, body.jeNoc .bizBudova svg.d3{ filter:none; }
   .domSvg .dOkno{ fill:rgba(15,17,21,0.62); }
   .domSvg .dOkna.sviti .dOkno{ fill:#fde68a; }
   .domSvg.p-empty{ opacity:0.85; }
@@ -1121,9 +1123,10 @@
   /* ===== ŽIVÉ MĚSTO 21.0 ===== */
   .domSvg .kour, .domSvg .zakaznik, .domSvg .zavrenoCedule, .domSvg .stavbaJerab, .domSvg .stavbaPrach,
   .domSvg .dyne, .domSvg .svetylka, .domSvg .snehulak{ display:none;position:absolute;pointer-events:none; }
-  .leaflet-container.zblizka .domSvg .kour, .leaflet-container.zblizka .domSvg .zakaznik, .leaflet-container.zblizka .domSvg .zavrenoCedule,
-  .leaflet-container.zblizka .domSvg .stavbaJerab, .leaflet-container.zblizka .domSvg .stavbaPrach,
-  .leaflet-container.zblizka .domSvg .dyne, .leaflet-container.zblizka .domSvg .svetylka, .leaflet-container.zblizka .domSvg .snehulak{ display:block; }
+  .leaflet-container.zblizka .domSvg .zavrenoCedule, .leaflet-container.zblizka .domSvg .stavbaJerab{ display:block; }
+  /* animovaná výzdoba až při velkém přiblížení — přes stovky domů zpomalovala mapu (21.82) */
+  .leaflet-container.zblizka18 .domSvg .kour, .leaflet-container.zblizka18 .domSvg .zakaznik, .leaflet-container.zblizka18 .domSvg .stavbaPrach,
+  .leaflet-container.zblizka18 .domSvg .dyne, .leaflet-container.zblizka18 .domSvg .svetylka, .leaflet-container.zblizka18 .domSvg .snehulak{ display:block; }
   /* kouř z komína */
   .domSvg .kour{ left:68%;top:-4px;width:12px;height:30px; }
   .domSvg .kour i{ position:absolute;left:2px;bottom:0;width:8px;height:8px;border-radius:50%;background:rgba(220,224,232,0.7);
@@ -1144,7 +1147,7 @@
     animation:prach 2.4s ease-out infinite; }
   @keyframes prach{ 0%{ transform:scale(0.4);opacity:0.8; } 100%{ transform:translate(-6px,-6px) scale(1.6);opacity:0; } }
   /* sezóna */
-  .domSvg .dyne{ left:-8px;bottom:-2px;font-size:12px;animation:dyne 2.4s ease-in-out infinite; }
+  .domSvg .dyne{ left:-8px;bottom:-2px;font-size:12px;filter:drop-shadow(0 0 3px rgba(251,146,60,0.85)); }   /* bez animace — filtr v každém snímku stál moc */
   @keyframes dyne{ 0%,100%{ filter:drop-shadow(0 0 2px rgba(251,146,60,0.6)); } 50%{ filter:drop-shadow(0 0 6px rgba(251,146,60,1)); } }
   .domSvg .snehulak{ right:-12px;bottom:-2px;font-size:13px; }
   .domSvg .svetylka{ left:2px;right:2px;top:8px;display:none;justify-content:space-between; }
@@ -1698,8 +1701,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.81';
-const APP_BUILD = '27.10.2026 21:00';
+const APP_VERSION = '21.82';
+const APP_BUILD = '27.10.2026 21:40';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -11824,9 +11827,9 @@ function renderSkladMarker(){
   const skladIkona = sklad3
     ? (() => { const S = 0.32, sw = sklad3.w * S, sh = sklad3.h * S, W = Math.ceil(sw + 8), kx = 4 + sklad3.ax * S, ky = sklad3.ay * S, pw = sw * 0.5, ph = pw * 0.52, H = Math.ceil(Math.max(sh, ky + ph) + 2);
         return L.divIcon({ className:'', iconSize:[W, H], iconAnchor:[kx, ky], tooltipAnchor:[0, -ky + 4],
-          html:`<div class="bizBudova" style="width:${W}px;height:${H}px;"><svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
+          html:`<div class="bizBudova" style="width:${W}px;height:${H}px;"><svg class="d3" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">
             ${D3_STIN_DEF}<polygon points="${kx - pw},${ky} ${kx},${ky - ph} ${kx + pw},${ky} ${kx},${ky + ph}" fill="#94a3b8" fill-opacity="0.6" stroke="#475569"/>${d3Stin(kx, ky, pw, ph)}
-            <image href="${sklad3.url}" x="4" y="0" width="${sw}" height="${sh}"/>
+            ${d3Img(sklad3, 4, 0, sw, sh)}
             <circle cx="${4 + sw * 0.8}" cy="${sh * 0.45}" r="7" fill="#fff" stroke="#475569" stroke-width="1.2"/><text x="${4 + sw * 0.8}" y="${sh * 0.45 + 3.2}" text-anchor="middle" font-size="8.5">${SKLAD.emoji}</text></svg></div>` }); })()
     : skladBud
     ? L.divIcon({ className:'', iconSize:[42, 44], iconAnchor:[21, 40], tooltipAnchor:[0, -36],
@@ -12276,7 +12279,7 @@ function iconKey(p){
           pocetPater(p), houseHasOwner(p) ? 1 : 0, p.useType || '-',
           vynosRezim ? Math.round(vynosDomu(p) || 0) : '-', nazevProvozu(p), safeCall(() => dekorKlic(p, owned)) || '',
           p.vzhled ? [p.vzhled.f, p.vzhled.s, p.vzhled.v, p.vzhled.m].join(',') : '', dumAtlasOk ? 'k' : 'e', d3Ok ? '3' : '',
-          d3Ok ? (safeCall(() => prodejDomu(p)) || '') + (p.project ? 'L' : '') + (snihLezi() ? 'S' : '') : ''].join('|');
+          d3Ok ? (p.project ? 'L' : '') + (snihLezi() ? 'S' : '') : ''].join('|');
 }
 
 
@@ -14009,7 +14012,7 @@ function dekorDomu(p, obydleny){
   const casti = [];
   const zblizka = '';
   // kouř z komínů, když je zima
-  if(obydleny && teplotaTed() !== null && teplotaTed() < 8 && !maProvoz(p))
+  if(obydleny && teplotaTed() !== null && teplotaTed() < 8 && !maProvoz(p) && hashId(p.id) % 3 === 0)
     casti.push(`<span class="kour" style="--zp:${(hashId(p.id) % 30) / 10}s"><i></i><i></i><i></i></span>`);
   // provozovna: zákazníci, nebo zavřeno
   if(maProvoz(p)){
@@ -14319,7 +14322,24 @@ function prekresliVsechnyZnacky(){
 function nactiD3(){
   if(d3Base || typeof Image === 'undefined') return;
   let hotovo = 0;
-  const jeden = () => { if(++hotovo === 2){ d3Ok = true; prekresliVsechnyZnacky(); } };
+  // Po načtení atlasu se nejdřív připraví základní (neobarvené) obrázky všech modelů — slouží jako
+  // zástupci, než se dopočítá obarvená verze. Teprve pak se domy přepnou na 3D.
+  const jeden = () => {
+    if(++hotovo !== 2) return;
+    const jmena = Object.keys(D3_POS);
+    let zbyva = jmena.length;
+    const konec = () => { if(--zbyva === 0){ d3Ok = true; prekresliVsechnyZnacky(); } };
+    jmena.forEach(n => {
+      try {
+        const [sx, sy, w, h] = D3_POS[n];
+        const c = document.createElement('canvas'); c.width = w; c.height = h;
+        c.getContext('2d').drawImage(d3Base, sx, sy, w, h, 0, 0, w, h);
+        if(c.toBlob && typeof URL !== 'undefined' && URL.createObjectURL)
+          c.toBlob(b => { try { d3Zaklad[n] = b ? URL.createObjectURL(b) : c.toDataURL('image/png'); } catch(e){} konec(); }, 'image/png');
+        else { d3Zaklad[n] = c.toDataURL('image/png'); konec(); }
+      } catch(e){ konec(); }
+    });
+  };
   d3Base = new Image(); d3Base.onload = jeden; d3Base.src = D3_BASE;
   d3Mask = new Image(); d3Mask.onload = jeden; d3Mask.src = D3_MASK;
   d3Snih = new Image(); d3Snih.onload = () => { d3SnihOk = true; if(d3Ok && snihLezi()) prekresliVsechnyZnacky(); }; d3Snih.src = D3_SNIH;
@@ -14345,19 +14365,6 @@ function snihLezi(){
   }
   snihLezi._k = klic; snihLezi._t = ted; snihLezi._v = v;
   return v;
-}
-// Je dům (nebo jeho podíl) na prodej? → 'aukce' | 'prodej' | ''
-function prodejDomu(p){
-  const ls = world && world.listings;
-  if(!ls || !p) return '';
-  let typ = '';
-  for(const k in ls){
-    const l = ls[k];
-    if(!l || l.houseId !== p.id || (world.closedListings && world.closedListings[k])) continue;
-    if(l.type === 'auction') return 'aukce';
-    typ = 'prodej';
-  }
-  return typ;
 }
 // Model domu: vybraný majitelem (p.vzhled.m), nebo stálý podle čísla domu.
 function d3Model(skupina, seed, vzhled){
@@ -14387,13 +14394,77 @@ function d3Zesvetli(hex, k){
   const f = x => Math.round(x + (255 - x) * k).toString(16).padStart(2, '0');
   return '#' + f(r) + f(g) + f(b);
 }
+// Plátno → krátká adresa blob:… (21.82). Dřív každá značka nesla celý obrázek jako text
+// (data:…, desítky kB), v mapě se tak hromadily megabajty a telefon je při každém překreslení
+// znovu dekódoval. Teď stejný obrázek sdílí všechny domy se stejným vzhledem.
+function d3NaUrl(c){
+  const d = c.toDataURL('image/png');
+  try {
+    if(typeof URL === 'undefined' || !URL.createObjectURL) return d;
+    const bin = atob(d.slice(d.indexOf(',') + 1)), u = new Uint8Array(bin.length);
+    for(let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return URL.createObjectURL(new Blob([u], { type: 'image/png' }));
+  } catch(e){ return d; }
+}
 // Obrázek modelu s obarvenou střechou a stavem domu → {url, w, h, ax, ay}
-function d3Sprite(nazev, barva, stav, snih){
+// Obarvený obrázek budovy. Výroba (obarvení + převod na obrázek) chvilku trvá, a když se při
+// posunu mapy objevilo hodně nových domů najednou, mapa se zasekla (21.82). Proto: pár obrázků
+// za snímek se udělá hned, zbytek se dopočítá na pozadí a dům mezitím ukazuje model z atlasu
+// v základní barvě (zástupce). Jakmile jsou obrázky hotové, značky se překreslí.
+const d3Fronta = new Map();
+let d3FrontaBezi = false, d3Rozp = { t: 0, ms: 0 };
+const d3Zaklad = {};   // název modelu → obrázek bez obarvení (zástupce)
+function d3Sprite(nazev, barva, stav, snih, hned){
   snih = !!(snih && d3SnihOk);
   const klic = nazev + '|' + (barva || '-') + '|' + (stav || 'normal') + (snih ? '|s' : '');
   if(d3Cache.has(klic)) return d3Cache.get(klic);
   const q = D3_POS[nazev];
   if(!q) return null;
+  const ted = performance.now();
+  if(ted - d3Rozp.t > 40){ d3Rozp.t = ted; d3Rozp.ms = 0; }
+  if(hned || d3Rozp.ms < 8 || !d3Zaklad[nazev]){
+    const r = d3Kresli(nazev, barva, stav, snih);
+    const out = { url: d3NaUrl(r.c), w: r.w, h: r.h, ax: r.ax, ay: r.ay, dno: r.dno, vrch: r.vrch };
+    d3Rozp.ms += performance.now() - ted;
+    if(d3Cache.size > 600) d3Cache.clear();
+    d3Cache.set(klic, out);
+    return out;
+  }
+  if(!d3Fronta.has(klic)) d3Fronta.set(klic, [nazev, barva, stav, snih]);
+  if(!d3FrontaBezi){ d3FrontaBezi = true; setTimeout(d3ZpracujFrontu, 30); }
+  const [sx, sy, w, h, ax, ay] = q;
+  return { zast: true, url: d3Zaklad[nazev], sx, sy, w, h, ax, ay, dno: [], vrch: [] };
+}
+function d3ZpracujFrontu(){
+  const dalsi = d3Fronta.entries().next();
+  if(dalsi.done){ d3FrontaBezi = false; d3PrekresliCekajici(); return; }
+  const [klic, [nazev, barva, stav, snih]] = dalsi.value;
+  d3Fronta.delete(klic);
+  const hotovo = (out) => { if(out){ if(d3Cache.size > 600) d3Cache.clear(); d3Cache.set(klic, out); } setTimeout(d3ZpracujFrontu, 12); };
+  try {
+    const r = d3Kresli(nazev, barva, stav, snih);
+    const zaklad = { w: r.w, h: r.h, ax: r.ax, ay: r.ay, dno: r.dno, vrch: r.vrch };
+    if(r.c.toBlob && typeof URL !== 'undefined' && URL.createObjectURL)
+      r.c.toBlob(b => hotovo(b ? Object.assign({ url: URL.createObjectURL(b) }, zaklad) : Object.assign({ url: r.c.toDataURL('image/png') }, zaklad)), 'image/png');   // kódování obrázku běží mimo hlavní vlákno
+    else hotovo(Object.assign({ url: d3NaUrl(r.c) }, zaklad));
+  } catch(e){ hotovo(null); }
+}
+function d3PrekresliCekajici(){
+  safeCall(() => Object.keys(markers || {}).forEach(k => { const m = markers[k], p = world && world.parcels[k];
+    const el = m && m.getElement && m.getElement();
+    if(p && el && el.querySelector('[data-ceka]')){ m._ikonaKlic = iconKey(p); m.setIcon(iconFor(p)); } }));
+  safeCall(() => Object.entries(window.__bizMarkers || {}).forEach(([id, m]) => { const biz = world && world.businesses[id];
+    const el = m && m.getElement && m.getElement();
+    if(biz && el && el.querySelector('[data-ceka]')) m.setIcon(bizIkona(biz)); }));
+  safeCall(() => { const el = skladMarker && skladMarker.getElement && skladMarker.getElement();
+    if(el && el.querySelector('[data-ceka]')){ map.removeLayer(skladMarker); skladMarker = null; renderSkladMarker(); } });
+}
+// Obrázek budovy do SVG značky (zástupce má data-ceka — po dopočítání se značka překreslí)
+function d3Img(sp, x, y, w, h){
+  return `<image${sp.zast ? ' data-ceka="1"' : ''} href="${sp.url}" x="${x}" y="${y}" width="${w}" height="${h}"/>`;
+}
+function d3Kresli(nazev, barva, stav, snih){
+  const q = D3_POS[nazev];
   const [sx, sy, w, h, ax, ay] = q;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d');
@@ -14457,16 +14528,13 @@ function d3Sprite(nazev, barva, stav, snih){
       dno.push(y1); vrch.push(y0);
     }
   });
-  const out = { url: c.toDataURL('image/png'), w, h, ax, ay, dno, vrch };
-  if(d3Cache.size > 300) d3Cache.clear();
-  d3Cache.set(klic, out);
-  return out;
+  return { c, w, h, ax, ay, dno, vrch };
 }
 // Měkký stín pod budovou (světlo je zleva zepředu, stín padá doprava dozadu)
 function d3Stin(kx, ky, pw, ph){
-  return `<ellipse cx="${(kx + pw * 0.2).toFixed(1)}" cy="${(ky - ph * 0.08).toFixed(1)}" rx="${(pw * 1.05).toFixed(1)}" ry="${(ph * 0.95).toFixed(1)}" fill="url(#d3stin)"/>`;
+  return `<ellipse cx="${(kx + pw * 0.2).toFixed(1)}" cy="${(ky - ph * 0.08).toFixed(1)}" rx="${(pw * 0.98).toFixed(1)}" ry="${(ph * 0.86).toFixed(1)}" fill="#000" fill-opacity="0.17"/>`;
 }
-const D3_STIN_DEF = '<defs><radialGradient id="d3stin"><stop offset="0" stop-color="#000" stop-opacity="0.34"/><stop offset="0.6" stop-color="#000" stop-opacity="0.16"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient></defs>';
+const D3_STIN_DEF = '';
 // Body obrysu budovy v souřadnicích značky
 function d3Obrys(sp, ox, T, S){
   const N = (sp.dno || []).length, body = [];
@@ -14502,13 +14570,6 @@ function d3Paska(body){
   return `<line x1="${a.x}" y1="${a.dno + 1}" x2="${a.x}" y2="${a.dno - 4}" stroke="#555" stroke-width="0.8"/><line x1="${z.x}" y1="${z.dno + 1}" x2="${z.x}" y2="${z.dno - 4}" stroke="#555" stroke-width="0.8"/>`
     + `<polyline points="${pts}" fill="none" stroke="#fff" stroke-width="1.6"/><polyline points="${pts}" fill="none" stroke="#dc2626" stroke-width="1.6" stroke-dasharray="2.4 2.4"/>`;
 }
-// Cedule „PRODEJ" / „AUKCE" zapíchnutá před domem
-function d3Cedule(typ, x, y){
-  const aukce = typ === 'aukce', txt = aukce ? 'AUKCE' : 'PRODEJ', w = aukce ? 22 : 25;
-  return `<line x1="${x}" y1="${y}" x2="${x}" y2="${y - 9}" stroke="#5b3a1a" stroke-width="1.2"/>`
-    + `<rect x="${x - w / 2}" y="${y - 17}" width="${w}" height="8.5" rx="1.5" fill="#fff" stroke="${aukce ? '#ea580c' : '#dc2626'}" stroke-width="1"/>`
-    + `<text x="${x}" y="${y - 10.6}" text-anchor="middle" font-size="5.6" font-weight="800" fill="${aukce ? '#ea580c' : '#dc2626'}" font-family="system-ui,sans-serif">${txt}</text>`;
-}
 function dumSvg3D(o){
   const patra = Math.max(1, Math.min(o.patra || 1, 20));
   const typ = typDomu(patra).klic;
@@ -14522,8 +14583,7 @@ function dumSvg3D(o){
   if(!sp) return null;
   const S = D3_S;
   const sw = sp.w * S, sh = sp.h * S;
-  // cedule PRODEJ stojí vlevo před domem a je vyšší než přízemí — značka se o ni zvětší nahoru
-  const T = Math.max((o.ulice ? 6 : 0) + (o.stitek ? 10 : 0), o.prodej ? Math.max(0, 19 - (sp.dno[1] > 0 ? sp.dno[1] * S : sh)) : 0);
+  const T = (o.ulice ? 6 : 0) + (o.stitek ? 10 : 0);
   const W = Math.ceil(sw + 8), ox = 4;
   const kx = ox + sp.ax * S, ky = T + sp.ay * S;          // kotva = střed spodku budovy
   const pw = Math.max(16, sw * 0.5), ph = pw * 0.52;
@@ -14538,12 +14598,10 @@ function dumSvg3D(o){
   const provozSvg = o.provoz ? `<circle cx="${bx}" cy="${by}" r="6" fill="rgba(255,255,255,0.95)" stroke="#0f1115" stroke-width="0.8"/><text x="${bx}" y="${by + 2.6}" text-anchor="middle" font-size="7.4">${o.provoz}</text>` : '';
   const cy2 = T + sh * 0.22;
   const cislo = typ === 'panelak' ? `<circle cx="${ox + 5}" cy="${cy2}" r="4.4" fill="#0f1115" stroke="#fff" stroke-width="0.7"/><text x="${ox + 5}" y="${cy2 + 2.2}" text-anchor="middle" font-size="6" font-weight="700" fill="#fff">${patra}</text>` : '';
-  const body = (o.stavba || stav === 'rozbity' || o.prodej) ? d3Obrys(sp, ox, T, S) : [];
+  const body = (o.stavba || stav === 'rozbity') ? d3Obrys(sp, ox, T, S) : [];
   const leseni = o.stavba ? safeCall(() => d3Leseni(body)) || '' : '';
   const paska = stav === 'rozbity' && !o.stavba ? safeCall(() => d3Paska(body)) || '' : '';
-  const cb = body[1] || body[0];
-  const cedule = o.prodej && cb ? d3Cedule(o.prodej, Math.max(13, cb.x - 2), cb.dno + 2.5) : '';
-  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${D3_STIN_DEF}${stitekSvg}${zare}${pozemek}${volny ? '' : d3Stin(kx, ky, pw, ph)}${korunkaSvg}<image href="${sp.url}" x="${ox}" y="${T}" width="${sw}" height="${sh}"/>${leseni}${paska}${provozSvg}${cislo}${cedule}</svg>`;
+  const svg = `<svg class="d3" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${D3_STIN_DEF}${stitekSvg}${zare}${pozemek}${volny ? '' : d3Stin(kx, ky, pw, ph)}${korunkaSvg}${d3Img(sp, ox, T, sw, sh)}${leseni}${paska}${provozSvg}${cislo}</svg>`;
   return { html: svg + (o.upg ? `<span class="pUpg">${o.upg}</span>` : ''), w: W, h: H, ax: kx, ay: ky };
 }
 // Podnik jako 3D budova s cedulí (21.80)
@@ -14571,11 +14629,11 @@ function bizSvg3D(biz, mam){
   const H = Math.ceil(Math.max(sh, ky + ph) + 2);
   const barva = mam ? '#fbbf24' : '#f472b6';
   const bx = ox + sw * 0.8, by = sh * 0.5;
-  const svg = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${D3_STIN_DEF}
+  const svg = `<svg class="d3" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">${D3_STIN_DEF}
     ${mam ? `<ellipse cx="${kx}" cy="${ky}" rx="${pw + 3}" ry="${ph + 2}" fill="rgba(251,191,36,0.45)"/>` : ''}
     <polygon points="${kx - pw},${ky} ${kx},${ky - ph} ${kx + pw},${ky} ${kx},${ky + ph}" fill="${barva}" fill-opacity="0.55" stroke="${odstin(barva, 0.7)}" stroke-width="${mam ? 1.6 : 1}"/>
     ${d3Stin(kx, ky, pw, ph)}
-    <image href="${sp.url}" x="${ox}" y="0" width="${sw}" height="${sh}"/>
+    ${d3Img(sp, ox, 0, sw, sh)}
     <circle cx="${bx}" cy="${by}" r="7" fill="rgba(255,255,255,0.95)" stroke="${mam ? '#b45309' : '#be185d'}" stroke-width="1.2"/>
     <text x="${bx}" y="${by + 3.2}" text-anchor="middle" font-size="8.5">${biz.emoji || '🏪'}</text>
   </svg>`;
@@ -14794,7 +14852,7 @@ function zmenVzhledDomu3D(id){
   el.id = 'vzhledDomu';
   el.style.cssText = 'position:fixed;inset:0;z-index:3200;background:rgba(5,7,12,0.72);display:flex;align-items:flex-end;justify-content:center;';
   document.body.appendChild(el);
-  const obr = (m, vel) => { const s = d3Sprite(m, barva, 'normal'); return s ? `<img src="${s.url}" alt="" style="width:${Math.round(s.w * vel)}px;height:${Math.round(s.h * vel)}px;">` : ''; };
+  const obr = (m, vel) => { const s = d3Sprite(m, barva, 'normal', false, true); return s ? `<img src="${s.url}" alt="" style="width:${Math.round(s.w * vel)}px;height:${Math.round(s.h * vel)}px;">` : ''; };
   const kresli = () => {
     el.innerHTML = `<div style="background:var(--panel);border:1px solid var(--border);border-radius:18px 18px 0 0;width:100%;max-width:520px;max-height:88vh;overflow:auto;padding:14px 14px 18px;">
       <div style="display:flex;align-items:center;justify-content:space-between;"><h3 style="margin:0;">🎨 Vzhled domu</h3>
@@ -14997,7 +15055,6 @@ function iconFor(p){
     moje, ulice,
     provoz: provoz ? (PROVOZ_TYPY[p.provoz.typ] || {}).emoji : '',
     provozCely: !!(provoz && !p.provoz.prizemi),
-    prodej: vynosRezim ? '' : (safeCall(() => prodejDomu(p)) || ''),
     stavba: !!p.project,
     upg: vynosRezim ? '' : ikonyVylepseni(p)   // na mapě výnosů je nad střechou procento — ikony by ho zakryly (Eva)
   });
@@ -21634,9 +21691,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.82', datum:'2026-10-27', body:[
+    ['oprava','⚡ Mapa se už nemá sekat: obrázky domů se v telefonu sdílejí místo toho, aby každý dům nesl vlastní kopii, a ubyl drahý stín přes všechny značky.'],
+    ['zmena','🪧 Cedule PRODEJ u domů na mapě jsou pryč — bylo jich moc a zakrývaly mapu.'],
+    ['zmena','🎃 Výzdoba (dýně, kouř z komínů, světýlka) se ukazuje až při velkém přiblížení, dýně už neblikají a kouří se jen z některých komínů — šetří to telefon.'],
+  ]},
   { verze:'21.81', datum:'2026-10-27', body:[
     ['novinka','❄️ Sníh na střechách: když v Bučovicích sněží, střechy, římsy i ploché střechy zbělají a sníh vydrží pár dní, dokud se neoteplí. V prosinci až únoru jsou střechy bílé, kdykoli mrzne.'],
-    ['novinka','🪧 Domy na prodej mají před sebou ceduli PRODEJ (nebo AUKCE), takže je poznáš rovnou na mapě.'],
     ['novinka','🏗️ Při renovaci stojí kolem domu lešení. Rozbitý dům je obehnaný červenobílou páskou.'],
     ['zmena','🌗 Budovy vrhají na zem měkký stín, takže na mapě opravdu stojí.'],
     ['admin','🧪 Testy: nové tlačítko „❄️ Sníh na střechách" (náhled na 3 minuty, jen u tebe).'],
