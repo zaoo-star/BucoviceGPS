@@ -1693,8 +1693,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.70';
-const APP_BUILD = '25.10.2026 19:55';
+const APP_VERSION = '21.71';
+const APP_BUILD = '27.10.2026 11:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -2421,6 +2421,24 @@ function myCollectedToday(){
 }
 
 // Zkontroluje, jestli hráč nestojí u nějakého nesebraného bodu — pokud ano, sebere ho.
+// 21.71 (Eva: „jedu kolem balíku a GPS mi vypadne před ním a naskočí za ním"):
+// • Mezi dvěma měřeními polohy se hráč posune — pěšky o pár metrů, autem o desítky. Kontroluje
+//   se proto celý úsek od minulé polohy, ne jen bod, kde GPS zrovna „naskočila".
+// • Balíky se sbírají pěšky nebo na kole. Autem (nad ~25 km/h) se nesebere nic — a hra to
+//   řekne, místo aby to vypadalo jako smůla s GPS.
+const BALIK_MAX_RYCHLOST = 7;    // m/s ≈ 25 km/h
+let balikMinulaPoloha = null;     // {lat, lng, t}
+let balikRychlost = 0;            // m/s, poslední odhad
+const balikAutoHlaseno = new Set();
+function vzdalenostKUseku(bod, a, b){
+  // plochá projekce v metrech kolem bodu (na pár set metrů naprosto stačí)
+  const ky = 111320, kx = 111320 * Math.cos(bod.lat * Math.PI / 180);
+  const ax = (a.lng - bod.lng) * kx, ay = (a.lat - bod.lat) * ky;
+  const bx = (b.lng - bod.lng) * kx, by = (b.lat - bod.lat) * ky;
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+  return Math.hypot(ax + t * dx, ay + t * dy);
+}
 function checkPickups(){
   if(!currentUser || !playerPos) return;
   ensurePickups();
@@ -2428,9 +2446,23 @@ function checkPickups(){
   if(!u) return;
   const got = myCollectedToday();
   let collectedAny = false;
+  const ted = Date.now();
+  const odkud = (balikMinulaPoloha && ted - balikMinulaPoloha.t < 60000 && haversine(balikMinulaPoloha, playerPos) < 150) ? balikMinulaPoloha : null;
+  balikMinulaPoloha = { lat: playerPos.lat, lng: playerPos.lng, t: ted };
+  const autem = balikRychlost > BALIK_MAX_RYCHLOST;
   (world.pickups.list || []).forEach(pk => {
     if(got.includes(pk.id)) return;
-    if(haversine(playerPos, {lat:pk.lat, lng:pk.lng}) <= PICKUP_COLLECT_RADIUS){
+    const bod = { lat: pk.lat, lng: pk.lng };
+    const blizko = haversine(playerPos, bod) <= PICKUP_COLLECT_RADIUS ||
+                   (odkud && vzdalenostKUseku(bod, odkud, playerPos) <= PICKUP_COLLECT_RADIUS);
+    if(blizko && autem){
+      if(!balikAutoHlaseno.has(pk.id)){
+        balikAutoHlaseno.add(pk.id);
+        showToast(`🚗 Balík ${Math.round(pk.reward * inflationMult())} Kč: jedeš moc rychle (${Math.round(balikRychlost * 3.6)} km/h). Balíky se sbírají pěšky nebo na kole.`);
+      }
+      return;
+    }
+    if(blizko){
       const odmena = pk.reward * inflationMult() * eventMult('pickupMult');
       u.balance += odmena;
       pricti(u, 'akce', odmena);
@@ -11023,7 +11055,9 @@ function startGeoTracking(){
   }
   navigator.geolocation.getCurrentPosition(onPosition, onGeoError, {enableHighAccuracy:true, timeout:15000});
   navigator.geolocation.watchPosition(onPosition, onGeoError, {
-    enableHighAccuracy:true, maximumAge:5000, timeout:15000
+    // maximumAge 1 s (dřív 5 s): starší uložená poloha znamenala, že autem i na kole značka
+    // zaostávala o desítky metrů a pak skočila (21.71).
+    enableHighAccuracy:true, maximumAge:1000, timeout:15000
   });
 }
 
@@ -11050,13 +11084,63 @@ function retryGeo(){
   startGeoTracking();
 }
 
+// ===== FILTR ZOBRAZENÉ POLOHY (21.71) =====
+// Telefon občas pošle polohu s přesností ±40–100 m (u zdi, pod stromy, v autě). Dřív se
+// značka hned přesunula tam, takže při chůzi „zmateně skákala" (Eva). Teď:
+// • horší měření, které leží v mezích chyby od nedávné dobré polohy, značku nepohne,
+// • osamocený nemožný skok se jednou přeskočí,
+// • méně přesné měření posune značku jen o část cesty (vyhlazení); přesné hned celé.
+// Peníze za chůzi se dál počítají ze surových dat s vlastními pojistkami.
+let gpsZobr = null, gpsDobra = 0;
+function filtrujPolohu(raw, acc){
+  const t = Date.now();
+  if(!gpsZobr || t - gpsZobr.t > 120000){ gpsZobr = { lat: raw.lat, lng: raw.lng, t }; if(acc <= 25) gpsDobra = t; return raw; }
+  const pred = { lat: gpsZobr.lat, lng: gpsZobr.lng };
+  const d = haversine(pred, raw), dt = Math.max(0.5, (t - gpsZobr.t) / 1000);
+  if(acc > 35 && t - gpsDobra < 15000 && d < acc * 1.5) return pred;
+  if(d / dt > 40 && acc > 15 && !gpsZobr.skok){ gpsZobr.skok = true; return pred; }
+  let k = acc <= 12 ? 1 : Math.max(0.35, Math.min(1, Math.pow(12 / acc, 2) * 2));
+  if(d > 50) k = 1;   // velký skutečný posun (jízda) — nevyhlazovat, ať značka nezaostává
+  const out = { lat: pred.lat + (raw.lat - pred.lat) * k, lng: pred.lng + (raw.lng - pred.lng) * k };
+  gpsZobr = { lat: out.lat, lng: out.lng, t };
+  if(acc <= 25) gpsDobra = t;
+  return out;
+}
+function ukazSignalGps(acc){
+  let el = document.getElementById('gpsSlaby');
+  const slaby = acc > 30;
+  if(!el){
+    if(!slaby) return;
+    el = document.createElement('div');
+    el.id = 'gpsSlaby';
+    el.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top, 0px) + 158px);z-index:445;' +
+      'background:rgba(20,22,28,0.85);color:#fbbf24;font-size:12px;padding:4px 10px;border-radius:12px;pointer-events:none;white-space:nowrap;';
+    document.body.appendChild(el);
+  }
+  el.style.display = slaby ? 'block' : 'none';
+  if(slaby) el.textContent = `📡 Slabý signál GPS (±${Math.round(acc)} m) — poloha může skákat`;
+}
+
 function onPosition(pos){
   geoAvailable = true;
   document.getElementById('gpsWarning').style.display = 'none';
   const newPos = {lat: pos.coords.latitude, lng: pos.coords.longitude};
   const accuracy = pos.coords.accuracy || 30;
+  // Rychlost pro balíky (21.71): telefon ji měří sám (Doppler) — to je spolehlivé. Když ji nedá,
+  // spočítá se z posunu, ale jen z delšího úseku, ať chvění GPS vestoje nevypadá jako jízda.
+  safeCall(() => {
+    const s = pos.coords.speed;
+    if(typeof s === 'number' && isFinite(s) && s >= 0) balikRychlost = s;
+    else if(lastGeoPos && lastGeoTime){
+      const dt = (Date.now() - lastGeoTime) / 1000, d = haversine(lastGeoPos, newPos);
+      if(dt >= 2 && d >= 40 && accuracy <= 40) balikRychlost = d / dt;
+      else if(dt >= 2 && d < 15) balikRychlost = 0;
+    }
+  });
   safeCall(() => navPoloha(pos));
-  playerPos = newPos;   // POZOR: musí být dřív než počítání chůze — kontrola herní oblasti
+  const zobr = filtrujPolohu(newPos, accuracy);   // poloha pro značku, balíky a interakce (21.71)
+  safeCall(() => ukazSignalGps(accuracy));
+  playerPos = zobr;     // POZOR: musí být dřív než počítání chůze — kontrola herní oblasti
                         // se ptá na aktuální polohu. Bez toho se první zaměření po zapnutí
                         // appky (a s ním i cesta ušlá "offline") zahodilo.
 
@@ -11095,13 +11179,13 @@ function onPosition(pos){
   }
   // uložit pozici ke hráči (pro zobrazení ostatních; s Firebase se to synchronizuje mezi zařízeními)
   if(currentUser && world.users[currentUser.name]){
-    world.users[currentUser.name].lastPos = {lat:newPos.lat, lng:newPos.lng, at: Date.now()};
+    world.users[currentUser.name].lastPos = {lat:zobr.lat, lng:zobr.lng, at: Date.now()};
     recordHeat(newPos);   // agregovaná statistika pohybu (bez identity)
   }
-  updatePlayerMarker(newPos, accuracy);
+  updatePlayerMarker(zobr, accuracy);
   // sledování: mapa jde za hráčem (jen když je přiblížená, ať to neskáče při prohlížení města)
   if(sledujHrace && hasCenteredOnPlayer && map && !document.getElementById('bottomSheet').classList.contains('open'))
-    map.panTo([newPos.lat, newPos.lng], { animate:true, duration:0.6 });
+    map.panTo([zobr.lat, zobr.lng], { animate:true, duration:0.6 });
   if(!hasCenteredOnPlayer){
     hasCenteredOnPlayer = true;
     nastavSledovani(true);
@@ -20843,6 +20927,11 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.71', datum:'2026-10-27', body:[
+    ['oprava','📍 Značka hráče už tolik neskáče: horší měření GPS (±40 m a víc) ji nepřehodí jinam, osamocené nemožné skoky se přeskočí a méně přesná poloha se vyhladí. Když je signál slabý, hra to nahoře napíše.'],
+    ['oprava','💰 Balík se sebere, i když GPS „přeskočí" — počítá se celá cesta od minulé polohy, ne jen místo, kde poloha zrovna naskočila. Poloha se navíc obnovuje častěji, takže značka tolik nezaostává.'],
+    ['novinka','🚗 Balíky se sbírají pěšky nebo na kole. Když kolem projedeš autem (nad 25 km/h), hra to řekne — nesebere se, ale zůstane ti na mapě (hlásila Eva).'],
+  ]},
   { verze:'21.70', datum:'2026-10-25', body:[
     ['novinka','🗺️ Mapa: nejde oddálit tak daleko, aby z celého města zbyl jeden bod, a klepnutím na „Přibliž pro zobrazení domů" se rovnou přiblíží. U počasí nahoře je u bonusu ikonka 🚶 — ta procenta jsou bonus za chůzi.'],
   ]},
