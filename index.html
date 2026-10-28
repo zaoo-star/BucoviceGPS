@@ -1701,8 +1701,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.82';
-const APP_BUILD = '27.10.2026 21:40';
+const APP_VERSION = '21.83';
+const APP_BUILD = '28.10.2026 03:10';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -11822,8 +11822,8 @@ function renderSkladMarker(){
   const klic = (nesu > 0 ? 'plny' : 'prazdny') + '|' + SKLAD.lat.toFixed(6) + '|' + SKLAD.lng.toFixed(6) + '|' + (dumAtlasOk ? 'k' : 'e') + (d3Ok ? '3' : '');
   if(skladMarker && skladMarker._klic === klic) return;
   if(skladMarker && map.hasLayer(skladMarker)) map.removeLayer(skladMarker);
-  const sklad3 = d3Ok ? safeCall(() => d3Sprite('oe', null, 'normal', snihLezi())) : null;
-  const skladBud = (!sklad3 && dumAtlasOk) ? safeCall(() => slozDily('024', '024', 1, '121', false, 'normal', false)) : null;
+  const sklad3 = (d3Ok && vzhledDomuRezim() === 'd3') ? safeCall(() => d3Sprite('oe', null, 'normal', snihLezi())) : null;
+  const skladBud = (!sklad3 && dumAtlasOk && vzhledDomuRezim() !== 'kreslene') ? safeCall(() => slozDily('024', '024', 1, '121', false, 'normal', false)) : null;
   const skladIkona = sklad3
     ? (() => { const S = 0.32, sw = sklad3.w * S, sh = sklad3.h * S, W = Math.ceil(sw + 8), kx = 4 + sklad3.ax * S, ky = sklad3.ay * S, pw = sw * 0.5, ph = pw * 0.52, H = Math.ceil(Math.max(sh, ky + ph) + 2);
         return L.divIcon({ className:'', iconSize:[W, H], iconAnchor:[kx, ky], tooltipAnchor:[0, -ky + 4],
@@ -12278,7 +12278,7 @@ function iconKey(p){
           Object.keys(p.upgrades || {}).filter(k => p.upgrades[k]).sort().join(''), ulicniMult(p) > 1 ? 1 : 0,
           pocetPater(p), houseHasOwner(p) ? 1 : 0, p.useType || '-',
           vynosRezim ? Math.round(vynosDomu(p) || 0) : '-', nazevProvozu(p), safeCall(() => dekorKlic(p, owned)) || '',
-          p.vzhled ? [p.vzhled.f, p.vzhled.s, p.vzhled.v, p.vzhled.m].join(',') : '', dumAtlasOk ? 'k' : 'e', d3Ok ? '3' : '',
+          p.vzhled ? [p.vzhled.f, p.vzhled.s, p.vzhled.v, p.vzhled.m].join(',') : '', dumAtlasOk ? 'k' : 'e', d3Ok ? '3' : '', vzhledDomuRezim(),
           d3Ok ? (p.project ? 'L' : '') + (snihLezi() ? 'S' : '') : ''].join('|');
 }
 
@@ -13027,13 +13027,15 @@ function bizSvg(biz, mam){
 }
 function bizIkona(biz){
   const mam = currentUser && (biz.owners?.[currentUser.name] || 0) > 0;
-  if(!vynosRezim && d3Ok){
+  const rezimDomu = vzhledDomuRezim();
+  if(!vynosRezim && d3Ok && rezimDomu === 'd3'){
     const d = bizSvg3D(biz, mam);
     if(d) return L.divIcon({ html:`<div class="bizBudova${mam ? ' bizMoje' : ''}" style="width:${d.w}px;height:${d.h}px;">${d.html}</div>`, className:'',
       iconSize:[d.w, d.h], iconAnchor:[d.ax, d.ay], tooltipAnchor:[0, -d.ay + 4], popupAnchor:[0, -d.ay + 4] });
   }
-  if(!d3Ok) nactiD3();
-  if(!vynosRezim && dumAtlasOk){
+  if(!d3Ok && rezimDomu === 'd3') nactiD3();
+  if(rezimDomu === 'kostky') nactiDumAtlas();
+  if(!vynosRezim && dumAtlasOk && rezimDomu !== 'kreslene'){
     const d = bizSvg(biz, mam);
     if(d) return L.divIcon({ html:`<div class="bizBudova${mam ? ' bizMoje' : ''}" style="width:${d.w}px;height:${d.h}px;">${d.html}</div>`, className:'',
       iconSize:[d.w, d.h], iconAnchor:[d.w / 2, d.h - 2], tooltipAnchor:[0, -d.h + 4], popupAnchor:[0, -d.h + 4] });
@@ -14736,13 +14738,15 @@ function slozDily(prizemi, fasada, n, strecha, sikma, stav, solar){
     }
     g.putImageData(d, 0, 0);
   }
-  const out = { url: c.toDataURL('image/png'), h: H, y0 };
+  const out = { url: d3NaUrl(c), h: H, y0 };   // krátká adresa blob: místo celého obrázku v textu (21.83)
   if(dumCache.size > 400) dumCache.clear();
   dumCache.set(klic, out);
   return out;
 }
 function dumSvg(o){
-  if(!o.kresleny){ if(d3Ok){ const r3 = dumSvg3D(o); if(r3) return r3; } else nactiD3(); }   // 3D modely (21.80)
+  const rezim = vzhledDomuRezim();
+  if(rezim === 'kreslene') return dumSvgKresleny(o);                // Nastavení → Vzhled domů (21.83)
+  if(!o.kresleny && rezim === 'd3'){ if(d3Ok){ const r3 = dumSvg3D(o); if(r3) return r3; } else nactiD3(); }   // 3D modely (21.80)
   if(!dumAtlasOk || o.kresleny){ nactiDumAtlas(); return dumSvgKresleny(o); }
   const patra = Math.max(1, Math.min(o.patra || 1, 20));
   const typ = typDomu(patra).klic;
@@ -14779,7 +14783,8 @@ function dumSvg(o){
 // vzhled — na cenu ani nájem nemá vliv, a proto je zdarma. Uloží se k domu (p.vzhled).
 const FASADY_NAZVY = { hneda:'hnědé cihly', zluta:'žlutá omítka', cervena:'červené cihly', seda:'šedá omítka' };
 function zmenVzhledDomu(id){
-  if(d3Ok) return zmenVzhledDomu3D(id);
+  if(vzhledDomuRezim() === 'kreslene') return;
+  if(d3Ok && vzhledDomuRezim() === 'd3') return zmenVzhledDomu3D(id);
   const p = world.parcels[id];
   if(!p || !iAmDecider(p)){ showAlert('Vzhled domu mění ten, kdo o domě rozhoduje (největší podílník).'); return; }
   if(!dumAtlasOk){ nactiDumAtlas(); showToast('Načítám grafiku, zkus to za vteřinu.'); return; }
@@ -15290,12 +15295,29 @@ const VZHLED_VOLBY = [
   { id:'nebe',     nazev:'Obloha v horním panelu', popis:'Silueta Bučovic se sluncem a měsícem podle skutečného času, za tmy se rozsvítí okna.' },
   { id:'sipky',    nazev:'Šipky na posun mapy',  popis:'Kulaté ovládání vlevo dole: šipky posunou mapu, prostřední tlačítko tě vrátí na tvou polohu. Bez šipek je „najdi mě" vpravo dole.' }
 ];
-let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true, nebe:true, sipky:true };
+let VZHLED = { denNoc:true, pocasi:true, sezony:true, pudorysy:true, nebe:true, sipky:true, domy:'d3' };
+// Vzhled domů na mapě (21.83): 3D modely, kostičky (2D grafika z 21.76), nebo kreslené domky.
+// Na slabším telefonu může jednodušší vzhled mapu zrychlit.
+const VZHLED_DOMU = [
+  ['d3', '🏘️', '3D'],
+  ['kostky', '🧱', 'Kostičky'],
+  ['kreslene', '✏️', 'Kreslené']
+];
+function vzhledDomuRezim(){ return VZHLED_DOMU.some(v => v[0] === VZHLED.domy) ? VZHLED.domy : 'd3'; }
+function nastavVzhledDomu(rezim){
+  if(!VZHLED_DOMU.some(v => v[0] === rezim)) return;
+  VZHLED.domy = rezim;
+  try { localStorage.setItem('bp_vzhled', JSON.stringify(VZHLED)); } catch(e){}
+  if(rezim === 'd3') nactiD3(); else if(rezim === 'kostky') nactiDumAtlas();
+  safeCall(() => prekresliVsechnyZnacky());
+  safeCall(() => renderNastaveni());
+}
 
 function nactiVzhled(){
   try {
     const u = JSON.parse(localStorage.getItem('bp_vzhled') || 'null');
     if(u && typeof u === 'object') VZHLED_VOLBY.forEach(v => { if(typeof u[v.id] === 'boolean') VZHLED[v.id] = u[v.id]; });
+    if(u && VZHLED_DOMU.some(v => v[0] === u.domy)) VZHLED.domy = u.domy;
   } catch(e){}
 }
 // Popisky pod ikonami v postranních lištách. Bez nich si hráč musel pamatovat, co která
@@ -15349,6 +15371,13 @@ function renderNastaveni(){
     <div class="card nastSkupina"><h3>🗺️ Mapa</h3>
       ${vz('sipky', '🧭')}
       ${nastRadek('navigace', !!navZap, '🔄', 'Mapa podle směru chůze', 'Jako v navigaci — co je před tebou, je nahoře. Stejné jako tlačítko s kompasem na mapě.')}
+      <div class="nastRadek nastBezPrepinace">
+        <span class="nastIkona">🏠</span>
+        <span class="nastText"><span class="nastNazev">Vzhled domů</span><span class="nastPopis">3D modely, kostičky, nebo jednoduché kreslené domky. Na slabším telefonu je jednodušší vzhled rychlejší.</span></span>
+      </div>
+      <div class="row" style="gap:6px;margin:2px 0 8px;">
+        ${VZHLED_DOMU.map(([k, ik, n]) => `<button class="${vzhledDomuRezim() === k ? '' : 'secondary'}" style="flex:1;min-height:38px;" onclick="nastavVzhledDomu('${k}')">${ik} ${n}</button>`).join('')}
+      </div>
       ${vz('pudorysy', '🏘️')}
       ${vz('denNoc', '🌙')}
       ${vz('pocasi', '🌦️')}
@@ -16551,7 +16580,7 @@ function renderSelected(id){
   let html = `<div class="card"><h3>${domLabel(p)} ${badgeFor(p)}</h3>${nazevProvozu(p) ? `<p style="margin:-2px 0 4px;font-weight:700;color:var(--gold);">${(PROVOZ_TYPY[p.provoz.typ] || {}).emoji || '🏪'} ${escapeHtml(jmenoProvozu(p))}</p>` : ''}`;
   html += `<p class="detMeta">${typDomu(pocetPater(p)).ikona} ${typDomu(pocetPater(p)).nazev} · ${p.levels||1} ${sklonuj(p.levels||1, 'patro', 'patra', 'pater')}${
     pristavebNavic(p) ? ` + ${pristavebNavic(p)} ${pristavebNavic(p)===1?'přístavba':'přístavby'}` : ''}</p>`;
-  if(iDecide && owned && (dumAtlasOk || d3Ok)) html += `<div class="row" style="margin:2px 0 6px;"><button class="secondary" style="flex:0 1 auto;min-height:34px;font-size:0.85em;" onclick="zmenVzhledDomu('${p.id}')">🎨 Změnit vzhled domu</button></div>`;
+  if(iDecide && owned && vzhledDomuRezim() !== 'kreslene' && (dumAtlasOk || d3Ok)) html += `<div class="row" style="margin:2px 0 6px;"><button class="secondary" style="flex:0 1 auto;min-height:34px;font-size:0.85em;" onclick="zmenVzhledDomu('${p.id}')">🎨 Změnit vzhled domu</button></div>`;
   html += distanceNoteHtml(p.lat, p.lng, INTERACTION_RADIUS);
   // PŘEHLEDNĚJŠÍ DETAIL (21.31): části se skládají do kousků a na konci se poskládají
   // v pořadí, ve kterém je hráč potřebuje — nahoře čísla, pak vlastnictví, výnos, nákup,
@@ -21691,6 +21720,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.83', datum:'2026-10-28', body:[
+    ['novinka','🏠 Nastavení → Mapa → Vzhled domů: vyber si 3D modely, kostičky (předchozí grafika), nebo jednoduché kreslené domky. Platí jen pro tvůj telefon — na slabším telefonu je jednodušší vzhled rychlejší.'],
+  ]},
   { verze:'21.82', datum:'2026-10-27', body:[
     ['oprava','⚡ Mapa se už nemá sekat: obrázky domů se v telefonu sdílejí místo toho, aby každý dům nesl vlastní kopii, a ubyl drahý stín přes všechny značky.'],
     ['zmena','🪧 Cedule PRODEJ u domů na mapě jsou pryč — bylo jich moc a zakrývaly mapu.'],
