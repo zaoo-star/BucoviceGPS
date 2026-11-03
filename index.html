@@ -1340,7 +1340,7 @@
   .ukolRadek .ik{ font-size:20px;flex:none; }
   .ukolRadek .tx{ flex:1;min-width:0; }
   .ukolRadek .nz{ font-weight:700;font-size:0.94em; }
-  .ukolRadek .od{ flex:none;text-align:right;display:flex;flex-direction:column;font-size:0.85em; }
+  .ukolRadek .od{ flex:none;width:72px;text-align:right;display:flex;flex-direction:column;font-size:0.85em;white-space:nowrap; }
   .ukolRadek .od b{ color:var(--gold); }
   .ukolRadek .od span{ color:var(--muted);font-size:0.9em; }
   .ukolRadek.hotovo{ opacity:0.6; }
@@ -1926,7 +1926,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.93';
+const APP_VERSION = '21.94';
 const APP_BUILD = '28.10.2026 15:50';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8020,6 +8020,17 @@ function adoptWorldVnitrni(incoming){
         Object.keys(pb).forEach(k => { if(pb[k] && (!pa[k] || (pb[k].den || 0) > (pa[k].den || 0))) pam[k] = pb[k]; });
         if(Object.keys(pam).length) ja.chodciPamet = pam;
       }
+      // Sbírka míst (21.94): navštívená místa z obou verzí účtu. Dřív vyhrál celý záznam
+      // a návštěvy z prohrané verze se ztratily — místo pak na mapě svítilo znovu (Eva, BlackBakery).
+      {
+        const ma = (ja.mista && typeof ja.mista === 'object') ? ja.mista : {};
+        const mb = (druhy.mista && typeof druhy.mista === 'object') ? druhy.mista : {};
+        const spoj = Object.assign({}, mb, ma);
+        Object.keys(mb).forEach(k => { if(ma[k] && mb[k]) spoj[k] = Math.min(ma[k], mb[k]); });
+        if(Object.keys(spoj).length) ja.mista = spoj;
+        const sady = new Set([...asArray(ja.sady), ...asArray(druhy.sady)]);
+        if(sady.size) ja.sady = Array.from(sady);
+      }
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
       const darky = new Set([...asArray(ja.claimedGifts), ...asArray(druhy.claimedGifts)]);
       ja.claimedGifts = Array.from(darky).slice(-100);
@@ -12128,7 +12139,10 @@ function renderSkladMarker(){
     : L.divIcon({ html:`<div class="skladMarker">${SKLAD.emoji}</div>`, className:'', iconSize:[32,32] });
   skladMarker = L.marker([SKLAD.lat, SKLAD.lng], {
     icon: skladIkona
-  }).addTo(map).bindTooltip(nesu > 0 ? `${SKLAD.nazev} — neseš ${nesu} %` : `${SKLAD.nazev} — nalož ${zboziProMoje(currentUser.name)} pro provozovny`);
+  }).addTo(map).bindTooltip(nesu > 0 ? `${SKLAD.nazev} — neseš ${nesu} %, klepni a nalož víc` : `${SKLAD.nazev} — klepni a nalož ${zboziProMoje(currentUser.name)}`);
+  // Klepnutí na velkosklad rovnou nakládá (21.94). Dřív ukázalo jen popisek a naložit šlo
+  // jen tlačítkem ve Výzvách — Eva stála u skladu a nevěděla, jak zboží vzít.
+  skladMarker.on('click', (e) => { L.DomEvent.stopPropagation(e); safeCall(() => naloztZbozi()); });
   skladMarker._klic = klic;
 }
 
@@ -18382,7 +18396,7 @@ function renderJobs(){
               : `Odpracovat směnu (u ${mojeMisto.nazev})`)}</button>
         ${j.soukrome ? `<button class="secondary" onclick="flyToBusiness('${j.bizId}')">Kde to je</button>` : ''}
         ${!weekend && !workedToday && !asArray(me.dovolenaDny).includes(calendarDay())
-          ? `<button class="secondary" ${dovolenaZbyva(me) > 0 ? '' : 'disabled'} onclick="vzitDovolenou('${j.id}')">🏖️ Dovolená / nemoc (${dovolenaZbyva(me)}/${DOVOLENA_DNU})</button>` : ''}
+          ? `<button class="secondary" ${dovolenaZbyva(me) > 0 ? '' : 'disabled'} onclick="vzitDovolenou('${j.id}')">🏖️ Dovolená / nemoc · zbývá ${dovolenaZbyva(me)} z ${DOVOLENA_DNU}</button>${dovolenaUvolni(me)}` : ''}
         <button class="danger" onclick="quitJob('${j.id}')">Dát výpověď</button>
       </div>
       ${!weekend && !workedToday ? `<p style="font-size:0.82em;color:var(--muted);margin:4px 0 0;">🏖️ Dovolenou si vezmeš odkudkoliv, nemusíš k práci. Místo si udržíš a dostaneš ${Math.round(DOVOLENA_NAHRADA*100)} % základní mzdy. ${DOVOLENA_DNU} dní za ${DOVOLENA_OKNO} dní.</p>` : ''}
@@ -20524,7 +20538,7 @@ function renderDaily(){
       <span class="ik">${hotovo ? '✅' : q.icon}</span>
       <div class="tx"><div class="nz">${q.name}</div>
         <div class="fPruh" style="margin:4px 0 0;"><div style="width:${Math.round(prog / q.goal * 100)}%;background:${hotovo ? 'var(--accent)' : 'var(--accent2)'};"></div></div></div>
-      <div class="od"><b>${Math.round(q.reward * inflationMult())} Kč</b><span>${prog}/${q.goal}</span></div>
+      <div class="od"><b>${Math.round(q.reward * inflationMult())} Kč</b><span>${q.goal >= 1000 ? `${des(prog / 1000, 1)}/${des(q.goal / 1000, 1)} km` : `${prog}/${q.goal}`}</span></div>
     </div>`;
   });
   if(lms.length){
@@ -22208,6 +22222,13 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.94', datum:'2026-11-03', body:[
+    ['oprava','🏭 Na velkosklad stačí na mapě klepnout a naložíš si zboží pro provozovnu. Dřív to šlo jen přes Výzvy a klepnutí na sklad ukázalo jen popisek.'],
+    ['oprava','👵 Pochůzka pro paní Boženu: v obchodě, kam tě poslala, je teď tlačítko „Koupit". Když jsi moc daleko, hra řekne, o kolik metrů.'],
+    ['oprava','📍 Navštívená místa ze sbírky se po hraní na víc zařízeních už neobjeví znovu.'],
+    ['zmena','🏖️ U dovolené je vidět, kolik dní ti ZBÝVÁ (5 dní za posledních 30) a kdy se uvolní další.'],
+    ['oprava','🎯 Řádky v Dnešních úkolech jsou zarovnané, chůze se ukazuje v kilometrech.'],
+  ]},
   { verze:'21.93', datum:'2026-11-03', body:[
     ['oprava','🏚️ Nákup podílu ve zchátralém domě na pronájem už domu nesnižuje hodnotu. Sleva za špatný stav bytů se dřív propsala do ceny domu natrvalo, takže každý nákup a prodej v takovém domě ho zlevnil i ostatním majitelům.'],
   ]},
@@ -24824,6 +24845,7 @@ const BABICKA_PODLE_MISTA = [
   [/řezni|maso|uzenin/i, 'kus masa na neděli'], [/pekár|pekař|cukrár/i, 'čerstvý chleba a koláčky'],
   [/lékár/i, 'léky z lékárny'], [/trafik|tabák|novin/i, 'noviny a křížovky'], [/květin/i, 'kytičku na hrob'],
   [/potravin|market|billa|lidl|albert|penny|kaufland|tesco|coop|jednota|obchod/i, 'rohlíky a mléko'],
+  [/vinár|vinot|vinn/i, 'lahvinku vína k nedělnímu obědu'],
   [/kavár|kafe|café|caf/i, 'kávu s sebou'], [/restaur|hosp|pivnic|bistro|pizz/i, 'oběd s sebou'],
   [/drogér|dm\b|rossmann/i, 'mýdlo a prací prášek'], [/zahrad|hobby|stavebn/i, 'semínka na zahrádku'],
   [/zámek|zamek|muze|kostel|radnic|náměst|namest|park/i, 'leták s programem akcí']
@@ -25158,7 +25180,7 @@ function chodecAkce(id){
         ja.babickaUkol = { den: calendarDay(), stav:'jde', od: Date.now() };
         saveWorld(); refreshAll();
         return { zprava:`Jé, to je od vás hezké! Potřebuju ${uk.co} z „${uk.kam.kde}". Já tu na vás počkám.`,
-                 hra:`🛒 Dojdi k místu „${uk.kam.kde}" (${vzdalText(d)}), nákup se ti vezme sám. Pak ho přines paní Boženě.` };
+                 hra:`🛒 Dojdi k místu „${uk.kam.kde}" (${vzdalText(d)}). Jakmile tam budeš, nákup se ti vezme sám — nebo klepni na obchod na mapě a dej „Koupit". Pak ho přines paní Boženě.` };
       } });
     } else if(st === 'jde'){
       a.push({ popis:`📍 Kde je ${uk.kam.kde}`, styl:'secondary', fn: async () => { setTimeout(() => ukazChodce('babicka'), 50); return { zavrit:true }; } });
@@ -25874,7 +25896,10 @@ function cenaZaBodSklad(name){
 async function naloztZbozi(){
   if(!currentUser) return;
   const me = world.users[currentUser.name];
-  if(!canInteract(SKLAD.lat, SKLAD.lng, INTERACTION_RADIUS)){ showAlert('Zboží se nakládá ve velkoskladu — musíš k němu dojít.'); return; }
+  if(!canInteract(SKLAD.lat, SKLAD.lng, INTERACTION_RADIUS)){
+    const d = playerPos ? Math.round(haversine(playerPos, SKLAD)) : null;
+    showAlert(`Zboží se nakládá ve velkoskladu — musíš k němu dojít${d !== null ? ` (je ${kudyText(SKLAD, d)}, potřeba do ${INTERACTION_RADIUS} m)` : ''}.\n\nAž tam budeš, klepni na 🏭 velkosklad na mapě.`);
+    return; }
   const moje = Object.values(world.parcels || {}).filter(p => maProvoz(p) && (p.owners?.[p.id && currentUser.name] || p.owners?.[currentUser.name] || 0) > 50);
   if(!moje.length){ showAlert('Nemáš žádnou provozovnu, do které by se zboží hodilo.'); return; }
   const volno = ZBOZI_KAPACITA - mojeZbozi(me);
@@ -25917,7 +25942,7 @@ async function doplnitZasoby(id){
     ? `Doplnit zásoby (${chybi} %)?\n\n📦 Z toho ${nesu} % máš s sebou — zdarma, zaplatil jsi je ve skladu.` +
       (dovoz > 0 ? `\n🚚 Zbylých ${dovoz} % se doveze na místo za ${cenaDovoz.toLocaleString('cs-CZ')} Kč (příplatek ${Math.round(ROZVOZ_PRIRAZKA*100)} %).` : '')
     : `Doplnit zásoby (${chybi} %) dovozem na místo za ${cenaDovoz.toLocaleString('cs-CZ')} Kč?\n\n` +
-      `Ve velkoskladu je stejné zboží o ${Math.round(ROZVOZ_PRIRAZKA*100)} % levnější — když si pro něj dojdeš.`;
+      `Ve velkoskladu je stejné zboží o ${Math.round(ROZVOZ_PRIRAZKA*100)} % levnější — dojdi k 🏭 velkoskladu, klepni na něj na mapě a nalož si zboží. Pak se vrať sem.`;
   if(!(await showConfirm(otazka))) return;
   me.balance -= cenaDovoz;
   me.zbozi = mojeZbozi(me) - nesu;
@@ -26461,6 +26486,14 @@ async function quitJob(jobId){
   saveWorld(); renderJobs();
 }
 
+// Kdy se uvolní další den volna — limit je klouzavý (5 dní za posledních 30), ne kalendářní měsíc.
+function dovolenaUvolni(u){
+  const dnes = calendarDay();
+  const dny = asArray(u && u.dovolenaDny).filter(d => d > dnes - DOVOLENA_OKNO).sort((a, b) => a - b);
+  if(!dny.length) return '';
+  const zaDni = dny[0] + DOVOLENA_OKNO - dnes;
+  return `<p style="font-size:0.8em;color:var(--muted);margin:4px 0 0;">Volno je ${DOVOLENA_DNU} dní za posledních ${DOVOLENA_OKNO} dní. Vybráno ${dny.length} — další den se uvolní ${zaDni <= 1 ? 'zítra' : `za ${zaDni} dní`}.</p>`;
+}
 function dovolenaZbyva(u){
   const dnes = calendarDay();
   const vyuzito = asArray(u && u.dovolenaDny).filter(d => d > dnes - DOVOLENA_OKNO).length;
@@ -26690,6 +26723,25 @@ function bizYieldPrumer(biz){
 }
 function bizYieldPerDay(biz){ return bizYieldPerHour(biz) * 24; }
 
+// Je tahle firma obchod, kam mě dnes poslala paní Božena? (21.94)
+function babickaObchodJe(biz){
+  if(!biz || !currentUser) return false;
+  const u = world.users[currentUser.name];
+  if(babickaStav(u) !== 'jde') return false;
+  const uk = babickaUkolDnes();
+  return !!(uk && uk.kam && Math.abs(uk.kam.lat - biz.lat) < 1e-6 && Math.abs(uk.kam.lng - biz.lng) < 1e-6);
+}
+function babickaNakoupit(){
+  const u = currentUser && world.users[currentUser.name];
+  const uk = babickaUkolDnes();
+  if(!u || !uk || babickaStav(u) !== 'jde') return;
+  if(!canInteract(uk.kam.lat, uk.kam.lng, CHODEC_RADIUS)){
+    const d = playerPos ? Math.round(haversine(playerPos, uk.kam)) : null;
+    showAlert(`Musíš být přímo u obchodu „${uk.kam.kde}"${d !== null ? ` — teď jsi ${d} m daleko, potřeba do ${CHODEC_RADIUS} m` : ''}.`);
+    return;
+  }
+  safeCall(() => hlidejUkolyChodcu());
+}
 function businessPopupHtml(bizId){
   const biz = world.businesses[bizId];
   const sold = soldPct(biz);
@@ -26702,6 +26754,7 @@ function businessPopupHtml(bizId){
     Výnos ~${Math.round(vynosFirmy(biz) || 0)} % ročně<br>
     Prodáno: ${des(sold, 1)} % (${ownerCount} ${sklonuj(ownerCount, 'vlastník', 'vlastníci', 'vlastníků')})<br>
     ${myPct>0 ? `Tvůj podíl: <b>${des(myPct, 1)} %</b><br>` : ''}
+    ${babickaObchodJe(biz) ? `<button class="gold" style="margin-top:6px;" onclick="babickaNakoupit()">🛒 Koupit ${escapeHtml(babickaUkolDnes().co)} pro paní Boženu</button><br>` : ''}
     ${sold < 99.95 ? `<button style="margin-top:6px;" onclick="buyStake('${biz.id}')">Koupit volný podíl</button>` : ''}
     ${myPct>0 ? `<button style="margin-top:6px;" onclick="sellStake('${biz.id}')">Prodat podíl</button>` : ''}
     ${currentUser ? Object.entries(biz.owners).filter(([jm, pc]) => jm !== currentUser.name && pc > 0).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([jm, pc]) =>
