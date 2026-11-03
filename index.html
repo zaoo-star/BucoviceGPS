@@ -1926,7 +1926,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.94';
+const APP_VERSION = '21.95';
 const APP_BUILD = '28.10.2026 15:50';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -6533,7 +6533,7 @@ async function adminNactiAdresy(){
 // jednou navštívit (fyzicky k němu dojít), za návštěvu je odměna a za kompletní sadu bonus.
 // Funguje i pro hráče, který zrovna hraje sám, a vede ho jinam než na trasu domov–práce.
 const MISTO_RADIUS = 45;            // m — jak blízko musíš být
-const MISTO_ODMENA = 120;           // Kč za první návštěvu místa
+const MISTO_ODMENA = 120;           // Kč za návštěvu místa (jednou za kalendářní měsíc)
 const MISTO_SADA_BONUS = 600;       // Kč za kompletní sadu
 
 const MISTO_SADY = [
@@ -6728,11 +6728,30 @@ function mistoVzdalenost(m){
   return smer ? `${txt} ${smer}` : txt;
 }
 
-// Navštívená místa si hráč nese s sebou (jednou navždy, ne denně jako místa zájmu).
+// Navštívená místa si hráč nese s sebou — `u.mista` = kdy poprvé (pro sbírku a sady).
 function mojeMista(u){
   if(!u) return {};
   if(!u.mista || typeof u.mista !== 'object') u.mista = {};
   return u.mista;
+}
+// ODMĚNA JEDNOU ZA MĚSÍC (21.95, přání Evy): každé místo ze sbírky jde navštívit za odměnu
+// znovu každý kalendářní měsíc. Sbírka a bonus za sadu se počítají dál jen z první návštěvy.
+function mesicKlic(cal){ return new Date((cal != null ? cal : calendarDay()) * 86400000).toISOString().slice(0, 7); }
+function mistaTentoMesic(u){
+  if(!u) return {};
+  const ted = mesicKlic();
+  if(!u.mistaMes || typeof u.mistaMes !== 'object' || u.mistaMes.m !== ted){
+    // Při prvním spuštění v měsíci převezmeme návštěvy, které už tenhle měsíc proběhly
+    // (u.mista drží herní den první návštěvy) — ať se nic nevyplatí dvakrát.
+    const ids = {};
+    const start = (world && typeof world.startCalDay === 'number') ? world.startCalDay : calendarDay();
+    Object.entries(mojeMista(u)).forEach(([id, den]) => {
+      if(typeof den === 'number' && mesicKlic(start + den - 1) === ted) ids[id] = den;
+    });
+    u.mistaMes = { m: ted, ids };
+  }
+  if(!u.mistaMes.ids || typeof u.mistaMes.ids !== 'object') u.mistaMes.ids = {};
+  return u.mistaMes.ids;
 }
 function sadaPostup(u, sadaId){
   const vse = Object.values(MISTA).filter(m => m.sada === sadaId);
@@ -6749,11 +6768,14 @@ function checkMista(){
   const u = world.users[currentUser.name];
   if(!u) return;
   const navstivena = mojeMista(u);
+  const mesic = mistaTentoMesic(u);
   let zmena = false;
   Object.values(MISTA).forEach(m => {
-    if(navstivena[m.id]) return;
+    if(mesic[m.id]) return;
     if(haversine(playerPos, { lat:m.lat, lng:m.lng }) > MISTO_RADIUS) return;
-    navstivena[m.id] = world.day;
+    const poprve = !navstivena[m.id];
+    mesic[m.id] = world.day;
+    if(poprve) navstivena[m.id] = world.day;
     const sada = MISTO_SADY.find(s => s.id === m.sada);
     const odmena = Math.round(MISTO_ODMENA * inflationMult());
     u.balance += odmena;
@@ -6762,7 +6784,7 @@ function checkMista(){
     playSound('coin');
     const po = sadaPostup(u, m.sada);
     showFlash(`${sada ? sada.emoji : '📍'} ${m.nazev} · +${odmena} Kč` +
-      (po.celkem ? `\n${sada ? sada.nazev : ''}: ${po.mam}/${po.celkem}` : ''));
+      (poprve ? (po.celkem ? `\n${sada ? sada.nazev : ''}: ${po.mam}/${po.celkem}` : '') : '\nznovu tento měsíc'));
     // kompletní sada = bonus a zpráva do novin
     if(po.hotovo && po.mam >= po.celkem && !asArray(u.sady).includes(m.sada)){
       u.sady = asArray(u.sady).concat([m.sada]);
@@ -8030,6 +8052,9 @@ function adoptWorldVnitrni(incoming){
         if(Object.keys(spoj).length) ja.mista = spoj;
         const sady = new Set([...asArray(ja.sady), ...asArray(druhy.sady)]);
         if(sady.size) ja.sady = Array.from(sady);
+        const xa = ja.mistaMes, xb = druhy.mistaMes;
+        if(xb && xb.m && (!xa || !xa.m || xb.m > xa.m)) ja.mistaMes = xb;
+        else if(xa && xb && xa.m === xb.m) ja.mistaMes = { m: xa.m, ids: Object.assign({}, xb.ids || {}, xa.ids || {}) };
       }
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
       const darky = new Set([...asArray(ja.claimedGifts), ...asArray(druhy.claimedGifts)]);
@@ -11707,11 +11732,11 @@ function renderOtherPlayers(){
 // Dřív měl každý druh jiný tvar a barvu a hráč nevěděl, co je co a kolik dostane. Teď je to
 // vždy stejný kulatý „pin" s ikonou a pod ním štítek s odměnou (nebo ✓). Barva okraje jen
 // jemně odliší druh. Pravidla zůstávají — balíky se seberou samy, místa zájmu jednou denně,
-// sbírka jednou za hru, akce jednou za akci.
+// sbírka jednou za měsíc, akce jednou za akci.
 const PIN_DRUHY = {
   balik:  { barva:'#fbbf24', nazev:'Balík peněz',   kdy:'každý den nové' },
   zajem:  { barva:'#a855f7', nazev:'Místo zájmu',   kdy:'jednou denně' },
-  sbirka: { barva:'#38bdf8', nazev:'Místo ze sbírky', kdy:'jednou za hru' },
+  sbirka: { barva:'#38bdf8', nazev:'Místo ze sbírky', kdy:'jednou za měsíc' },
   akce:   { barva:'#f97316', nazev:'Akce ve městě', kdy:'jednou za akci' }
 };
 function pinHtml(druh, emoji, odmena, hotovo){
@@ -12154,7 +12179,7 @@ function renderMistaMarkery(){
   if(!map || !currentUser || mistaStav !== 'hotovo') return;
   const u = world.users[currentUser.name];
   if(!u) return;
-  const navstivena = mojeMista(u);
+  const navstivena = mistaTentoMesic(u);
   // nejbližší nenavštívená + navštívená v okolí (ať je vidět, co už máš)
   const vse = Object.values(MISTA);
   const sVzdalenosti = playerPos
@@ -12177,7 +12202,7 @@ function renderMistaMarkery(){
     if(mistaMarkery[m.id] && map.hasLayer(mistaMarkery[m.id])) map.removeLayer(mistaMarkery[m.id]);
     const znacka = L.marker([m.lat, m.lng], {
       icon: pinIkona('sbirka', sada ? sada.emoji : '📍', MISTO_ODMENA * inflationMult(), mam)
-    }).addTo(map).bindTooltip(mam ? `${escapeHtml(m.nazev)} — už navštíveno ✓`
+    }).addTo(map).bindTooltip(mam ? `${escapeHtml(m.nazev)} — tento měsíc navštíveno ✓, znovu příští měsíc`
       : `${escapeHtml(m.nazev)} — dojdi na ${MISTO_RADIUS} m, +${Math.round(MISTO_ODMENA * inflationMult())} Kč`);
     znacka._klic = klic;
     mistaMarkery[m.id] = znacka;
@@ -20382,12 +20407,13 @@ function renderDaily(){
         ? `<div class="card"><h3>🗺️ Sbírka míst</h3><p style="font-size:0.9em;color:var(--muted);">Načítám místa ve městě…</p></div>` : '';
     }
     const navstivena = mojeMista(u);
+    const mesic = mistaTentoMesic(u);
     const celkem = Object.keys(MISTA).length;
-    const mam = Object.keys(navstivena).length;
-    // nejbližší nenavštívené — hráč hned ví, kam se vyplatí zajít
+    const mam = Object.values(MISTA).filter(m => navstivena[m.id]).length;
+    // nejbližší, za které je tento měsíc odměna — hráč hned ví, kam se vyplatí zajít
     let nej = null;
     if(playerPos) Object.values(MISTA).forEach(m => {
-      if(navstivena[m.id]) return;
+      if(mesic[m.id]) return;
       const d = haversine(playerPos, { lat:m.lat, lng:m.lng });
       if(!nej || d < nej.d) nej = { m, d };
     });
@@ -20396,14 +20422,14 @@ function renderDaily(){
       if(!po.celkem) return '';
       // Seznam všech míst sady: nejdřív nenavštívená od nejbližšího, navštívená na konec.
       const mistaSady = Object.values(MISTA).filter(m => m.sada === sada.id)
-        .map(m => ({ m, d: playerPos ? haversine(playerPos, { lat:m.lat, lng:m.lng }) : 0, mam: !!navstivena[m.id] }))
+        .map(m => ({ m, d: playerPos ? haversine(playerPos, { lat:m.lat, lng:m.lng }) : 0, mam: !!mesic[m.id], sbirka: !!navstivena[m.id] }))
         .sort((a, b) => (a.mam - b.mam) || (a.d - b.d));
-      const seznam = mistaSady.map(({ m, mam: je }) => {
+      const seznam = mistaSady.map(({ m, mam: je, sbirka }) => {
         const popis = mistoPopis(m);
         const kde = je ? '' : mistoVzdalenost(m);
         return `<div class="sadaMisto${je ? ' mam' : ''}">
           <div style="flex:1;min-width:0;">
-            <div style="font-size:0.92em;">${je ? '✅ ' : ''}<b>${escapeHtml(m.nazev)}</b></div>
+            <div style="font-size:0.92em;">${je ? '✅ ' : (sbirka ? '☑️ ' : '')}<b>${escapeHtml(m.nazev)}</b>${!je && sbirka ? ` <span style="font-size:0.8em;color:var(--muted);">ve sbírce · tento měsíc znovu +${Math.round(MISTO_ODMENA * inflationMult())} Kč</span>` : ''}</div>
             ${popis ? `<div style="font-size:0.8em;color:var(--muted);">${escapeHtml(popis)}</div>` : ''}
             ${kde ? `<div style="font-size:0.8em;color:var(--gold);">🧭 ${kde}</div>` : ''}
           </div>
@@ -20432,7 +20458,8 @@ function renderDaily(){
           <span class="ik">📍</span>
           <div class="tx"><div class="nz">Nejblíž: ${escapeHtml(nej.m.nazev)}</div><div class="ci">za návštěvu ${Math.round(MISTO_ODMENA * inflationMult())} Kč</div></div>
           <div class="kde">${kudyText(nej.m, nej.d)}</div></div>`
-        : `<p style="font-size:0.9em;color:var(--gold);margin:6px 0 0;">🎉 Navštívil jsi všechna místa ve městě!</p>`}
+        : `<p style="font-size:0.9em;color:var(--gold);margin:6px 0 0;">🎉 Tento měsíc máš obejitá všechna místa ve městě! Od prvního dne dalšího měsíce jsou zase za odměnu.</p>`}
+      <p style="font-size:0.8em;color:var(--muted);margin:6px 0 0;">Za každé místo dostaneš odměnu jednou za kalendářní měsíc. Do sbírky a sad se počítá první návštěva.</p>
       <details class="mineSkupina" id="${sid}"${otevreneBloky.has(sid) ? ' open' : ''}>
         <summary>Všechny sady a místa · bonus ${Math.round(MISTO_SADA_BONUS * inflationMult())} Kč za celou sadu</summary>
         ${radky}
@@ -20559,7 +20586,7 @@ function renderDaily(){
     asArray(world.pickups && world.pickups.list).forEach(pk => { if(!sebrane.includes(pk.id)) cile.push({ druh:'balik', ik: pk.bonus ? '🎁' : '💰', nazev: pk.bonus ? 'Bonusový balík' : 'Balík peněz', odm: pk.reward * inflationMult() * eventMult('pickupMult'), bod: pk, akce: `ukazNaMape([${pk.lat},${pk.lng}],18);closeSheet()` }); });
     lms.forEach(lm => { if(!got.includes(lm.id)) cile.push({ druh:'zajem', ik: escapeHtml(lm.emoji || '📍'), nazev: escapeHtml(lm.name), odm: LANDMARK_REWARD * inflationMult() * eventMult('landmarkMult'), bod: lm, akce: `ukazNaMape([${lm.lat},${lm.lng}],18);closeSheet()` }); });
     if(mistaStav === 'hotovo'){
-      const nav = mojeMista(u);
+      const nav = mistaTentoMesic(u);
       Object.values(MISTA).filter(m => !nav[m.id]).map(m => ({ m, d: haversine(playerPos, m) })).sort((a, b) => a.d - b.d).slice(0, 3)
         .forEach(({ m }) => cile.push({ druh:'sbirka', ik: (MISTO_SADY.find(x => x.id === m.sada) || {}).emoji || '📍', nazev: escapeHtml(m.nazev), odm: MISTO_ODMENA * inflationMult(), bod: m, akce: `ukazMisto('${m.id}')` }));
     }
@@ -22222,6 +22249,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.95', datum:'2026-11-03', body:[
+    ['zmena','🗺️ Místa ze sbírky jsou za odměnu znovu každý měsíc. Dřív se platilo jen za první návštěvu, teď za každé místo dostaneš peníze jednou za kalendářní měsíc. Sbírka a bonus za sadu se dál počítají z první návštěvy.'],
+  ]},
   { verze:'21.94', datum:'2026-11-03', body:[
     ['oprava','🏭 Na velkosklad stačí na mapě klepnout a naložíš si zboží pro provozovnu. Dřív to šlo jen přes Výzvy a klepnutí na sklad ukázalo jen popisek.'],
     ['oprava','👵 Pochůzka pro paní Boženu: v obchodě, kam tě poslala, je teď tlačítko „Koupit". Když jsi moc daleko, hra řekne, o kolik metrů.'],
