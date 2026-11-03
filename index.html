@@ -1926,7 +1926,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.91';
+const APP_VERSION = '21.92';
 const APP_BUILD = '28.10.2026 15:50';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -8522,7 +8522,9 @@ const CLAUDE_MODELY = [
 ];
 const CLAUDE_LIMIT_DEN = 40;   // pojistka: víc dotazů za den jeden telefon nepošle
 function aiData(){ return (world && world.ai && typeof world.ai === 'object') ? world.ai : {}; }
-function aiKlic(){ const k = aiData().klic; return (typeof k === 'string' && k.startsWith('sk-ant-')) ? k : null; }
+// AI prostředník (21.92): klíče leží jen v Cloudflare Workeru, ve světě je jen jeho adresa.
+function aiProxy(){ const u = aiData().proxy; return (typeof u === 'string' && /^https:\/\/[a-z0-9.\-]+(\/[A-Za-z0-9_\-\/]*)?$/.test(u)) ? u.replace(/\/+$/, '') : null; }
+function aiKlic(){ const k = aiData().klic; if(typeof k === 'string' && k.startsWith('sk-ant-')) return k; return (aiProxy() && aiData().pClaude === true) ? 'proxy' : null; }
 // Místní volba hráče (jen tenhle telefon): AI vylepšení si může sám vypnout.
 function claudeMistni(){
   try { const n = JSON.parse(localStorage.getItem('bp_claude') || '{}'); return (n && typeof n === 'object') ? n : {}; } catch(e){ return {}; }
@@ -8600,9 +8602,10 @@ async function claudeVolej(system, zpravy, maxTokens){
   claudeZapocti();
   let r;
   try {
-    r = await fetch('https://api.anthropic.com/v1/messages', {
+    const pres = klic === 'proxy';
+    r = await fetch(pres ? aiProxy() + '/anthropic/v1/messages' : 'https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
+      headers: pres ? { 'content-type': 'application/json' } : {
         'content-type': 'application/json',
         'x-api-key': klic,
         'anthropic-version': '2023-06-01',
@@ -8635,7 +8638,8 @@ const GEMINI_LIMIT_DEN = 80;
 const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta';
 function geminiKlic(){
   const k = aiData().gemini;
-  return (typeof k === 'string' && /^[A-Za-z0-9_\-.]{30,}$/.test(k) && !k.startsWith('sk-ant-')) ? k : null;
+  if(typeof k === 'string' && /^[A-Za-z0-9_\-.]{30,}$/.test(k) && !k.startsWith('sk-ant-')) return k;
+  return (aiProxy() && aiData().pGemini === true) ? 'proxy' : null;
 }
 function aiDostupne(){ return !!(aiKlic() || geminiKlic()); }
 // Model z nabídky, nebo vlastní (správce ho může napsat ručně, kdyby Google nějaký přejmenoval).
@@ -8659,17 +8663,19 @@ async function geminiZadost(model, telo, telo2){
   if(aiPouziti('gemini').pocet >= GEMINI_LIMIT_DEN) throw new Error(`Dnešní limit ${GEMINI_LIMIT_DEN} dotazů na Gemini je vyčerpaný — zítra zase.`);
   aiHlidejLimit();
   aiZapocti('gemini');
+  const pres = klic === 'proxy';
+  const zaklad = pres ? aiProxy() + '/gemini/v1beta' : GEMINI_URL;
   const posli = async (url, body) => {
     let r;
     try {
-      r = await fetch(url, { method:'POST', headers:{ 'content-type':'application/json', 'x-goog-api-key': klic }, body: JSON.stringify(body) });
+      r = await fetch(url, { method:'POST', headers: pres ? { 'content-type':'application/json' } : { 'content-type':'application/json', 'x-goog-api-key': klic }, body: JSON.stringify(body) });
     } catch(e){ throw new Error('Bez připojení k internetu se na Gemini nedá zeptat.'); }
     let j = null;
     try { j = await r.json(); } catch(e){}
     return { r, j };
   };
-  let { r, j } = await posli(GEMINI_URL + '/interactions', Object.assign({ model, store:false }, telo));
-  if(r.status === 404 && telo2) ({ r, j } = await posli(`${GEMINI_URL}/models/${encodeURIComponent(model)}:generateContent`, telo2));
+  let { r, j } = await posli(zaklad + '/interactions', Object.assign({ model, store:false }, telo));
+  if(r.status === 404 && telo2) ({ r, j } = await posli(`${zaklad}/models/${encodeURIComponent(model)}:generateContent`, telo2));
   if(!r.ok){
     const raw = (j && j.error && j.error.message) || '';
     const e = new Error(geminiChybaText(r.status, raw));
@@ -8761,8 +8767,31 @@ function aiZmen(zmena){
   world.ai = Object.assign({}, aiData(), zmena, { ts: Date.now() });
   if(!world.ai.premium || typeof world.ai.premium !== 'object') world.ai.premium = {};
   if(!world.ai.klic) world.ai.klic = null;   // žádné undefined — Firebase by zápis odmítl
+  if(!world.ai.gemini) world.ai.gemini = null;
+  if(!world.ai.proxy) world.ai.proxy = null;
   saveWorld();
   safeCall(() => renderAdmin());
+}
+async function adminAiProxy(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  if(!isAdmin) return;
+  const v = await showPrompt('🛡️ Adresa AI prostředníka (Cloudflare Worker), třeba „https://bucpoly-ai.jmeno.workers.dev".\n\nKlíče pak zůstanou jen v prostředníkovi a ze hry se smažou — nikdo si je z dat nevytáhne.', aiProxy() || 'https://', false);
+  if(v === null || v === undefined) return;
+  const u = String(v).trim().replace(/\/+$/, '');
+  if(!u || u === 'https:') return;
+  if(!/^https:\/\/[a-z0-9.\-]+(\/[A-Za-z0-9_\-\/]*)?$/.test(u)){ showAlert('Adresa musí začínat „https://" a obsahovat jen adresu Workeru.'); return; }
+  showToast('🛡️ Zkouším prostředníka…');
+  let st = null;
+  try { const r = await fetch(u + '/status'); st = await r.json(); } catch(e){}
+  if(!st || st.ok !== true){ showAlert('❌ Na téhle adrese prostředník neodpovídá. Zkontroluj adresu Workeru.'); return; }
+  if(!st.claude && !st.gemini){ showAlert('❌ Prostředník běží, ale nemá nastavený žádný klíč (ANTHROPIC_KEY / GEMINI_KEY).'); return; }
+  aiZmen({ proxy: u, pClaude: !!st.claude, pGemini: !!st.gemini, klic: null, gemini: null });
+  showAlert(`✅ Prostředník nastaven.\n\nClaude: ${st.claude ? 'ano' : 'ne'} · Gemini: ${st.gemini ? 'ano' : 'ne'}\n\nKlíče jsou ze hry smazané. Teď to vyzkoušej tlačítkem 🧪.`);
+}
+async function adminAiProxyVypni(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  if(!(await showConfirm('Odpojit AI prostředníka? AI přestane fungovat, dokud ho znovu nenastavíš.'))) return;
+  aiZmen({ proxy: null, pClaude: false, pGemini: false });
 }
 async function adminAiKlic(){
   if(!jsemHlavniAdmin()) return upozorniHlavni();
@@ -8868,9 +8897,17 @@ function adminAiKartaHtml(){
   const ai = aiData(), klic = aiKlic(), gk = geminiKlic();
   const pr = (ai.premium && typeof ai.premium === 'object') ? ai.premium : {};
   const hraci = Object.values(world.users || {}).filter(u => u && u.name).sort((a, b) => (pr[b.name] ? 1 : 0) - (pr[a.name] ? 1 : 0) || a.name.localeCompare(b.name, 'cs'));
-  const skryj = k => escapeHtml(k.slice(0, 8) + '…' + k.slice(-4));
+  const skryj = k => k === 'proxy' ? 'přes prostředníka 🛡️' : escapeHtml(k.slice(0, 8) + '…' + k.slice(-4));
   const modelBtn = (m, aktivni, fn) => `<button class="${aktivni ? '' : 'secondary'}" style="flex:1;min-height:44px;font-size:0.86em;" onclick="${fn}('${m.id}')">${m.nazev}<br><span style="font-size:0.8em;font-weight:400;">${m.popis}</span></button>`;
   let h = `<div class="card" style="border-left:3px solid var(--accent2);"><h3>🤖 AI ve hře</h3>`;
+  if(jsemHlavniAdmin()){
+    const px = aiProxy();
+    h += px
+      ? `<p style="font-size:0.88em;margin:2px 0;">🛡️ AI jde přes prostředníka <b>${escapeHtml(px.replace(/^https:\/\//, ''))}</b> — klíče ve hře nejsou.</p>
+         <div class="row" style="gap:6px;"><button class="secondary" onclick="adminAiProxy()">🛡️ Změnit</button><button class="danger" onclick="adminAiProxyVypni()">Odpojit</button></div>`
+      : `<p style="font-size:0.88em;margin:2px 0;color:var(--danger,#c33);">⚠️ Klíče jsou uložené přímo ve hře a kdokoli si je může přečíst. Nastav AI prostředníka.</p>
+         <div class="row"><button onclick="adminAiProxy()">🛡️ Nastavit AI prostředníka</button></div>`;
+  }
   if(!klic && !gk) h += `<p style="font-size:0.9em;">Zadej API klíč od Anthropicu (Claude), od Googlu (Gemini), nebo oba. Pak můžeš vybraným hráčům zapnout <b>AI vylepšení</b> (nájemníci mluví vlastní hlavou, po městě chodí chodci, se kterými se dá povídat) a každé ráno vyjde <b>📰 Bučovický zpravodaj</b> pro všechny.</p>`;
 
   // Claude
@@ -8881,7 +8918,7 @@ function adminAiKartaHtml(){
     h += `<p style="font-size:0.88em;margin:2px 0;">Klíč <b>${skryj(klic)}</b> · tenhle telefon dnes ${claudePouziti().pocet}/${CLAUDE_LIMIT_DEN} dotazů</p>
       <div class="row" style="gap:6px;">
         <button class="secondary" onclick="adminAiTest()">🧪 Vyzkoušet</button>
-        ${jsemHlavniAdmin() ? `<button class="secondary" onclick="adminAiKlic()">🔑 Změnit</button>
+        ${jsemHlavniAdmin() && klic !== 'proxy' ? `<button class="secondary" onclick="adminAiKlic()">🔑 Změnit</button>
         <button class="danger" onclick="adminAiSmaz()">Smazat</button>` : ''}</div>
       <div class="row" style="gap:6px;margin-top:6px;">${CLAUDE_MODELY.map(m => modelBtn(m, claudeModel() === m.id, 'adminAiModel')).join('')}</div>`;
   }
@@ -8895,7 +8932,7 @@ function adminAiKartaHtml(){
     h += `<p style="font-size:0.88em;margin:2px 0;">Klíč <b>${skryj(gk)}</b> · tenhle telefon dnes ${aiPouziti('gemini').pocet}/${GEMINI_LIMIT_DEN} dotazů</p>
       <div class="row" style="gap:6px;">
         <button class="secondary" onclick="adminGeminiTest()">🧪 Vyzkoušet</button>
-        ${jsemHlavniAdmin() ? `<button class="secondary" onclick="adminGeminiKlic()">🔑 Změnit</button>
+        ${jsemHlavniAdmin() && gk !== 'proxy' ? `<button class="secondary" onclick="adminGeminiKlic()">🔑 Změnit</button>
         <button class="danger" onclick="adminGeminiSmaz()">Smazat</button>` : ''}</div>
       <p style="font-size:0.84em;margin:8px 0 4px;">Model na texty${GEMINI_MODELY.some(m => m.id === gm) ? '' : ': <b>' + escapeHtml(gm) + '</b>'}</p>
       <div class="row" style="gap:6px;">${GEMINI_MODELY.map(m => modelBtn(m, gm === m.id, 'adminGeminiModel')).join('')}</div>
