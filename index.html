@@ -1926,7 +1926,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.92';
+const APP_VERSION = '21.93';
 const APP_BUILD = '28.10.2026 15:50';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -5672,14 +5672,15 @@ function houseHasOwner(p){ return houseSoldPct(p) > 0.001; }
 function myHousePct(p){ return currentUser ? (p.owners?.[currentUser.name] || 0) : 0; }
 function housePricePerPercent(p){ return effectiveHousePrice(p) / 100; }
 // Aktuální tržní hodnota domu za 1 % — zohledňuje stav bytů u pronájmu (zchátralý dům má nižší cenu)
+// Sleva za stav bytů u pronájmu: stav 100 % → plná cena, stav 0 % → 60 % ceny.
+function stavovyFaktor(p){
+  const byty = asArray(p && p.units).filter(Boolean);
+  if(!p || p.useType !== 'rental' || !byty.length) return 1;
+  const avgCond = byty.reduce((s,u)=>s+Math.max(0, Math.min(100, u.condition || 0)),0) / byty.length / 100;
+  return 0.6 + 0.4 * avgCond;
+}
 function houseMarketPricePerPercent(p){
-  let factor = 1;
-  const byty = asArray(p.units).filter(Boolean);
-  if(p.useType === 'rental' && byty.length){
-    const avgCond = byty.reduce((s,u)=>s+Math.max(0, Math.min(100, u.condition || 0)),0) / byty.length / 100;
-    factor = 0.6 + 0.4 * avgCond; // stav 100 % → plná cena, stav 0 % → 60 % ceny
-  }
-  return housePricePerPercent(p) * factor;
+  return housePricePerPercent(p) * stavovyFaktor(p);
 }
 
 // Rozhodující podílník = ten s největším podílem (při shodě ten první podle jména)
@@ -18786,7 +18787,10 @@ function recordSale(p, totalPrice, pct, od, komu, hybeCenou = true){
   const lokMult = lokU ? (lokU.ev.localPriceMult || 1) : 1;
   // Dělíme i stavebními úpravami: ty se do ceny přidávají zvlášť, takže kdyby zůstaly
   // v basePrice, započítaly by se po prodeji dvakrát.
-  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult() * lokMult * stavebniMult(p));
+  // OPRAVA 21.93: dělíme i slevou za stav bytů. Cena zchátralého domu na pronájem je
+  // o tuhle slevu nižší, a když zůstala v basePrice, každý nákup takového domu mu trvale
+  // srazil základní cenu (5× koupit a prodat 40 % = dům o třetinu levnější i pro majitele).
+  const structuralPerPct = pricePerPct / (marketMultiplier() * gentrify(p) * inflationMult() * lokMult * stavebniMult(p) * stavovyFaktor(p));
   const structuralBase = structuralPerPct * 100; // odpovídající basePrice
   // posun basePrice o 30 % k realizované ceně (zbytek setrvačnost — jeden prodej cenu neurčí úplně)
   if(hybeCenou) p.basePrice = Math.round(p.basePrice * 0.7 + structuralBase * 0.3);
@@ -22204,6 +22208,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.93', datum:'2026-11-03', body:[
+    ['oprava','🏚️ Nákup podílu ve zchátralém domě na pronájem už domu nesnižuje hodnotu. Sleva za špatný stav bytů se dřív propsala do ceny domu natrvalo, takže každý nákup a prodej v takovém domě ho zlevnil i ostatním majitelům.'],
+  ]},
   { verze:'21.91', datum:'2026-10-28', body:[
     ['oprava','⚡ Rychlejší start: obrázky domů se při spuštění vyrábějí na pozadí, takže hra se rozjede dřív.'],
     ['admin','⏱️ Admin → Synchronizace ukazuje u každého hráče, jak dlouho se hra spouštěla, kolik z toho trvalo stažení světa a jak je svět velký.'],
