@@ -1926,8 +1926,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.96';
-const APP_BUILD = '06.11.2026 06:40';
+const APP_VERSION = '21.97';
+const APP_BUILD = '07.11.2026 08:40';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -7687,6 +7687,16 @@ function adoptWorldVnitrni(incoming){
   const myManagedHouses = {}; // parcelId -> celý stav domu, kde jsem SPRÁVCE (>50 %)
   const mojeRazitka = {};     // parcelId -> {mod, dum} pro VŠECHNY domy s razítkem změny
   const mojeVylepseni = {};   // parcelId -> mapa zaplacených vylepšení
+  // NÁZVY PROVOZOVEN (21.97): název má vlastní razítko `nazevTs`. Dřív se bral s celým domem —
+  // a vyhrálo starší zařízení, které na dům sáhlo později (chátrání, výběr nájmu). Eva tak
+  // dostala zpátky starý název bez „&". Teď vyhraje vždy nejnovější přejmenování.
+  const nazvyProvozu = {};    // parcelId -> {nazev, nazevKdo, nazevDen, nazevTs} nejnovější z obou verzí
+  const vezmiNazev = (id, pr) => {
+    if(!pr || typeof pr !== 'object' || !(pr.nazevTs > 0)) return;
+    const st = nazvyProvozu[id];
+    if(!st || pr.nazevTs > st.nazevTs) nazvyProvozu[id] = { nazev: pr.nazev, nazevKdo: pr.nazevKdo, nazevDen: pr.nazevDen, nazevTs: pr.nazevTs };
+  };
+  safeCall(() => Object.entries((incoming && incoming.parcels) || {}).forEach(([id, ip]) => { if(ip && ip.provoz) vezmiNazev(id, ip.provoz); }));
   const mojeByty = {};        // parcelId -> byty (nájem, stav, obsazenost)
   const mojeProdeje = {};     // parcelId -> historie prodejů (drží cenu domu)
   const mojeKroniky = {};     // parcelId -> kronika domu a hodnoty po dnech
@@ -7753,6 +7763,7 @@ function adoptWorldVnitrni(incoming){
       if(p && p.mod) mojeRazitka[id] = { mod: p.mod, dum: JSON.parse(JSON.stringify(p)) };
       if(p && p.useTs && houseHasOwner(p)) mojeVyuziti[id] = { useTs: p.useTs, useType: p.useType || null, units: JSON.parse(JSON.stringify(asArray(p.units))),
         provoz: p.provoz ? JSON.parse(JSON.stringify(p.provoz)) : null, provozTs: p.provozTs || 0, vladce: houseDecider(p) };
+      if(p && p.provoz) vezmiNazev(id, p.provoz);
       if(p && (p.provoz || p.provozTs)) mojeProvozy[id] = { provoz: p.provoz ? JSON.parse(JSON.stringify(p.provoz)) : null, provozTs: p.provozTs || 0,
         useType: p.useType, units: JSON.parse(JSON.stringify(asArray(p.units))), vladce: houseDecider(p) };
       // Vylepšení a rozdělaný projekt zálohujeme ZVLÁŠŤ. Jsou to zaplacené věci, které
@@ -8210,6 +8221,17 @@ function adoptWorldVnitrni(incoming){
       C.useTs = L.useTs;
       C.mod = noveRazitko();
       zapisChybu(`Vráceno využití domu ${id} (${L.useType}) — přišla starší verze domu`, 'sync');
+    });
+    // Název provozovny: nejnovější přejmenování (nebo smazání správcem) vyhrává, ať přišel dům odkudkoli.
+    Object.entries(nazvyProvozu).forEach(([id, N]) => {
+      const C = world.parcels[id];
+      if(!C || !C.provoz || typeof C.provoz !== 'object') return;
+      if((C.provoz.nazevTs || 0) >= N.nazevTs) return;
+      if(N.nazev) C.provoz.nazev = N.nazev; else delete C.provoz.nazev;
+      if(N.nazevKdo) C.provoz.nazevKdo = N.nazevKdo; else delete C.provoz.nazevKdo;
+      if(N.nazevDen) C.provoz.nazevDen = N.nazevDen;
+      C.provoz.nazevTs = N.nazevTs;
+      C.mod = noveRazitko();   // opravená verze ať se rozešle i ostatním zařízením
     });
     // PŘÍSTAVBY (21.57): byt z vestavby podkroví (uid „pk…") je zaplacená stavba — nemizí.
     // Starý telefon ho jinak smazal i s polovinou investice do přístavby.
@@ -12707,7 +12729,9 @@ function vladnuteUlice(jmeno){
 // Karta ulice v detailu domu.
 function uliceHtmlProDum(p){
   const nazev = uliceDomu(p);
-  if(!nazev) return '';
+  // Dům bez adresy do žádné ulice nepatří — ať ho nikdo nekupuje kvůli ulici (Eva, U Litavy).
+  if(!nazev) return adresyStav === 'hotovo'
+    ? `<p style="font-size:0.85em;color:var(--muted);margin:8px 0 0;">🛣️ Tenhle dům nemá v mapě adresu, takže <b>nepatří do žádné ulice</b> — na nadvládu nad ulicí se nepočítá.</p>` : '';
   const st = stavUlic()[nazev];
   if(!st) return `<p style="font-size:0.85em;color:var(--muted);margin:6px 0 0;">🛣️ ${escapeHtml(nazev)} — krátká ulice, o nadvládu se nehraje.</p>`;
   const ja = currentUser && currentUser.name;
@@ -12722,9 +12746,33 @@ function uliceHtmlProDum(p){
     ? (st.cela ? `Máš celou ulici: tvoje domy tu nesou +${ULICE_BONUS_CELA*100} % nájmu.`
                : `Vládneš jí: tvoje domy tu nesou +${ULICE_BONUS_VETSINA*100} % nájmu. Za celou ulici by to bylo +${ULICE_BONUS_CELA*100} %.`)
     : `Řídíš tu ${mam} ${sklonuj(mam, 'dům', 'domy', 'domů')}. K nadvládě potřebuješ ${potreba} — chybí ${Math.max(0, potreba - mam)}. Pak tu tvoje domy ponesou +${ULICE_BONUS_VETSINA*100} % nájmu.`);
+  // Seznam domů ulice (21.97): hráč vidí, které domy do ulice patří a které mu chybí,
+  // a může si je ukázat na mapě — dřív to šlo zjistit jen koupí (Eva).
+  const ids = (seznamUlic()[nazev] || []).slice();
+  const radky = ids.map(id => {
+    const d = world.parcels[id];
+    if(!d) return null;
+    const kdo = houseDecider(d);
+    const vzd = playerPos ? haversine(playerPos, { lat: d.lat, lng: d.lng }) : null;
+    return { id, d, kdo, vzd, muj: !!ja && kdo === ja };
+  }).filter(Boolean).sort((a, b) => (a.muj - b.muj) || ((a.vzd || 0) - (b.vzd || 0)));
+  const chybi = radky.filter(r => !r.muj).length;
+  const seznam = radky.map(r => {
+    const b = r.kdo ? barvaHrace(r.kdo) : null;
+    const kdoTxt = r.kdo ? `<span style="color:${b ? b.hex : 'var(--text)'}">● ${escapeHtml(r.kdo)}${r.muj ? ' (ty)' : ''}</span>`
+                         : `<span style="color:var(--muted)">${houseHasOwner(r.d) ? 'bez většiny' : 'volný'}</span>`;
+    return `<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid var(--border);${r.id === p.id ? 'font-weight:700;' : ''}">
+      <span style="flex:0 0 auto;">${r.muj ? '✅' : '⬜'}</span>
+      <span style="flex:1;min-width:0;font-size:0.86em;"><span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(domLabel(r.d))}${r.id === p.id ? ' · tenhle' : ''}</span>
+        <span style="font-size:0.9em;">${kdoTxt}${r.vzd !== null ? ` <span style="color:var(--muted)">· ${r.vzd < 1000 ? Math.round(r.vzd / 10) * 10 + ' m' : (r.vzd / 1000).toFixed(1).replace('.', ',') + ' km'}</span>` : ''}</span></span>
+      ${r.id === p.id ? '' : `<button class="secondary" style="flex:none;min-height:32px;padding:4px 10px;font-size:0.8em;" onclick="flyToParcel('${r.id}')">🗺️ Ukázat</button>`}
+    </div>`;
+  }).join('');
   return `<div style="margin:8px 0 0;padding:8px;border:1px solid var(--border);border-radius:8px;background:var(--panel2);">
     <p style="font-size:0.9em;margin:0;">🛣️ <b>${escapeHtml(nazev)}</b> · ${st.celkem} domů · ${stav}</p>
     ${moje ? `<p style="font-size:0.84em;color:var(--muted);margin:3px 0 0;">${moje}</p>` : ''}
+    <details style="margin-top:6px;"><summary style="font-size:0.86em;cursor:pointer;">🏘️ Domy v ulici (${radky.length})${ja && chybi ? ` · tobě chybí ${chybi}` : (ja && radky.length ? ' · máš všechny' : '')}</summary>
+      <div style="margin-top:4px;">${seznam}</div></details>
   </div>`;
 }
 
@@ -13938,6 +13986,7 @@ async function pojmenovatProvozovnu(id){
   p.provoz.nazev = n;
   p.provoz.nazevKdo = currentUser.name;
   p.provoz.nazevDen = calendarDay();
+  p.provoz.nazevTs = noveRazitko();   // podle tohohle se název při slučování nevrátí (21.97)
   stampHouse(p);
   addNews('invest', prvni
     ? `${typ.emoji} ${currentUser.name} pojmenoval ${typ.name.toLowerCase()} v domě ${domKratce(p)}: „${n}"`
@@ -13951,6 +14000,7 @@ async function smazatNazevProvozu(id){
   if(!isAdmin || !p || !maProvoz(p) || !nazevProvozu(p)) return;
   if(!(await showConfirm(`Smazat název „${nazevProvozu(p)}"?`))) return;
   delete p.provoz.nazev; delete p.provoz.nazevKdo;
+  p.provoz.nazevTs = noveRazitko();   // i smazání musí vyhrát nad starší verzí s názvem
   stampHouse(p); saveWorld(); refreshAll();
 }
 
@@ -22272,6 +22322,10 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.97', datum:'2026-11-07', body:[
+    ['oprava','🏪 Název provozovny se už nevrátí na starší. Když jsi hrál na dvou zařízeních, starší z nich uměl při synchronizaci vrátit původní název (Eva přišla o „&" ve „Fit&Eff"). Teď vždy vyhraje poslední přejmenování. Kdo o název přišel, pojmenuj provozovnu znovu — tentokrát už vydrží.'],
+    ['novinka','🛣️ V detailu domu u ulice je rozbalovací seznam „Domy v ulici": které domy do ulice patří, kdo je řídí, které ti chybí a jak daleko jsou — s tlačítkem Ukázat na mapě. U domu bez adresy je napsáno, že do žádné ulice nepatří.'],
+  ]},
   { verze:'21.96', datum:'2026-11-06', body:[
     ['zmena','🔁 Místa ze sbírky jdou v kolech (nápad Jerryho): jakmile obejdeš všechna místa ve městě, hned se ti všechna obnoví a jsou zase za odměnu — nemusíš čekat na nový měsíc. S novým měsícem se obnoví i tak. Ve Výzvách u sbírky vidíš, kolik míst ti v tomhle kole ještě chybí.'],
   ]},
