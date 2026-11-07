@@ -526,6 +526,18 @@
     margin:0 0 8px;overflow:hidden;text-align:left;
   }
   .mineDum[data-problem]{ border-left:3px solid var(--orange); }
+  /* Vlastní pořadí (21.98) */
+  .poradiLista{ display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:0 0 8px; }
+  .poradiChip, .poradiPrepinac{ flex:none;width:auto;min-height:32px;padding:5px 11px;margin:0;font-size:0.82em;font-weight:500;
+    border-radius:999px;background:var(--panel2);color:var(--text);border:1px solid var(--border);box-shadow:none; }
+  .poradiChip.on{ background:var(--accent);color:#0f1115;border-color:var(--accent);font-weight:700; }
+  .poradiPrepinac{ margin-left:auto;color:var(--accent2); }
+  .poradiRadek{ display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid var(--border); }
+  .poradiCislo{ flex:none;width:24px;text-align:right;color:var(--muted);font-size:0.85em; }
+  .poradiJm{ flex:1 1 auto;min-width:0;font-size:0.92em;line-height:1.25;overflow-wrap:anywhere; }
+  .poradiBtn{ flex:none;width:38px;min-width:38px;min-height:36px;padding:0;margin:0;font-size:1em;
+    background:var(--panel2);border:1px solid var(--border);border-radius:9px;box-shadow:none; }
+  .poradiBtn:disabled{ opacity:0.25; }
   .mineDum > summary{
     list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;
     padding:10px 12px;-webkit-tap-highlight-color:transparent;
@@ -1926,8 +1938,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.97';
-const APP_BUILD = '07.11.2026 08:40';
+const APP_VERSION = '21.98';
+const APP_BUILD = '07.11.2026 13:10';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -8087,6 +8099,8 @@ function adoptWorldVnitrni(incoming){
         }
         if((druhy.mistaKola || 0) > (ja.mistaKola || 0)) ja.mistaKola = druhy.mistaKola;
       }
+      // Vlastní pořadí dlaždic a domů (21.98): vyhrává naposledy ručně upravené.
+      if(druhy.poradi && typeof druhy.poradi === 'object' && (!ja.poradi || typeof ja.poradi !== 'object' || (druhy.poradi.ts || 0) > (ja.poradi.ts || 0))) ja.poradi = druhy.poradi;
       // vyzvednuté dárky sjednotit, ať se stejný dárek nepřipíše dvakrát
       const darky = new Set([...asArray(ja.claimedGifts), ...asArray(druhy.claimedGifts)]);
       ja.claimedGifts = Array.from(darky).slice(-100);
@@ -17901,6 +17915,198 @@ function ddHlavickaHtml(p, o){
   </div>`;
 }
 
+// ===== VLASTNÍ POŘADÍ DLAŽDIC A DOMŮ (21.98) =====
+// Eva: „kdyby si mohl každý uživatel přeskládat dlaždice podle sebe" a „domy se před týdnem
+// poskládaly jinak a teď mě to mate". Domy se řadily podle dnešního výnosu — stačilo, aby
+// provozovně došly zásoby nebo se vystěhoval nájemník, a dům přeskočil jinam. Teď má hráč
+// vlastní pořadí, které se samo nemění, a může si vybrat i jiné řazení. Pořadí se ukládá
+// k hráči, takže platí na všech jeho zařízeních.
+function mojePoradi(){
+  const u = currentUser && world.users && world.users[currentUser.name];
+  if(!u) return { ts: 0 };
+  if(!u.poradi || typeof u.poradi !== 'object') u.poradi = { ts: 0 };
+  return u.poradi;
+}
+function ulozPoradi(){
+  mojePoradi().ts = Date.now();
+  saveWorld(true);
+}
+// Seřadí „vychozi" podle uloženého pořadí. Co v uloženém není (nová dlaždice, nová karta),
+// se vloží hned za svého souseda z výchozího pořadí — nic se tedy neztratí ani nepřeskočí.
+function seradPodle(vychozi, ulozene){
+  const ul = asArray(ulozene).filter(id => vychozi.includes(id));
+  if(!ul.length) return vychozi.slice();
+  const vysl = ul.filter((id, i) => ul.indexOf(id) === i);
+  vychozi.forEach((id, i) => {
+    if(vysl.includes(id)) return;
+    let poz = 0;
+    for(let j = i - 1; j >= 0; j--){ const k = vysl.indexOf(vychozi[j]); if(k >= 0){ poz = k + 1; break; } }
+    vysl.splice(poz, 0, id);
+  });
+  return vysl;
+}
+function posunVSeznamu(seznam, id, kam){
+  const a = seznam.slice();
+  const i = a.indexOf(id);
+  if(i < 0) return a;
+  a.splice(i, 1);
+  const j = kam === 'nahoru' ? 0 : (kam === 'dolu' ? a.length : Math.max(0, Math.min(a.length, i + kam)));
+  a.splice(j, 0, id);
+  return a;
+}
+function poradiRadkyHtml(polozky, fn){
+  const n = polozky.length;
+  return polozky.map((x, i) => `<div class="poradiRadek"><span class="poradiCislo">${i + 1}.</span><span class="poradiJm">${x.nazev}</span>
+    <button class="poradiBtn" ${i === 0 ? 'disabled' : ''} onclick="${fn}('${x.id}','nahoru')" title="Úplně nahoru" aria-label="Úplně nahoru">⏫</button>
+    <button class="poradiBtn" ${i === 0 ? 'disabled' : ''} onclick="${fn}('${x.id}',-1)" title="O jedno výš" aria-label="O jedno výš">⬆️</button>
+    <button class="poradiBtn" ${i === n - 1 ? 'disabled' : ''} onclick="${fn}('${x.id}',1)" title="O jedno níž" aria-label="O jedno níž">⬇️</button></div>`).join('');
+}
+
+// --- Denní výzvy: každá karta je obalená značkou <!--dl:id|název--> … <!--/dl--> ---
+let dlUprava = false;
+let dlPosledni = [];   // dlaždice z posledního vykreslení (už v hráčově pořadí)
+const DL_KON = '<!--/dl-->';
+function dlCisty(s){ return String(s || '').replace(/<[^>]*>/g, '').replace(/[<>|]/g, '').trim(); }
+function dlZac(id, nazev){ return `<!--dl:${id}|${dlCisty(nazev)}-->`; }
+function dlObal(id, nazev, s){ return s ? dlZac(id, nazev) + s + DL_KON : ''; }
+function dlSeradit(html, ulozene){
+  const re = /<!--dl:([\w-]+)\|([^>]*?)-->([\s\S]*?)<!--\/dl-->/g;
+  const casti = [], bloky = [];
+  let posl = 0, m;
+  while((m = re.exec(html))){
+    casti.push(html.slice(posl, m.index), null);
+    bloky.push({ id: m[1], nazev: m[2], html: m[3] });
+    posl = re.lastIndex;
+  }
+  casti.push(html.slice(posl));
+  const podleId = {};
+  bloky.forEach(b => { if(!podleId[b.id]) podleId[b.id] = b; });
+  const ids = Object.keys(podleId);
+  const serazene = seradPodle(ids, ulozene).map(id => podleId[id]);
+  // sloty po kartách se vyplní v novém pořadí; co kartou není (varování nahoře, nápověda dole), zůstává
+  let k = 0;
+  const vysl = casti.map(c => c === null ? (k < serazene.length ? serazene[k++].html : '') : c).join('');
+  return { html: vysl, bloky: serazene };
+}
+function dlUpravaPrepni(zap){
+  dlUprava = !!zap;
+  renderDaily();
+  if(dlUprava) safeCall(() => { const el = document.getElementById('dailyContent'); if(el && el.scrollIntoView) el.scrollIntoView({ block: 'start' }); });
+}
+function dlPosun(id, kam){
+  const po = mojePoradi();
+  const vidim = dlPosledni.map(b => b.id);
+  const nove = posunVSeznamu(vidim, id, kam);
+  // karty, které se zrovna neukazují (platba, večer…), si podrží místo z minula
+  const zaklad = asArray(po.vyzvy).slice();
+  vidim.forEach(x => { if(!zaklad.includes(x)) zaklad.push(x); });
+  po.vyzvy = seradPodle(zaklad, nove);
+  ulozPoradi();
+  renderDaily();
+}
+function dlVychozi(){
+  mojePoradi().vyzvy = [];
+  ulozPoradi();
+  renderDaily();
+  showToast('Dlaždice jsou zase ve výchozím pořadí');
+}
+function dlListaHtml(){
+  return `<div class="poradiLista"><button class="poradiPrepinac" onclick="dlUpravaPrepni(true)">↕️ Uspořádat dlaždice</button></div>`;
+}
+function dlEditorHtml(bloky){
+  return `<div class="card poradiEditor">
+    <h3>↕️ Pořadí dlaždic</h3>
+    <p class="fPozn" style="margin-top:0;">Seřaď si dlaždice, jak ti to vyhovuje — ⏫ dá dlaždici úplně nahoru. Pořadí si hra pamatuje i na dalších zařízeních.
+      Karty, které se ukazují jen někdy (platba, večer, akce…), si drží své místo.</p>
+    ${poradiRadkyHtml(bloky, 'dlPosun')}
+    <div class="row" style="margin-top:10px;"><button onclick="dlUpravaPrepni(false)">✅ Hotovo</button>
+      <button class="secondary" onclick="dlVychozi()">↺ Výchozí pořadí</button></div>
+  </div>`;
+}
+
+// --- Moje nemovitosti ---
+const MINE_RAZENI = [
+  ['moje', '📌 Moje pořadí'],
+  ['vynos', '💰 Výnos'],
+  ['nazev', '🔤 Název'],
+  ['problem', '⚠️ Problémy'],
+];
+let mineUprava = false;
+let mineVidim = [];   // id domů ve vlastním pořadí z posledního vykreslení
+function mineRazeni(){
+  const r = mojePoradi().razeni;
+  return MINE_RAZENI.some(x => x[0] === r) ? r : 'moje';
+}
+function mineJmeno(p){ return String(nazevProvozu(p) ? jmenoProvozu(p) : (domKratce(p) || '')); }
+// data přicházejí seřazená podle výnosu; seřadí je (na místě) podle hráčovy volby
+function mineSerad(data){
+  const po = mojePoradi();
+  const podleVynosu = data.map(d => d.p.id);
+  // Vlastní pořadí: domy, které v něm ještě nejsou (nově koupené), se přidají na konec.
+  // Napoprvé se tak „zamrazí" dnešní pořadí podle výnosu a dál se samo nemění.
+  const ul = asArray(po.domy).filter(id => podleVynosu.includes(id));
+  const moje = ul.concat(podleVynosu.filter(id => !ul.includes(id)));
+  if(moje.join(',') !== asArray(po.domy).join(',')) po.domy = moje;   // bez razítka — to dává jen ruční úprava
+  mineVidim = moje;
+  const r = mineRazeni();
+  if(r === 'vynos') return;
+  const idx = {};
+  if(r === 'nazev'){
+    data.slice().sort((a, b) => mineJmeno(a.p).localeCompare(mineJmeno(b.p), 'cs', { numeric: true }))
+      .forEach((d, i) => { idx[d.p.id] = i; });
+  } else {
+    moje.forEach((id, i) => { idx[id] = i; });
+    if(r === 'problem') data.forEach(d => { if(!d.problemy.length) idx[d.p.id] += 100000; });
+  }
+  data.sort((a, b) => idx[a.p.id] - idx[b.p.id]);
+}
+function nastavMineRazeni(r){
+  if(!MINE_RAZENI.some(x => x[0] === r)) return;
+  mojePoradi().razeni = r;
+  if(r !== 'moje') mineUprava = false;
+  ulozPoradi();
+  renderMine();
+}
+function mineUpravaPrepni(zap){
+  mineUprava = !!zap;
+  if(mineUprava && mineRazeni() !== 'moje'){ mojePoradi().razeni = 'moje'; ulozPoradi(); }
+  renderMine();
+}
+function minePosun(id, kam){
+  mojePoradi().domy = posunVSeznamu(mineVidim, id, kam);
+  ulozPoradi();
+  renderMine();
+}
+function mineVynosJakoZaklad(){
+  mojePoradi().domy = [];   // při dalším vykreslení se vezme dnešní pořadí podle výnosu
+  ulozPoradi();
+  renderMine();
+  showToast('Pořadí je teď podle dnešního výnosu — dál už se samo měnit nebude');
+}
+function mineListaHtml(){
+  const r = mineRazeni();
+  return `<div class="poradiLista">
+    ${MINE_RAZENI.map(([id, nz]) => `<button class="poradiChip${id === r ? ' on' : ''}" onclick="nastavMineRazeni('${id}')">${nz}</button>`).join('')}
+    ${r === 'moje' ? `<button class="poradiPrepinac" onclick="mineUpravaPrepni(true)">✏️ Uspořádat</button>` : ''}
+  </div>`;
+}
+function mineEditorHtml(data){
+  const podleId = {};
+  data.forEach(d => { podleId[d.p.id] = d; });
+  const polozky = mineVidim.filter(id => podleId[id]).map(id => {
+    const d = podleId[id], p = d.p;
+    const ik = d.provoz ? PROVOZ_TYPY[p.provoz.typ].emoji : (p.useType === 'rental' ? '🏘️' : (p.useType === 'residence' ? '🏠' : '🏚️'));
+    return { id, nazev: `${ik} ${escapeHtml(mineJmeno(p))}` };
+  });
+  return `<div class="card poradiEditor">
+    <h3>✏️ Pořadí domů</h3>
+    <p class="fPozn" style="margin-top:0;">Posuň si domy, jak chceš. ⏫ dá dům úplně nahoru. Nově koupené domy se přidají na konec. Pořadí se samo nemění.</p>
+    ${poradiRadkyHtml(polozky, 'minePosun')}
+    <div class="row" style="margin-top:10px;"><button onclick="mineUpravaPrepni(false)">✅ Hotovo</button>
+      <button class="secondary" onclick="mineVynosJakoZaklad()">💰 Podle výnosu</button></div>
+  </div>`;
+}
+
 const mineOtevrene = new Set();
 function mineToggle(el){
   if(!el || !el.dataset) return;
@@ -17964,6 +18170,7 @@ function renderMine(){
              provoz, provozCisty, provozDnesKc, solar, hodnota, dan, prijem, zasoby, problemy,
              hypo, hypoSplatka, hypoUrok, bonusMult, udrzba };
   }).sort((a, b) => b.prijem - a.prijem);
+  safeCall(() => mineSerad(data));   // 21.98: vlastní pořadí / zvolené řazení
 
   const sum = k => data.reduce((a, d) => a + d[k], 0);
   const najem = data.reduce((a, d) => a + d.najemCelkem * d.dil, 0);
@@ -18230,6 +18437,10 @@ function renderMine(){
   // do sbalené skupiny — nahoře mají být domy, které hráči něco nesou nebo potřebují péči.
   const hlavni = data.filter(d => d.prijem > 0.5 || d.pct > 50 || d.problemy.length);
   const vedlejsi = data.filter(d => !hlavni.includes(d));
+  if(!mineUprava) html += safeCall(() => mineListaHtml()) || '';
+  if(mineUprava){
+    html += safeCall(() => mineEditorHtml(data)) || '';
+  } else {
   html += hlavni.map(radekDomu).join('');
   if(vedlejsi.length){
     const sid = 'blk_mineMensinove';
@@ -18237,6 +18448,7 @@ function renderMine(){
       <summary>Menšinové podíly bez výnosu · ${vedlejsi.length}</summary>
       ${vedlejsi.map(radekDomu).join('')}
     </details>`;
+  }
   }
 
   setHtml(el, html
@@ -20581,7 +20793,9 @@ function renderDaily(){
     html += `<div class="card" style="border-left:3px solid var(--danger);"><h3 style="color:var(--danger)">⚠️ Chůze pozastavena</h3>
       <p style="font-size:0.9em;">Poloha skákala nesmyslně rychle (auto, vlak nebo falešná GPS), takže se dnes za chůzi neplatí. Zítra se to samo obnoví.</p></div>`;
   }
-  html += (safeCall(() => souhrnTydneHtml()) || '') + (safeCall(() => vecerKartaHtml()) || '') + (safeCall(() => akceKartaHtml()) || '');
+  html += dlObal('tyden', '🗓️ Tvůj týden', safeCall(() => souhrnTydneHtml()) || '')
+        + dlObal('vecer', '🌙 Večer ve městě', safeCall(() => vecerKartaHtml()) || '')
+        + dlObal('akce', '🎪 Akce v Bučovicích', safeCall(() => akceKartaHtml()) || '');
 
   // --- první kroky: jen pro nováčky ---
   // Ukazovalo se i zkušeným hráčům („krok 1 z 6 — vezmi si práci" hráči s pěti domy
@@ -20590,13 +20804,13 @@ function renderDaily(){
   const krok = safeCall(() => dalsiKrok(u));
   const postup = krok ? (safeCall(() => postupKroku(u)) || { hotovo:0, celkem:6, splneno:0 }) : null;
   if(krok && postup.splneno < 4){
-    html += `<div class="card">
+    html += dlZac('krok', '🧭 Další krok') + `<div class="card">
       <div class="krokHlava"><span class="krokIkona">${krok.ikona}</span>
         <div><div class="krokNadpis">Další krok</div><div class="krokPostup">máš ${postup.splneno} z ${postup.celkem} · rada zmizí, až se rozjedeš</div></div></div>
       <div class="krokTecky">${Array.from({ length: postup.celkem }, (_, i) => `<span class="${i < postup.splneno ? 'hotovo' : ''}"></span>`).join('')}</div>
       <p style="font-size:0.93em;margin:4px 0;">${krok.text}</p>
       <div class="row"><button class="secondary" onclick="${krok.akce}">${krok.tlacitko} ›</button></div>
-    </div>`;
+    </div>` + DL_KON;
   }
 
   // --- DNES: přehled v dlaždicích + událost ve městě ---
@@ -20614,7 +20828,7 @@ function renderDaily(){
     pm ? { ik:pm.emoji, hod:`${POCASI.teplota} °C`, pop: pm.mult > 1 ? `chůze +${Math.round((pm.mult - 1) * 100)} % · ${pm.popis.toLowerCase()}` : `${pm.popis.toLowerCase()} · běžná chůze`, klik:'obnovPocasi()' }
        : { ik:'🚶', hod:`${Math.round(u.walkToday || 0)} m`, pop:'dnes ušlo' }
   ];
-  html += `<div class="card">
+  html += dlZac('dnes', '📅 Dnes') + `<div class="card">
     <h3>📅 Dnes</h3>
     <div class="dnesMrizka">${dlazdice.map(d => `<div class="dnesDl"${d.klik ? ` onclick="${d.klik}" style="cursor:pointer;"` : ''}>
       <span class="ik">${d.ik}</span><span class="hod"${d.barva ? ` style="color:${d.barva}"` : ''}>${d.hod}</span><span class="pop">${d.pop}</span></div>`).join('')}</div>
@@ -20624,8 +20838,9 @@ function renderDaily(){
     </div>
   </div>`;
 
+  html += DL_KON;
   // --- ÚKOLY + MÍSTA ZÁJMU (dřív dvě karty, které se překrývaly) ---
-  html += `<div class="card">
+  html += dlZac('ukoly', '🎯 Dnešní úkoly') + `<div class="card">
     <h3>🎯 Dnešní úkoly <span style="font-weight:400;color:var(--muted);">${done}/${total}</span></h3>`;
   u.quests.forEach(qid => {
     const q = questById(qid);
@@ -20651,6 +20866,7 @@ function renderDaily(){
       }).join('');
   }
   html += `<p class="fPozn">Splníš všechny tři? Bonus <b>${Math.round(QUEST_ALL_BONUS * inflationMult())} Kč</b>. Úkoly se mění o půlnoci.</p></div>`;
+  html += DL_KON;
 
   // --- KAM DOJÍT: balíky, místa zájmu, sbírka a akce v jednom seznamu od nejbližšího ---
   if(playerPos){
@@ -20667,12 +20883,12 @@ function renderDaily(){
     cile.forEach(c => c.d = haversine(playerPos, c.bod));
     cile.sort((a, b) => a.d - b.d);
     if(cile.length){
-      html += `<div class="card"><h3>🧭 Kam dojít pro peníze</h3>` +
+      html += dlZac('kam', '🧭 Kam dojít pro peníze') + `<div class="card"><h3>🧭 Kam dojít pro peníze</h3>` +
         cile.slice(0, 6).map(c => `<div class="tipRadek" onclick="${c.akce}">
           <span class="ik" style="width:30px;text-align:center;">${c.ik}</span>
           <div class="tx"><div class="nz">${c.nazev}</div><div class="ci" style="color:${PIN_DRUHY[c.druh].barva}">${PIN_DRUHY[c.druh].nazev} · ${PIN_DRUHY[c.druh].kdy}</div></div>
           <div class="kde"><b style="color:var(--gold);font-size:1.15em;">+${Math.round(c.odm)} Kč</b><br>${kudyText(c.bod, c.d)}</div></div>`).join('') +
-        (cile.length > 6 ? `<p class="fPozn">…a dalších ${cile.length - 6} na mapě.</p>` : '') + `</div>`;
+        (cile.length > 6 ? `<p class="fPozn">…a dalších ${cile.length - 6} na mapě.</p>` : '') + `</div>` + DL_KON;
     }
   }
 
@@ -20682,23 +20898,23 @@ function renderDaily(){
   const toClaim = pending.filter(g => g && !g.auto && !claimedIds.includes(g.id));
   if(toClaim.length){
     const sum = toClaim.reduce((s2, g) => s2 + (g.amount || 0), 0);
-    html += `<div class="card" style="border-left:3px solid var(--accent);">
+    html += dlZac('platba', '🎁 Čeká na tebe platba') + `<div class="card" style="border-left:3px solid var(--accent);">
       <h3>🎁 Čeká na tebe platba</h3>
       <div class="fHero"><span class="cislo" style="color:var(--gold)">+${sum.toLocaleString('cs-CZ')} Kč</span></div>
       ${toClaim.map(g => `<p class="fPozn" style="margin:2px 0;">${g.amount.toLocaleString('cs-CZ')} Kč od ${escapeHtml(g.from || '?')}${g.note ? ' — ' + escapeHtml(g.note) : ''}</p>`).join('')}
       <div class="row"><button onclick="claimGiftsNow()">Vyzvednout</button></div>
-    </div>`;
+    </div>` + DL_KON;
   }
 
   // --- na co se dá reagovat: zásobování, postavy ve městě ---
-  html += skladHtml;
+  html += dlObal('sklad', '📦 Zásobování', skladHtml);
   NPC_DEFS.forEach(def => {
     const p = npcKde(def.id);
     if(!p) return;
     const hotovo = npcPotkan(u, def.id);
     const d = playerPos ? haversine(playerPos, { lat:p.lat, lng:p.lng }) : null;
     const blizko = canInteract(p.lat, p.lng, EVA_RADIUS);
-    html += `<div class="card"${hotovo ? ' style="opacity:0.65;"' : ''}>
+    html += dlZac('npc_' + def.id, `${def.emoji} ${def.jmeno} — ${def.role}`) + `<div class="card"${hotovo ? ' style="opacity:0.65;"' : ''}>
       <div class="tipRadek" style="cursor:default;border:none;padding:0;">
         <span class="ik">${npcObrHtml(def.id, def.emoji, 38)}</span>
         <div class="tx"><div class="nz">${def.jmeno} <span style="font-weight:400;color:var(--muted);">— ${def.role}</span></div>
@@ -20709,16 +20925,16 @@ function renderDaily(){
       ${hotovo ? '' : `<div class="row" style="margin-top:8px;">
         <button ${blizko ? '' : 'disabled'} onclick="potkatNpc('${def.id}')">${blizko ? 'Promluvit si' : 'Musíš být blíž'}</button>
         <button class="secondary" onclick="ukazNpc('${def.id}')">Kde je</button></div>`}
-    </div>`;
+    </div>` + DL_KON;
   });
   html += safeCall(() => chodciKartyHtml(u)) || '';
   if(u.lastEvent && u.lastEvent.day === world.day){
     const castka = u.lastEvent.amount || 0;
-    html += `<div class="card"><div class="fR"><span class="l">🎲 ${escapeHtml(u.lastEvent.txt || 'Dnešní setkání')}</span>
-      ${castka ? `<span class="v" style="color:${castka >= 0 ? 'var(--accent)' : 'var(--danger)'}">${castka > 0 ? '+' : ''}${Math.round(castka).toLocaleString('cs-CZ')} Kč</span>` : ''}</div></div>`;
+    html += dlZac('setkani', '🎲 Dnešní setkání') + `<div class="card"><div class="fR"><span class="l">🎲 ${escapeHtml(u.lastEvent.txt || 'Dnešní setkání')}</span>
+      ${castka ? `<span class="v" style="color:${castka >= 0 ? 'var(--accent)' : 'var(--danger)'}">${castka > 0 ? '+' : ''}${Math.round(castka).toLocaleString('cs-CZ')} Kč</span>` : ''}</div></div>` + DL_KON;
   }
-  html += renderOnboarding(u);
-  html += sbirkaHtml;
+  html += dlObal('prvni', '🎓 První kroky', renderOnboarding(u));
+  html += dlObal('sbirka', '🗺️ Sbírka míst', sbirkaHtml);
 
   // --- upozornění: jen řádek, ne celá karta ---
   if(typeof Notification !== 'undefined'){
@@ -20747,6 +20963,12 @@ function renderDaily(){
     <p><b>Vše se obnovuje o půlnoci</b> — nové úkoly, nové balíky, místa jde zase navštívit.</p>
   `);
 
+  // 21.98: hráčovo pořadí dlaždic (Eva si chtěla dát „Kde je Eva" nahoru)
+  const ser = safeCall(() => dlSeradit(html, mojePoradi().vyzvy));
+  if(ser){
+    dlPosledni = ser.bloky;
+    html = dlUprava ? dlEditorHtml(ser.bloky) : dlListaHtml() + ser.html;
+  }
   setHtml(el, html);
 }
 
@@ -22322,6 +22544,11 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'21.98', datum:'2026-11-07', body:[
+    ['novinka','↕️ Vlastní pořadí dlaždic v Denních výzvách — tlačítko „Uspořádat dlaždice" nahoře. Třeba „Eva" nebo „Kam dojít pro peníze" si dáš úplně nahoru (⏫). Pořadí platí na všech tvých zařízeních. Nápad od Evy.'],
+    ['novinka','📌 Moje nemovitosti: domy si můžeš seřadit po svém (✏️ Uspořádat), nebo podle výnosu, názvu či problémů.'],
+    ['oprava','🏠 Domy v Mých nemovitostech už samy neskáčou. Řadily se podle dnešního výnosu, takže stačilo, aby došly zásoby nebo odešel nájemník, a dům se přesunul jinam. Teď drží tvoje pořadí, nově koupené domy přibydou na konec.'],
+  ]},
   { verze:'21.97', datum:'2026-11-07', body:[
     ['oprava','🏪 Název provozovny se už nevrátí na starší. Když jsi hrál na dvou zařízeních, starší z nich uměl při synchronizaci vrátit původní název (Eva přišla o „&" ve „Fit&Eff"). Teď vždy vyhraje poslední přejmenování. Kdo o název přišel, pojmenuj provozovnu znovu — tentokrát už vydrží.'],
     ['novinka','🛣️ V detailu domu u ulice je rozbalovací seznam „Domy v ulici": které domy do ulice patří, kdo je řídí, které ti chybí a jak daleko jsou — s tlačítkem Ukázat na mapě. U domu bez adresy je napsáno, že do žádné ulice nepatří.'],
@@ -25506,7 +25733,7 @@ function chodciKartyHtml(u){
     }
     const d = (!p.sTebou && playerPos) ? haversine(playerPos, p) : null;
     const blizko = p.sTebou || canInteract(p.lat, p.lng, CHODEC_RADIUS);
-    html += `<div class="card"${hotovo ? ' style="opacity:0.7;"' : ''}>
+    html += dlZac('chodec_' + def.id, t ? `${def.emoji} ${t.jmeno} — turista` : `${def.emoji} ${chodecJmeno(def.id)} — ${def.role}`) + `<div class="card"${hotovo ? ' style="opacity:0.7;"' : ''}>
       <div class="tipRadek" style="cursor:default;border:none;padding:0;">
         <span class="ik">${npcObrHtml(t ? turistaPortretKlic(t) : def.id, def.emoji, 38)}</span>
         <div class="tx"><div class="nz">${jm}</div><div class="ci">${popis}</div></div>
@@ -25515,7 +25742,7 @@ function chodciKartyHtml(u){
       <div class="row" style="margin-top:8px;">
         <button ${blizko ? '' : 'disabled'} onclick="mluvitSChodcem('${def.id}')">${blizko ? '💬 Promluvit si' : 'Musíš být blíž'}</button>
         <button class="secondary" onclick="ukazChodce('${def.id}')">${(t && turistaStav(u) === 'vede') || (def.id === 'babicka' && babickaStav(u) === 'jde') ? 'Kam jdu' : 'Kde je'}</button></div>
-    </div>`;
+    </div>` + DL_KON;
   });
   return html;
 }
