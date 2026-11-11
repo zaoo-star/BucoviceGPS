@@ -1942,8 +1942,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '21.99';
-const APP_BUILD = '11.11.2026 10:30';
+const APP_VERSION = '22.0';
+const APP_BUILD = '11.11.2026 10:20';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -8961,6 +8961,25 @@ async function adminGeminiSmaz(){
   if(!(await showConfirm('Smazat klíč ke Gemini ze hry? Chodci budou mluvit přes Claude (jestli je zadaný) a zpravodaj přijde o obrázek.'))) return;
   aiZmen({ gemini: null });
 }
+// Vypnutí Gemini u prostředníka (22.0) — klíč zůstává v prostředníkovi, hra ho jen přestane
+// používat. Chodci pak mluví přes Claude (když je zapnutý), zpravodaj bude bez obrázku.
+async function adminGeminiVypni(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  if(!(await showConfirm('Vypnout Gemini? Chodci budou mluvit přes Claude a zpravodaj bude bez obrázku. Zapnout ho jde zase jedním tlačítkem.'))) return;
+  aiZmen({ pGemini: false, gemini: null });
+  showToast('⏸️ Gemini je vypnutý pro celou hru');
+}
+async function adminGeminiZapni(){
+  if(!jsemHlavniAdmin()) return upozorniHlavni();
+  const u = aiProxy();
+  if(!u) return;
+  let st = null;
+  try { const r = await fetch(u + '/status'); st = await r.json(); } catch(e){}
+  if(!st || st.ok !== true){ showAlert('❌ Prostředník neodpovídá — zkus to za chvíli.'); return; }
+  if(!st.gemini){ showAlert('❌ Prostředník nemá nastavený klíč ke Gemini (GEMINI_KEY).'); return; }
+  aiZmen({ pGemini: true });
+  showToast('▶️ Gemini je zase zapnutý');
+}
 function adminGeminiModel(id){ if(platnyModel(id)) aiZmen({ gModel: id }); }
 function adminGeminiObrModel(id){ if(platnyModel(id)) aiZmen({ gObr: id }); }
 async function adminGeminiVlastni(obr){
@@ -9022,7 +9041,10 @@ function adminAiKartaHtml(){
 
   // Gemini
   h += `<p style="font-size:0.92em;margin:14px 0 4px;"><b>Gemini</b> — mluví za chodce a kreslí obrázek ke zpravodaji</p>`;
-  if(!gk){
+  if(!gk && aiProxy()){
+    h += `<p style="font-size:0.88em;margin:2px 0;color:var(--muted);">⏸️ Gemini je vypnutý — chodci mluví přes Claude, zpravodaj je bez obrázku.</p>`
+      + (jsemHlavniAdmin() ? `<div class="row"><button class="secondary" onclick="adminGeminiZapni()">▶️ Zapnout Gemini</button></div>` : '');
+  } else if(!gk){
     h += jsemHlavniAdmin() ? `<div class="row"><button class="${klic ? 'secondary' : ''}" onclick="adminGeminiKlic()">🔑 Zadat klíč ke Gemini</button></div>` : `<p style="font-size:0.84em;color:var(--muted);">Klíč zadává hlavní správce.</p>`;
   } else {
     const gm = geminiModel(), go = geminiObrModel();
@@ -9030,7 +9052,8 @@ function adminAiKartaHtml(){
       <div class="row" style="gap:6px;">
         <button class="secondary" onclick="adminGeminiTest()">🧪 Vyzkoušet</button>
         ${jsemHlavniAdmin() && gk !== 'proxy' ? `<button class="secondary" onclick="adminGeminiKlic()">🔑 Změnit</button>
-        <button class="danger" onclick="adminGeminiSmaz()">Smazat</button>` : ''}</div>
+        <button class="danger" onclick="adminGeminiSmaz()">Smazat</button>` : ''}
+        ${jsemHlavniAdmin() && gk === 'proxy' ? `<button class="danger" onclick="adminGeminiVypni()">⏸️ Vypnout</button>` : ''}</div>
       <p style="font-size:0.84em;margin:8px 0 4px;">Model na texty${GEMINI_MODELY.some(m => m.id === gm) ? '' : ': <b>' + escapeHtml(gm) + '</b>'}</p>
       <div class="row" style="gap:6px;">${GEMINI_MODELY.map(m => modelBtn(m, gm === m.id, 'adminGeminiModel')).join('')}</div>
       <p style="font-size:0.84em;margin:8px 0 4px;">Model na obrázky${GEMINI_OBR_MODELY.some(m => m.id === go) ? '' : ': <b>' + escapeHtml(go) + '</b>'}</p>
@@ -22707,6 +22730,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'22.0', datum:'2026-11-11', body:[
+    ['admin','⏸️ Admin → AI ve hře: Gemini jde u prostředníka vypnout a zase zapnout, aniž by se odpojoval Claude.'],
+  ]},
   { verze:'21.99', datum:'2026-11-11', body:[
     ['novinka','🏘️ Řadovky: když v jedné ulici rozhoduješ o víc domech stejného typu, které stojí zeď na zeď, spojí se do řadovky — stejná budova, natočená podél ulice, a pozemky propojené pruhem v tvé barvě. Nápad od Jerryho.'],
     ['novinka','🔄 Domy jde natočit: Vzhled domu → Natočení, 4 strany. Každá budova je teď vykreslená zepředu, z boků i zezadu — u obchodů a bytovek uvidíš i výlohy. V řadovce se natočení i budova změní pro celou řadu.'],
