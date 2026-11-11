@@ -1942,8 +1942,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '22.0';
-const APP_BUILD = '11.11.2026 10:20';
+const APP_VERSION = '22.1';
+const APP_BUILD = '11.11.2026 13:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -8690,6 +8690,16 @@ function aiHlidejLimit(){
   if(d) throw new Error(d.charAt(0).toUpperCase() + d.slice(1) + '.');
   aiZapoctiHrace();
 }
+// Když AI narazí na limit délky, odpověď skončí uprostřed slova („Světla by mohlo být víc a ch").
+// Pak ji uřízneme za poslední celou větou; když žádná není, aspoň přidáme „…" (22.1).
+function orizniNaVetu(t){
+  t = String(t || '').trim();
+  const re = /[.!?…]["“”»)]*(?=\s|$)/g;
+  let m, konec = -1;
+  while((m = re.exec(t))) konec = m.index + m[0].length;
+  if(konec >= Math.min(25, t.length * 0.3)) return t.slice(0, konec).trim();
+  return t.replace(/[\s,;:–-]+\S{0,3}$/, '').trimEnd() + '…';
+}
 // Jeden dotaz na Claude. Vrací text odpovědi, při chybě hodí Error s českou zprávou.
 async function claudeVolej(system, zpravy, maxTokens){
   const klic = aiKlic();
@@ -8714,8 +8724,9 @@ async function claudeVolej(system, zpravy, maxTokens){
   let j = null;
   try { j = await r.json(); } catch(e){}
   if(!r.ok) throw new Error(claudeChybaText(r.status, j && j.error && j.error.message));
-  const text = asArray(j && j.content).filter(c => c && c.type === 'text').map(c => c.text).join('').trim();
+  let text = asArray(j && j.content).filter(c => c && c.type === 'text').map(c => c.text).join('').trim();
   if(!text) throw new Error('Claude neposlal žádný text.');
+  if(j && j.stop_reason === 'max_tokens') text = orizniNaVetu(text);
   return text;
 }
 
@@ -8826,8 +8837,10 @@ async function geminiVolej(system, zpravy, maxTokens){
       j = await geminiZadost(geminiModel(), telo(false), telo2);
     } else throw e;
   }
-  const text = geminiBloky(j).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  let text = geminiBloky(j).filter(b => b.type === 'text').map(b => b.text).join('').trim();
   if(!text) throw new Error('Gemini neposlal žádný text.');
+  const c0 = j && asArray(j.candidates)[0];
+  if(j && (j.status === 'incomplete' || j.incomplete_details || (c0 && /MAX_TOKENS/i.test(c0.finishReason || '')))) text = orizniNaVetu(text);
   return text;
 }
 // Obrázek z popisu → data-URL. Velikost neřešíme, zmenší se až v telefonu.
@@ -9507,7 +9520,7 @@ async function promluvitSNajemnikem(houseId, idx){
       if(mimoHru(text)) return najemnikMimoHru(x.u);
       navrh = navrhNajmu(text, x.p, x.u);
       const system = najemnikPravidla(x.u, x.p) + (navrh ? ' ' + navrh.proAI : '');
-      const odp = await aiVolej(system, rzHistorie(r.zpravy, 9), 220, 'claude');
+      const odp = await aiVolej(system, rzHistorie(r.zpravy, 9), 400, 'claude');
       return odp.slice(0, 500);
     },
     akce: () => {
@@ -22730,6 +22743,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'22.1', datum:'2026-11-11', body:[
+    ['oprava','💬 Nájemníci a chodci už nekončí uprostřed slova. Mají víc místa na odpověď, a kdyby se přece jen nevešla, skončí poslední celou větou.'],
+  ]},
   { verze:'22.0', datum:'2026-11-11', body:[
     ['admin','⏸️ Admin → AI ve hře: Gemini jde u prostředníka vypnout a zase zapnout, aniž by se odpojoval Claude.'],
   ]},
@@ -25793,7 +25809,7 @@ async function mluvitSChodcem(id){
       if(mimo) return chodecMimoHru(id, t);
       const ja = world.users[currentUser.name];
       const system = chodecPravidla(id, chodecKde(id) || p, t, ja);
-      const odp = await aiVolej(system, rzHistorie(zpravy, 9), 200, 'gemini');
+      const odp = await aiVolej(system, rzHistorie(zpravy, 9), 350, 'gemini');
       aiZapocti('chodci');
       return odp.replace(/^[„"“\s]+|[“"”\s]+$/g, '').slice(0, 500);
     } : null,
