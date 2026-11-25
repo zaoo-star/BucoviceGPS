@@ -1942,8 +1942,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '22.2';
-const APP_BUILD = '11.11.2026 13:40';
+const APP_VERSION = '22.3';
+const APP_BUILD = '25.11.2026 06:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -6102,11 +6102,38 @@ function poptavkaVypocet(p, typId){
 // z roku 2017 a novější se na starších Androidech (hlavně Huawei) ukazovaly jako „◆◆◆◆".
 const BEZPECNE_IKONY = { '🧑‍🎓':'🎓', '👨‍👩‍👧':'👪', '🧑‍💼':'💼', '🧑‍💻':'💻', '🧑‍🎨':'🎨', '🧑':'👤' };
 function bezpecnaIkona(a){
-  if(!a) return '👤';
-  if(BEZPECNE_IKONY[a]) return BEZPECNE_IKONY[a];
+  if(!a) return emojiNebo('👤', '☺');
+  if(BEZPECNE_IKONY[a]) return emojiNebo(BEZPECNE_IKONY[a], '☺');
   // cokoliv jiného složeného nebo z bloku U+1F900 (2016+) nahradíme obecnou postavou
-  if(a.includes('‍') || [...a].some(c => { const k = c.codePointAt(0); return k >= 0x1F900 && k <= 0x1FAFF; })) return '👤';
-  return a;
+  if(a.includes('‍') || [...a].some(c => { const k = c.codePointAt(0); return k >= 0x1F900 && k <= 0x1FAFF; })) return emojiNebo('👤', '☺');
+  return emojiNebo(a, '☺');
+}
+// Umí telefon emoji opravdu nakreslit? (22.3) Na Evině starším telefonu se místo ikonky
+// nájemnice ukázaly dva znaky „�". Emoji se zkusí nakreslit na malé plátno: kreslí-li se
+// barevně, telefon ho zná. Jinak se použije náhrada ze základní sady znaků. Výsledek se pamatuje.
+const _emojiUmi = {};
+function emojiNebo(e, nahrada){
+  if(!e || /^[\u0000-\u2FFF]+$/.test(e)) return e;                       // základní znaky umí každý telefon
+  if(e in _emojiUmi) return _emojiUmi[e] ? e : nahrada;
+  let umi = true;
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 24;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    if(g){
+      g.textBaseline = 'top'; g.font = '20px sans-serif'; g.fillStyle = '#000';
+      g.fillText(e, 0, 0);
+      const d = g.getImageData(0, 0, 24, 24).data;
+      let barevne = 0, kresleno = 0;
+      for(let i = 0; i < d.length; i += 4){
+        if(d[i + 3] < 40) continue;
+        kresleno++;
+        if(Math.abs(d[i] - d[i + 1]) > 18 || Math.abs(d[i + 1] - d[i + 2]) > 18) barevne++;
+      }
+      umi = kresleno > 0 && barevne > 3;
+    }
+  } catch(x){ umi = true; }
+  _emojiUmi[e] = umi;
+  return umi ? e : nahrada;
 }
 
 // ===== PROVOZOVNA V PŘÍZEMÍ =====
@@ -22456,6 +22483,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'22.3', datum:'2026-11-25', body:[
+    ['oprava','🧑 Na starších telefonech se místo ikonky nájemníka občas ukázaly znaky „�". Když telefon emoji nezná, ukáže se teď jednoduchý obličej ☺.'],
+  ]},
   { verze:'22.2', datum:'2026-11-11', body:[
     ['zmena','🤖 AI ve hře je teď jen Claude — chodci mluví přes něj a zpravodaj vychází bez ilustrace.'],
     ['admin','🧹 Gemini je ze hry úplně pryč: klíč, modely, kreslení ilustrací i portrétů. Staré nastavení Gemini se ze světa smaže při další změně v AI.'],
