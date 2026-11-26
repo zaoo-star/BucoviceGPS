@@ -1942,7 +1942,7 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '22.5';
+const APP_VERSION = '22.6';
 const APP_BUILD = '26.11.2026 20:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
@@ -2244,7 +2244,7 @@ async function vyhovPozadavku(houseId, unitIdx){
 
   if(akce === 'sleva'){
     if(!(await showConfirm(`Slevit ${kdo} z ${u.rentPrice} na ${z.cil} Kč/den?\n\n` +
-        `Přijdeš o ${u.rentPrice - z.cil} Kč denně, ale ${POZADAVEK_VERNOST} dní se neodstěhuje, ani kdyby byl nájem vyšší.`))) return;
+        `Přijdeš o ${u.rentPrice - z.cil} Kč denně, ale ${POZADAVEK_VERNOST} dní bude vděčný: neodstěhuje se a unese i o ${Math.round((VERNOST_PRIPLATEK - 1) * 100)} % vyšší nájem.`))) return;
     nastavNajem(u, z.cil);
   } else if(akce === 'zaplatit'){
     if((me.balance || 0) < z.cena){ showAlert(`Potřebuješ ${z.cena} Kč, máš ${Math.round(me.balance)} Kč.`); return; }
@@ -9156,7 +9156,7 @@ function najemnikKontext(p, u){
     const co = (pozadavekTlacitko(p, u) || {}).popis || pozadavekRada(p, u) || '';
     f.push(`Máš u pronajímatele prosbu: ${pozadavekText(p, u)}${co ? ' (vyřeší to: ' + co + ')' : ''}. Když se do ${zbyva} ${zbyva === 1 ? 'dne' : 'dnů'} nic nestane, odstěhuješ se.`);
   }
-  if((u.vernostDo || 0) > calendarDay()) f.push('Pronajímatel ti nedávno vyhověl, jsi mu vděčný a nějakou dobu se nestěhuješ, ani kdyby zdražil.');
+  if((u.vernostDo || 0) > calendarDay()) f.push(`Pronajímatel ti nedávno vyhověl, jsi mu vděčný: ještě ${u.vernostDo - calendarDay()} dní se nestěhuješ a zaplatíš i vyšší nájem, nejvýš ${Math.round(npcMaxNajem(p, u))} Kč denně.`);
   // město dnes
   const ev = todaysCityEvent(world.day);
   if(ev && ev.id !== 'klid' && !ev.lokalni) f.push(`Dnes ve městě: ${ev.name} — ${ev.desc}`);
@@ -10206,8 +10206,17 @@ function mestoSpravujeDum(p){
 // Kolik nájemník-NPC v tomhle domě nejvýš zaplatí — v celých korunách. Jediné místo,
 // ze kterého to berou výpočty, výhledy i texty, ať se nikde nerozchází.
 function hraniceNajemnika(p){ return Math.round(fairRentForHouse(p) * NAJEMNIK_TOLERANCE); }
+// Vděčný nájemník (22.6): komu jsi vyhověl, ten po dobu vděčnosti unese o 15 % vyšší nájem
+// a opravdu ho platí. Dřív se psalo „neodstěhuje se, ani kdyby nájem stoupl", jenže zaplatil
+// stejně jen svou hranici — zdražení nic nepřineslo a hra ještě strašila stěhováním (Eva).
+const VERNOST_PRIPLATEK = 1.15;
+function npcVdecny(u){ return !!(u && u.npc && (u.vernostDo || 0) > calendarDay()); }
 function npcMaxNajem(p, u){
   if(!u || !u.npc) return Infinity;
+  if(npcVdecny(u)) return Math.round(npcMaxNajemZaklad(p, u) * VERNOST_PRIPLATEK);
+  return npcMaxNajemZaklad(p, u);
+}
+function npcMaxNajemZaklad(p, u){
   // Nájemník, který si nájem nabídl sám (zájemce z ulice), unese aspoň tu svou cenu.
   if(typeof u.npc.dohoda === 'number' && u.npc.dohoda > 0) return Math.max(hraniceNajemnika(p), Math.round(u.npc.dohoda));
   // V CELÝCH korunách, zaokrouhleno stejně, jak to hra všude ukazuje. Dřív se porovnávalo
@@ -10447,9 +10456,9 @@ function resPozadavky(){
           stampUnit(u); stampHouse(p);
           addNews('rental', `🤝 ${kdo} z domu ${domKratce(p)} děkuje — zůstává a ${POZADAVEK_VERNOST} dní nikam nejde.`, p.id);
           postaPridej(rozhoduje, { typ:'dekuje', od:kdo, dum:p.id, uid:u.uid, klic:`dekuje-${p.id}-${u.uid}`,
-            text:`Děkuj${postaTvar(kdo, 'i', 'i', 'eme')}, že jste ${postaTvar(kdo, 'mi', 'mi', 'nám')} vyšli vstříc! ${postaTvar(kdo, 'Zůstávám', 'Zůstávám', 'Zůstáváme')} a ${POZADAVEK_VERNOST} dní se nikam nestěhuj${postaTvar(kdo, 'i', 'i', 'eme')}, ani kdyby nájem trochu stoupl.` });
+            text:`Děkuj${postaTvar(kdo, 'i', 'i', 'eme')}, že jste ${postaTvar(kdo, 'mi', 'mi', 'nám')} vyšli vstříc! ${postaTvar(kdo, 'Zůstávám', 'Zůstávám', 'Zůstáváme')} a ${POZADAVEK_VERNOST} dní se nikam nestěhuj${postaTvar(kdo, 'i', 'i', 'eme')}, i když nájem trochu zvednete — až o ${Math.round((VERNOST_PRIPLATEK - 1) * 100)} % (${Math.round(npcMaxNajemZaklad(p, u) * VERNOST_PRIPLATEK)} Kč denně) to ${postaTvar(kdo, 'zaplatím', 'zaplatím', 'zaplatíme')}.` });
           if(currentUser && rozhoduje === currentUser.name)
-            notifyPlayer('Nájemník děkuje', `${kdo} z domu ${domLabel(p)} zůstává. ${POZADAVEK_VERNOST} dní se neodstěhuje, ani kdyby byl nájem vyšší.`);
+            notifyPlayer('Nájemník děkuje', `${kdo} z domu ${domLabel(p)} zůstává. ${POZADAVEK_VERNOST} dní zaplatí i nájem až ${Math.round(npcMaxNajemZaklad(p, u) * VERNOST_PRIPLATEK)} Kč a neodstěhuje se.`);
           return;
         }
         if(den > (u.pozadavek.doKdy || 0)){
@@ -17689,7 +17698,7 @@ function renderSelected(id){
             <button onclick="vyhovPozadavku('${p.id}',${idx})">${pozadavekTlacitko(p, u).popis}</button></div>` : ''}
           ${iDecide && pozadavekRada(p, u) ? `<p style="margin:4px 0 0;font-size:0.84em;color:var(--accent)">${pozadavekRada(p, u)}</p>` : ''}
         </div>` : ''}
-        ${(u.vernostDo || 0) > calendarDay() ? `<p style="margin:4px 0;font-size:0.85em;color:var(--accent)">🤝 Vděčný nájemník — ${(u.vernostDo - calendarDay())} ${sklonuj(u.vernostDo - calendarDay(), 'den', 'dny', 'dní')} se neodstěhuje, ani kdyby byl nájem vyšší.</p>` : ''}
+        ${(u.vernostDo || 0) > calendarDay() ? `<p style="margin:4px 0;font-size:0.85em;color:var(--accent)">🤝 Vděčný nájemník — ${(u.vernostDo - calendarDay())} ${sklonuj(u.vernostDo - calendarDay(), 'den', 'dny', 'dní')} zaplatí i vyšší nájem, až ${Math.round(npcMaxNajem(p, u))} Kč. Pak se vrátí na ${Math.round(npcMaxNajemZaklad(p, u))} Kč.</p>` : ''}
         <div class="ddStavRadek"><span>Stav bytu</span><b style="color:${u.condition<30?'var(--danger)':(u.condition<60?'var(--orange)':'var(--accent)')}">${Math.round(u.condition)} %</b></div>
         <div class="condBar ddBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':(u.condition<60?'var(--orange)':'var(--accent)')}"></div></div>
         ${!iDecide && mestoSpravuje(p) ? `<p style="margin:4px 0;font-size:0.82em;color:var(--muted);">🏛️ Dům spravuje město — nikdo nemá přes 50 %. Než by nájemník kvůli stavu odešel, město byt opraví na ${MESTO_OPRAVA_NA} %${(p.owners || {})[currentUser && currentUser.name] > 0 ? ' a ty zaplatíš díl podle svého podílu' : ''}.</p>` : ''}
@@ -22525,6 +22534,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'22.6', datum:'2026-11-26', body:[
+    ['oprava','🤝 Vděčný nájemník (komu jsi vyhověl) teď opravdu zaplatí vyšší nájem — po dobu vděčnosti až o 15 % víc, než by unesl jinak, a neodstěhuje se. Dřív slíbil, že zdražení vydrží, ale zaplatil stejně jen svou hranici. Díky, Evo!'],
+  ]},
   { verze:'22.5', datum:'2026-11-26', body:[
     ['novinka','🏛️ Domy, ve kterých nikdo nemá přes 50 %, spravuje město: než by nájemník kvůli stavu bytu odešel, město byt opraví. Spoluvlastníci zaplatí díl opravy podle svého podílu, zbytek platí město. Díky, Evo!'],
   ]},
