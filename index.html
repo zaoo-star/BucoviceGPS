@@ -1942,8 +1942,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '22.3';
-const APP_BUILD = '25.11.2026 06:00';
+const APP_VERSION = '22.4';
+const APP_BUILD = '26.11.2026 20:00';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -19535,13 +19535,21 @@ async function buyHouseStakeOnMortgage(id){
   showAlert(`Hotovo! Vlastníš ${des(pct, 1)} % domu. Bance dlužíš ${uver.toLocaleString('cs-CZ')} Kč — splátky ti bude strhávat sama, ${dennaSplatka} Kč denně.`);
 }
 
+// Peníze ve hře mají i haléře (třeba 2836,60 Kč). Předvyplněná částka se dřív zaokrouhlila
+// nahoru (2837) a hra pak hlásila „Nemáš dost peněz" — Eva musela poslední korunu přepisovat.
+// Teď se předvyplňuje dolů a rozdíl menší než koruna se odpustí (22.4).
+function nejvysKc(max){ return Math.max(0, Math.floor((max || 0) + 1e-9)); }
+function doKoruny(castka, max){ return (castka > max && castka - max < 1) ? max : castka; }
 async function repayLoan(loanId){
   const me = world.users[currentUser.name];
   const loan = me.loans.find(l => l.id === loanId);
   if(!loan) return;
-  const amount = parseInt(await showPrompt(`Kolik splatit? (dluh ${Math.round(loan.balance)} Kč)`, Math.min(Math.round(loan.balance), Math.round(me.balance))), 10);
+  const naUctu = nejvysKc(me.balance);
+  let amount = parseInt(await showPrompt(`Kolik splatit? (dluh ${Math.ceil(loan.balance - 1e-9)} Kč, na účtu máš ${naUctu} Kč)`,
+    Math.min(Math.ceil(loan.balance - 1e-9), naUctu)), 10);
   if(isNaN(amount) || amount <= 0) return;
-  if(amount > me.balance){ showAlert('Nemáš dost peněz.'); return; }
+  amount = doKoruny(amount, me.balance);
+  if(amount > me.balance){ showAlert(`Nemáš dost peněz — na účtu máš ${naUctu} Kč.`); return; }
   const pay = Math.min(amount, loan.balance);
   me.balance -= pay;
   loan.balance -= pay;
@@ -22483,6 +22491,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'22.4', datum:'2026-11-26', body:[
+    ['oprava','🏦 Splácení dluhu v bance: předvyplněná částka už není o korunu vyšší, než máš na účtu — stačí potvrdit OK. Totéž u vkladu a výběru ze spoření. Díky, Evo!'],
+  ]},
   { verze:'22.3', datum:'2026-11-25', body:[
     ['oprava','🧑 Na starších telefonech se místo ikonky nájemníka občas ukázaly znaky „�". Když telefon emoji nezná, ukáže se teď jednoduchý obličej ☺.'],
   ]},
@@ -24703,8 +24714,9 @@ function renderBank(){
 
 async function depositSavings(){
   const me = world.users[currentUser.name];
-  const amount = parseInt(await showPrompt(`Kolik vložit na spoření? (na účtu máš ${Math.round(me.balance)} Kč)`, Math.max(0, Math.round(me.balance/2))), 10);
+  let amount = parseInt(await showPrompt(`Kolik vložit na spoření? (na účtu máš ${nejvysKc(me.balance)} Kč)`, nejvysKc(me.balance / 2)), 10);
   if(isNaN(amount) || amount <= 0) return;
+  amount = doKoruny(amount, me.balance);
   if(amount > me.balance){ showAlert('Tolik na účtu nemáš.'); return; }
   me.balance -= amount;
   me.savings = (me.savings || 0) + amount;
@@ -24716,8 +24728,9 @@ async function depositSavings(){
 async function withdrawSavings(){
   const me = world.users[currentUser.name];
   if(!(me.savings > 0)){ showAlert('Na spoření nic nemáš.'); return; }
-  const amount = parseInt(await showPrompt(`Kolik vybrat ze spoření? (naspořeno ${Math.round(me.savings)} Kč)`, Math.round(me.savings)), 10);
+  let amount = parseInt(await showPrompt(`Kolik vybrat ze spoření? (naspořeno ${nejvysKc(me.savings)} Kč)`, nejvysKc(me.savings)), 10);
   if(isNaN(amount) || amount <= 0) return;
+  amount = doKoruny(amount, me.savings);
   if(amount > me.savings){ showAlert('Tolik naspořeno nemáš.'); return; }
   me.savings -= amount;
   me.balance += amount;
