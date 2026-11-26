@@ -1942,8 +1942,8 @@ function modalConfirmCancel(){
 
 // Verze a čas sestavení — ať je vždycky poznat, jestli appka běží na aktuálním kódu.
 // Když po nahrání nové verze vidíš staré datum, appka servíruje starý soubor (cache/GitHub).
-const APP_VERSION = '22.4';
-const APP_BUILD = '26.11.2026 20:00';
+const APP_VERSION = '22.5';
+const APP_BUILD = '26.11.2026 20:30';
 
 const STORAGE_KEY_LEGACY = 'bucovice_landlord_v9';   // původní klíč Bučovic — zachováme, ať nikdo nepřijde o rozehranou hru
 // Klíč pro uložený svět. Bučovice zůstávají na původním klíči (zpětná kompatibilita),
@@ -9858,6 +9858,7 @@ function tickVnitrni(){
   });
   Object.values(world.parcels).forEach(p => {
     if(p.useType === 'rental' && p.units){
+      safeCall(() => mestoSpravujeDum(p));
       p.units.forEach(u => {
         let collected = 0;
         if(u.condition > 0){
@@ -10168,6 +10169,38 @@ function stavBytuTick(u, rychlost, now){
   const uplynulo = Math.max(0, now - u.cTs);
   u.condition = Math.max(0, Math.min(100, u.cBase - u.cRate * uplynulo / GAME_DAY_MS));
   u.cLast = u.condition;
+}
+
+// ===== MĚSTO SPRAVUJE DOMY BEZ ROZHODUJÍCÍHO MAJITELE (22.5) =====
+// Eva: „když dům patří většinově městu, jen chátrá, nájemníci odcházejí a nikdo ho nespravuje".
+// Když žádný hráč nemá přes 50 %, nemůže nikdo opravovat. Teď se o byty postará město:
+// než stav klesne tak nízko, že by nájemník odešel, opraví byt na MESTO_OPRAVA_NA %.
+// Hráči-spoluvlastníci zaplatí svůj díl podle podílu (strhne se jim jako platba „Město"),
+// zbytek platí město. Jeden byt nejvýš jednou za den — platba má pevné id, takže ji
+// ani dvě zařízení najednou nestrhnou dvakrát.
+const MESTO_OPRAVA_POD = 50;   // pod tímhle stavem město opravuje (nebo dřív, když by nájemník odešel)
+const MESTO_OPRAVA_NA = 85;
+function mestoSpravuje(p){ return !!p && p.useType === 'rental' && !houseDecider(p); }
+function mestoSpravujeDum(p){
+  if(!mestoSpravuje(p) || !p.units) return;
+  const den = calendarDay();
+  asArray(p.units).forEach((u, idx) => {
+    if(!u || u.ownerOccupied) return;
+    const c = Number(u.condition) || 0;
+    const hranice = Math.max(MESTO_OPRAVA_POD, u.npc && isFinite(u.npc.minCondition) ? u.npc.minCondition + 6 : 0);
+    if(c >= hranice || u.mestoOpravaDen === den) return;
+    const body = MESTO_OPRAVA_NA - c;
+    if(body <= 0) return;
+    const cena = Math.max(1, Math.round(body * cenaOpravyBod()));
+    u.mestoOpravaDen = den;
+    nastavStav(u, MESTO_OPRAVA_NA);
+    stampUnit(u); stampHouse(p);
+    const klic = `mesto_oprava_${p.id}_${u.uid || idx}_${den}`;
+    Object.entries(p.owners || {}).forEach(([jm, pct]) => {
+      const dil = Math.round(cena * (Number(pct) || 0) / 100);
+      if(dil >= 1 && world.users[jm]) zaplatHraci(jm, -dil, klic, 'Město', `Oprava bytu ${idx + 1} v ${domKratce(p)} (tvůj díl ${des(pct, 1)} %)`);
+    });
+  });
 }
 
 // Kolik nájemník-NPC v tomhle domě nejvýš zaplatí — v celých korunách. Jediné místo,
@@ -17659,6 +17692,7 @@ function renderSelected(id){
         ${(u.vernostDo || 0) > calendarDay() ? `<p style="margin:4px 0;font-size:0.85em;color:var(--accent)">🤝 Vděčný nájemník — ${(u.vernostDo - calendarDay())} ${sklonuj(u.vernostDo - calendarDay(), 'den', 'dny', 'dní')} se neodstěhuje, ani kdyby byl nájem vyšší.</p>` : ''}
         <div class="ddStavRadek"><span>Stav bytu</span><b style="color:${u.condition<30?'var(--danger)':(u.condition<60?'var(--orange)':'var(--accent)')}">${Math.round(u.condition)} %</b></div>
         <div class="condBar ddBar"><div class="condBarFill" style="width:${u.condition}%;background:${u.condition<30?'var(--danger)':(u.condition<60?'var(--orange)':'var(--accent)')}"></div></div>
+        ${!iDecide && mestoSpravuje(p) ? `<p style="margin:4px 0;font-size:0.82em;color:var(--muted);">🏛️ Dům spravuje město — nikdo nemá přes 50 %. Než by nájemník kvůli stavu odešel, město byt opraví na ${MESTO_OPRAVA_NA} %${(p.owners || {})[currentUser && currentUser.name] > 0 ? ' a ty zaplatíš díl podle svého podílu' : ''}.</p>` : ''}
         ${iDecide ? `<div class="row">
           <button ${near?'':'disabled'} onclick="setUnitRentPrice('${p.id}',${idx})">Nastavit nájemné</button>
           ${100 - u.condition >= OPRAVA_MIN ? `<button class="gold" ${near?'':'disabled'} onclick="repairUnit('${p.id}',${idx})">🔧 Opravit za ${cenaSeSlevou(Math.max(1, Math.round((100 - u.condition) * cenaOpravyBod() * eventMult('repairMult'))), Math.max(1, Math.round((100 - u.condition) * cenaOpravyBod())))}</button>` : ''}
@@ -22491,6 +22525,9 @@ function zkontrolujDataZmen(){
 }
 
 const ZMENY = [
+  { verze:'22.5', datum:'2026-11-26', body:[
+    ['novinka','🏛️ Domy, ve kterých nikdo nemá přes 50 %, spravuje město: než by nájemník kvůli stavu bytu odešel, město byt opraví. Spoluvlastníci zaplatí díl opravy podle svého podílu, zbytek platí město. Díky, Evo!'],
+  ]},
   { verze:'22.4', datum:'2026-11-26', body:[
     ['oprava','🏦 Splácení dluhu v bance: předvyplněná částka už není o korunu vyšší, než máš na účtu — stačí potvrdit OK. Totéž u vkladu a výběru ze spoření. Díky, Evo!'],
   ]},
